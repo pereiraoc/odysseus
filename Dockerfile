@@ -1,4 +1,9 @@
-FROM python:3.14-slim
+# [local/pereiraoc] Pin Python em 3.12 (override do 3.14 do upstream): wheels CUDA
+# do llama-cpp-python NÃO existem pra cp314 → o Cookbook serve só em CPU no 3.14.
+# 3.12 mantém o serving na GPU DENTRO do Cookbook (cp312 tem wheel CUDA). A doc do
+# Odysseus suporta "Python 3.11+". Override pontual: --build-arg PYTHON_VERSION=3.14.
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
