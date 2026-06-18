@@ -1,0 +1,24 @@
+# Deltas LOCAIS de deploy do fork (pereiraoc) — addons NÃO-upstream isolados aqui
+# pra manter os arquivos rastreados do Odysseus pristine e o `git rebase dev` limpo.
+# Arquivo novo (sem contraparte no upstream) => nunca conflita ao sincronizar.
+#
+# Habilitar via COMPOSE_FILE no .env (depois do gpu.nvidia.yml):
+#   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/pereiraoc.yml
+#
+# Ver LOCAL_CHANGES.md (raiz do repo) pro inventário completo de deltas do fork.
+services:
+  odysseus:
+    # Bind-mount dos vaults do Obsidian em /app/vaults (read-write). Sem ':z'
+    # (não relabelar SELinux dos vaults reais). O entrypoint só faz chown de
+    # /app/data e /app/logs → /app/vaults preserva o dono (uid 1000), editável
+    # no host/Obsidian ao vivo. As listas de volumes dos overlays são somadas.
+    volumes:
+      - /data/vaults:/app/vaults
+    environment:
+      # CUDA loader path para a wheel llama-cpp-python (cu132): libcudart/libcublas
+      # vêm das wheels nvidia em ~/.local (.../nvidia/cu13/lib), fora do loader path
+      # padrão. Movido pra cá do docker/gpu.nvidia.yml pra manter aquele overlay do
+      # upstream pristine. NOTA: a base virou python3.14-slim e os engines de serve
+      # em ./data/local foram instalados sob python3.12 → reinstalar sob 3.14 ao
+      # voltar a servir GPU e ajustar este path (ver LOCAL_CHANGES.md).
+      - LD_LIBRARY_PATH=/app/.local/lib/python3.12/site-packages/nvidia/cu13/lib
