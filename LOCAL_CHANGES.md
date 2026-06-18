@@ -33,7 +33,12 @@ Ativar no `.env` (gitignored, NÃO comitado):
 acessível às file-tools do agente. Projetos (pleitost, RPG) entram por conversa via
 o **Workspace picker**. Setável pelo chat (`manage_settings`) ou editando o arquivo.
 
-## Pendência conhecida — salto python 3.12 → 3.14
-A imagem virou `python:3.14-slim`. Os engines de serve (vLLM/llama-cpp-python) em
-`./data/local` foram instalados sob python3.12 → **reinstalar sob 3.14** ao voltar a
-servir modelos na GPU, e ajustar o `LD_LIBRARY_PATH` do item 2 pro tree novo.
+## 4. `Dockerfile` — pin Python em 3.12  [inline patch]
+Upstream usa `FROM python:3.14-slim`; trocado por `ARG PYTHON_VERSION=3.12` +
+`FROM python:${PYTHON_VERSION}-slim`. Motivo: **não há wheel CUDA do
+llama-cpp-python pra cp314** → no 3.14 o Cookbook só serve em CPU. No 3.12 (que o
+upstream suporta, "Python 3.11+") o serving na GPU volta a funcionar **dentro do
+Cookbook**, reaproveitando os engines CUDA já instalados em `./data/local`
+(python3.12) e o `LD_LIBRARY_PATH` do item 2. Override pontual de volta:
+`docker compose build --build-arg PYTHON_VERSION=3.14`. Segundo delta inline no
+upstream; conflito de rebase só se o upstream mexer na linha do `FROM`.
