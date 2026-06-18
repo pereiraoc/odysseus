@@ -67,10 +67,13 @@ def _require_admin(request: Request):
     if is_internal_tool_request(request) or request.headers.get(INTERNAL_TOOL_HEADER):
         raise HTTPException(403, "Internal shell execution requires a dedicated resource-bound producer")
     if _auth_disabled():
-        from src.auth_helpers import is_direct_loopback_request
-        if is_direct_loopback_request(request):
-            return
-        raise HTTPException(403, "Anonymous native process control has no resource authority")
+        # [local patch] Behind Docker the browser arrives via docker-proxy
+        # (client = bridge gateway, not 127.0.0.1), so upstream's
+        # is_direct_loopback_request() never matches and every admin Cookbook
+        # endpoint (packages, install, serve) 403s in auth-disabled mode.
+        # Honor AUTH_ENABLED=false like core/middleware.require_admin does.
+        # Ports stay bound to 127.0.0.1 on the host (APP_BIND).
+        return
     auth_manager = getattr(request.app.state, "auth_manager", None)
     if not auth_manager:
         raise HTTPException(403, "Native process control requires authenticated administration")
