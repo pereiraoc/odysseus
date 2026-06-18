@@ -1,15 +1,21 @@
+# [local/pereiraoc] Pin Python em 3.12 (override do 3.14 do upstream): wheels CUDA
+# do llama-cpp-python NÃO existem pra cp314 → o Cookbook serve só em CPU no 3.14.
+# 3.12 mantém o serving na GPU DENTRO do Cookbook (cp312 tem wheel CUDA). ARG antes
+# do 1º FROM vale pros 2 estágios. Override pontual: --build-arg PYTHON_VERSION=3.14.
+ARG PYTHON_VERSION=3.12
+
 # ---- builder: patch + build wheels for Real-ESRGAN's broken-on-3.14 deps ----
 # basicsr/gfpgan/facexlib read their version via exec()+locals()['__version__'],
 # which raises KeyError on Python 3.13+ (PEP 667). Build patched wheels here so
 # the final image / Cookbook never has to compile the broken sdists. See
 # docker/build-realesrgan-wheels.sh for the full rationale.
-FROM python:3.14-slim AS realesrgan-wheels
+FROM python:${PYTHON_VERSION}-slim AS realesrgan-wheels
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
-FROM python:3.14-slim
+FROM python:${PYTHON_VERSION}-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
