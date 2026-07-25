@@ -5,18 +5,21 @@ Mantidos **segregados** pra facilitar integrar updates do Odysseus depois.
 
 - `dev` = espelho LIMPO do upstream (rastreia `origin/dev`).
 - `pereiraoc` = `dev` + os deltas abaixo (branch que a gente roda/checkout).
-- Sincronizar upstream:
-  `git switch dev && git pull && git switch pereiraoc && git rebase dev`
-  (conflito possível só no item 1, que é inline; os demais são aditivos).
+- Sincronizar upstream (o upstream **força-pusha** a `dev` — rebase cego NÃO serve):
+  `git fetch upstream && git branch -f dev upstream/dev`, depois validar num worktree
+  dry-run (`git worktree add --detach /tmp/ody-dryrun upstream/dev` + cherry-pick dos
+  deltas) e só então apontar `pereiraoc` pro resultado. Push com `--force-with-lease`.
+  (Conflito esperado nos itens 1 e 4, que são inline; os demais são aditivos.)
 
 ## 1. `routes/shell_routes.py` — admin com `AUTH_ENABLED=false`  [inline patch]
 `_require_admin` retorna cedo quando `AUTH_ENABLED=false`, espelhando
 `core/middleware.require_admin`. Sem isso, os endpoints admin do Cookbook
 (packages/install/serve) dão **403** em modo single-user/no-auth: `app.state.
-auth_manager` é criado incondicionalmente (`app.py:196`) e o middleware de auth
-só sobe com `AUTH_ENABLED=true` (`app.py:202`), então `current_user` fica `None`.
-→ **Único delta inline em arquivo do upstream.** DROPAR este commit se o upstream
-passar a tratar `AUTH_ENABLED=false` aqui (confirmado ainda necessário em 97a7f59).
+auth_manager` é criado incondicionalmente (`app.py:249-250`) e o middleware de auth
+só sobe com `AUTH_ENABLED=true` (`app.py:256`), então `current_user` fica `None`
+(o `if not auth_manager` do upstream nunca dispara). DROPAR este commit se o
+upstream passar a tratar `AUTH_ENABLED=false` aqui (confirmado ainda necessário
+em d8a2059, sync de 2026-07-25).
 
 ## 2. `docker/pereiraoc.yml` — overlay de deploy local  [arquivo novo, aditivo]
 Não toca nenhum arquivo do upstream. Adiciona ao serviço `odysseus`:
@@ -41,4 +44,6 @@ upstream suporta, "Python 3.11+") o serving na GPU volta a funcionar **dentro do
 Cookbook**, reaproveitando os engines CUDA já instalados em `./data/local`
 (python3.12) e o `LD_LIBRARY_PATH` do item 2. Override pontual de volta:
 `docker compose build --build-arg PYTHON_VERSION=3.14`. Segundo delta inline no
-upstream; conflito de rebase só se o upstream mexer na linha do `FROM`.
+upstream; conflita quando o upstream mexe nos `FROM` (aconteceu no sync de
+2026-07-25: Dockerfile virou 2 estágios — `realesrgan-wheels` + main — e o `ARG`
+global no topo agora parametriza os dois).
