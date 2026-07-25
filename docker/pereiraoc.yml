@@ -14,6 +14,9 @@ services:
     # no host/Obsidian ao vivo. As listas de volumes dos overlays são somadas.
     volumes:
       - /data/vaults:/app/vaults
+      # Vaults extras do painel de Vaults que vivem fora de /data/vaults:
+      - /data/projects/pleitost-app:/app/vaults/pleitost-app
+      - /data/projects/caelestia-arch-setup:/app/vaults/caelestia-arch-setup
     environment:
       # CUDA loader path para a wheel llama-cpp-python (cu132): libcudart/libcublas
       # vêm das wheels nvidia em ~/.local (.../nvidia/cu13/lib), fora do loader path
