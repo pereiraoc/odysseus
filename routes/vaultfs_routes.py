@@ -387,7 +387,10 @@ def setup_vaultfs_routes() -> APIRouter:
                     tags.update(t.strip().lstrip("#") for t in re.split(r"[,\s]+", fm_tags) if t.strip())
                 elif isinstance(fm_tags, list):
                     tags.update(str(t).strip().lstrip("#") for t in fm_tags if str(t).strip())
-                tags.update(mt.group(1) for mt in re.finditer(r"(?<![\w#])#([\w\-/]+)", head))
+                # tags inline: fora de code blocks (``` e `inline`), como no Obsidian
+                no_code = re.sub(r"```.*?(```|\Z)", "", head, flags=re.S)
+                no_code = re.sub(r"`[^`\n]*`", "", no_code)
+                tags.update(mt.group(1) for mt in re.finditer(r"(?<![\w#])#([\w\-/]+)", no_code))
                 notes.append({
                     "path": rel, "name": fn[:-3], "folder": os.path.dirname(rel),
                     "mtime": st.st_mtime, "size": st.st_size,
