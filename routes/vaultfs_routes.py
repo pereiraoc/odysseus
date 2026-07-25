@@ -245,6 +245,10 @@ class SyncToggleBody(BaseModel):
     enable: bool
 
 
+class ObsidianOpenBody(BaseModel):
+    vault: str
+
+
 # ── Obsidian Tasks (formato do plugin: emojis de data/prioridade) ──
 TASK_RE = re.compile(r"^(\s*)[-*] \[(.)\] (.*)$")
 TASK_DATE_MARKS = {
@@ -632,6 +636,72 @@ def setup_vaultfs_routes() -> APIRouter:
             pass
         return {"available": True, "installed": True, "running": running,
                 "ui_url": SYNC_UI_URL, "vaults": vault_states}
+
+    def _register_vault_open(vault_name: str) -> bool:
+        """Garante a vault registrada no obsidian.json com open=true (janela
+        abre no launch). Retorna True se o arquivo mudou."""
+        import json as _json
+        import secrets as _secrets
+        import time as _time
+        cfg = os.path.join(OBSIDIAN_CONFIG_DIR, ".config", "obsidian", "obsidian.json")
+        data = {}
+        try:
+            with open(cfg, encoding="utf-8") as f:
+                data = _json.load(f)
+        except (OSError, ValueError):
+            pass
+        vaults = data.setdefault("vaults", {})
+        opath = f"/vaults/{vault_name}"
+        entry = next((v for v in vaults.values() if v.get("path") == opath), None)
+        changed = False
+        if entry is None:
+            vaults[_secrets.token_hex(8)] = {"path": opath, "ts": int(_time.time() * 1000), "open": True}
+            changed = True
+        elif not entry.get("open"):
+            entry["open"] = True
+            changed = True
+        if changed:
+            os.makedirs(os.path.dirname(cfg), exist_ok=True)
+            with open(cfg, "w", encoding="utf-8") as f:
+                _json.dump(data, f, indent=1)
+        return changed
+
+    @router.post("/obsidian-open")
+    def obsidian_open(body: ObsidianOpenBody, request: Request, user: str = Depends(require_user)):
+        """Abre a vault no Obsidian do container: registra a janela e (re)inicia
+        o container quando preciso. A conexão do Sync fica por conta do usuário
+        dentro do próprio Obsidian."""
+        states = {v["id"]: v for v in _sync_vault_states()}
+        st = states.get(body.vault)
+        if not st:
+            raise HTTPException(404, f"Unknown vault: {body.vault}")
+        if not st["syncable"]:
+            raise HTTPException(400, {"code": "not_mounted",
+                                      "message": "esta vault não está montada no container do Obsidian "
+                                                 "(só /data/vaults é visível — ver LOCAL_CHANGES.md)"})
+        status, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
+        if status == 404:
+            raise HTTPException(404, {"code": "container_missing",
+                                      "message": "container do Obsidian ainda não foi criado — rode: "
+                                                 "docker compose --profile obsidian-sync up -d obsidian"})
+        import json as _json
+        running = False
+        try:
+            running = bool(_json.loads(body_txt).get("State", {}).get("Running"))
+        except Exception:
+            pass
+        # já registrada + aberta + rodando → nada a fazer (sem restart disruptivo)
+        if st["registered"] and running:
+            changed = _register_vault_open(st["name"])
+            if not changed:
+                return {"ok": True, "restarted": False, "ui_url": SYNC_UI_URL}
+        if running:
+            _docker_api("POST", f"/containers/{SYNC_CONTAINER}/stop")
+        _register_vault_open(st["name"])
+        s2, out = _docker_api("POST", f"/containers/{SYNC_CONTAINER}/start")
+        if s2 not in (204, 304):
+            raise HTTPException(502, f"docker start: HTTP {s2} {out[:200]}")
+        return {"ok": True, "restarted": True, "ui_url": SYNC_UI_URL}
 
     @router.post("/obsidian-sync")
     def sync_toggle(body: SyncToggleBody, request: Request, user: str = Depends(require_user)):
