@@ -84,6 +84,80 @@ def _reject_git(rel: str):
         raise HTTPException(403, "paths inside .git are not accessible")
 
 
+# ── Git (subprocess confinado à raiz da vault) ──
+
+def _git(root: str, *args: str, timeout: int = 30, env_extra: Optional[dict] = None):
+    """Roda `git <args>` na raiz da vault. Retorna (code, stdout, stderr)."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env.update(env_extra or {})
+    cmd = ["git"]
+    if not env.get("GIT_AUTHOR_NAME"):
+        # Container sem gitconfig/envs: fallback pra identidade não bloquear commit.
+        cmd += ["-c", "user.name=Odysseus", "-c", "user.email=odysseus@local"]
+    cmd += list(args)
+    try:
+        p = subprocess.run(cmd, cwd=root, capture_output=True, text=True,
+                           timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, f"git {args[0]} timed out")
+    except FileNotFoundError:
+        raise HTTPException(500, "git binary not available")
+    return p.returncode, p.stdout, p.stderr
+
+
+def _git_ok(root: str, *args: str, timeout: int = 30, env_extra: Optional[dict] = None) -> str:
+    code, out, err = _git(root, *args, timeout=timeout, env_extra=env_extra)
+    if code != 0:
+        raise HTTPException(500, (err or out or f"git {args[0]} failed").strip())
+    return out
+
+
+def _require_repo(root: str):
+    if not os.path.isdir(os.path.join(root, ".git")):
+        raise HTTPException(400, {"code": "no_git", "message": "vault is not a git repository"})
+
+
+def _parse_status_v2(out: str) -> dict:
+    st = {"branch": None, "upstream": None, "ahead": 0, "behind": 0,
+          "staged": [], "unstaged": [], "untracked": []}
+    for line in out.splitlines():
+        if line.startswith("# branch.head "):
+            st["branch"] = line.split(" ", 2)[2]
+        elif line.startswith("# branch.upstream "):
+            st["upstream"] = line.split(" ", 2)[2]
+        elif line.startswith("# branch.ab "):
+            m = re.match(r"# branch\.ab \+(\d+) -(\d+)", line)
+            if m:
+                st["ahead"], st["behind"] = int(m.group(1)), int(m.group(2))
+        elif line.startswith("? "):
+            st["untracked"].append(line[2:])
+        elif line.startswith(("1 ", "2 ")):
+            parts = line.split(" ")
+            xy = parts[1]
+            if line.startswith("2 "):
+                # rename: "2 XY sub mH mI mW hH hI Xscore path\torigPath"
+                path = " ".join(parts[9:]).split("\t")[0]
+            else:
+                path = " ".join(parts[8:])
+            if xy[0] != ".":
+                st["staged"].append({"path": path, "code": xy[0]})
+            if xy[1] != ".":
+                st["unstaged"].append({"path": path, "code": xy[1]})
+        elif line.startswith("u "):
+            parts = line.split(" ")
+            st["unstaged"].append({"path": " ".join(parts[10:]), "code": "U"})
+    return st
+
+
+# Credencial https só via env (VAULTFS_GIT_TOKEN/VAULTFS_GIT_USER): o helper
+# inline referencia as envs — o token nunca aparece em argv nem em disco.
+_CRED_HELPER = (
+    "!f() { echo \"username=${VAULTFS_GIT_USER:-git}\"; "
+    "echo \"password=$VAULTFS_GIT_TOKEN\"; }; f"
+)
+
+
 class WriteBody(BaseModel):
     vault: str
     path: str
@@ -103,6 +177,27 @@ class RenameBody(BaseModel):
     vault: str
     path: str
     new_path: str
+
+
+class GitVaultBody(BaseModel):
+    vault: str
+
+
+class GitPathsBody(BaseModel):
+    vault: str
+    paths: list[str]
+
+
+class GitCommitBody(BaseModel):
+    vault: str
+    message: str = ""
+    amend: bool = False
+
+
+class GitCheckoutBody(BaseModel):
+    vault: str
+    branch: str
+    create: bool = False
 
 
 def setup_vaultfs_routes() -> APIRouter:
@@ -234,5 +329,208 @@ def setup_vaultfs_routes() -> APIRouter:
         else:
             raise HTTPException(404, "not found")
         return {"ok": True}
+
+    # ── Git ──
+
+    def _validated_rel_paths(root: str, paths: list) -> list:
+        out = []
+        for p in paths or []:
+            _reject_git(p)
+            _resolve(root, p)  # 400 se escapar
+            out.append(p)
+        if not out:
+            raise HTTPException(400, "paths is required")
+        return out
+
+    @router.get("/git/status")
+    def git_status(request: Request, vault: str = Query(...), user: str = Depends(require_user)):
+        root = _vault_root(vault)
+        if not os.path.isdir(os.path.join(root, ".git")):
+            return {"has_git": False, "branch": None, "upstream": None, "ahead": 0,
+                    "behind": 0, "staged": [], "unstaged": [], "untracked": []}
+        out = _git_ok(root, "status", "--porcelain=v2", "--branch")
+        return {"has_git": True, **_parse_status_v2(out)}
+
+    @router.post("/git/stage")
+    def git_stage(body: GitPathsBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        _git_ok(root, "add", "--", *_validated_rel_paths(root, body.paths))
+        return {"ok": True}
+
+    @router.post("/git/unstage")
+    def git_unstage(body: GitPathsBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        _git_ok(root, "restore", "--staged", "--", *_validated_rel_paths(root, body.paths))
+        return {"ok": True}
+
+    @router.post("/git/discard")
+    def git_discard(body: GitPathsBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        rels = _validated_rel_paths(root, body.paths)
+        tracked, untracked = [], []
+        for p in rels:
+            c, _o, _e = _git(root, "ls-files", "--error-unmatch", "--", p)
+            (tracked if c == 0 else untracked).append(p)
+        if tracked:
+            _git_ok(root, "restore", "--", *tracked)
+        for p in untracked:
+            t = _resolve(root, p)
+            if os.path.isfile(t):
+                os.remove(t)
+        return {"ok": True}
+
+    @router.post("/git/commit")
+    def git_commit(body: GitCommitBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        msg = (body.message or "").strip()
+        if not msg and not body.amend:
+            raise HTTPException(400, "commit message is required")
+        args = ["commit"]
+        if body.amend:
+            args += ["--amend"]
+            args += ["-m", msg] if msg else ["--no-edit"]
+        else:
+            args += ["-m", msg]
+        _git_ok(root, *args)
+        return {"ok": True, "hash": _git_ok(root, "rev-parse", "HEAD").strip()}
+
+    @router.post("/git/undo_commit")
+    def git_undo(body: GitVaultBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        code, _o, _e = _git(root, "rev-parse", "--verify", "--quiet", "HEAD~1")
+        if code != 0:
+            raise HTTPException(400, "nothing to undo (first commit)")
+        _git_ok(root, "reset", "--soft", "HEAD~1")
+        return {"ok": True}
+
+    SEP, EOR = "\x1f", "\x1e"
+
+    @router.get("/git/log")
+    def git_log(request: Request, vault: str = Query(...), limit: int = Query(50, le=500),
+                skip: int = Query(0, ge=0), user: str = Depends(require_user)):
+        root = _vault_root(vault)
+        _require_repo(root)
+        code, out, err = _git(root, "log", f"--pretty=format:%H{SEP}%h{SEP}%an{SEP}%aI{SEP}%s{EOR}",
+                              "-n", str(limit), f"--skip={skip}")
+        if code != 0:
+            return {"commits": []}  # repo sem commits ainda
+        commits = []
+        for rec in out.split(EOR):
+            rec = rec.strip("\n")
+            if not rec:
+                continue
+            h, short, an, date, subj = rec.split(SEP, 4)
+            commits.append({"hash": h, "short": short, "author": an, "date": date, "subject": subj})
+        return {"commits": commits}
+
+    @router.get("/git/diff")
+    def git_diff(request: Request, vault: str = Query(...), path: Optional[str] = Query(None),
+                 staged: bool = Query(False), commit: Optional[str] = Query(None),
+                 user: str = Depends(require_user)):
+        root = _vault_root(vault)
+        _require_repo(root)
+        if commit:
+            if not re.fullmatch(r"[0-9a-fA-F]{4,40}", commit):
+                raise HTTPException(400, "invalid commit hash")
+            args = ["show", "--format=commit %H%nAuthor: %an%nDate: %aI%n%n    %s%n", commit]
+        else:
+            args = ["diff", "--staged"] if staged else ["diff"]
+        if path:
+            _reject_git(path)
+            _resolve(root, path)
+            args += ["--", path]
+        out = _git_ok(root, *args, timeout=60)
+        return PlainTextResponse(out)
+
+    @router.get("/git/branches")
+    def git_branches(request: Request, vault: str = Query(...), user: str = Depends(require_user)):
+        root = _vault_root(vault)
+        _require_repo(root)
+        out = _git_ok(root, "for-each-ref", "refs/heads",
+                      "--format=%(HEAD)%(refname:short)")
+        branches = []
+        for line in out.splitlines():
+            if not line:
+                continue
+            cur = line.startswith("*")
+            branches.append({"name": line.lstrip("* ").strip(), "current": cur})
+        return {"branches": branches}
+
+    @router.post("/git/checkout")
+    def git_checkout(body: GitCheckoutBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        b = (body.branch or "").strip()
+        if not re.fullmatch(r"[\w\-./]{1,120}", b) or b.startswith("-"):
+            raise HTTPException(400, "invalid branch name")
+        args = ["checkout", "-b", b] if body.create else ["checkout", b]
+        _git_ok(root, *args)
+        return {"ok": True}
+
+    @router.post("/git/init")
+    def git_init(body: GitVaultBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        if os.path.isdir(os.path.join(root, ".git")):
+            raise HTTPException(400, "already a git repository")
+        _git_ok(root, "init", "-b", "main")
+        return {"ok": True}
+
+    def _git_net(root: str, *args: str) -> str:
+        return _git_ok(root, "-c", f"credential.helper={_CRED_HELPER}", *args, timeout=120)
+
+    @router.post("/git/push")
+    def git_push(body: GitVaultBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        code, _o, _e = _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        if code != 0:
+            branch = _git_ok(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+            output = _git_net(root, "push", "-u", "origin", branch)
+        else:
+            output = _git_net(root, "push")
+        return {"ok": True, "output": output}
+
+    @router.post("/git/pull")
+    def git_pull(body: GitVaultBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        return {"ok": True, "output": _git_net(root, "pull", "--ff-only")}
+
+    @router.post("/git/fetch")
+    def git_fetch(body: GitVaultBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _require_repo(root)
+        return {"ok": True, "output": _git_net(root, "fetch", "--all", "--prune")}
+
+    @router.get("/git/graph")
+    def git_graph(request: Request, vault: str = Query(...), limit: int = Query(200, le=1000),
+                  skip: int = Query(0, ge=0), user: str = Depends(require_user)):
+        root = _vault_root(vault)
+        _require_repo(root)
+        code, out, err = _git(
+            root, "log", "--all", "--topo-order",
+            f"--pretty=format:%H{SEP}%h{SEP}%P{SEP}%an{SEP}%aI{SEP}%D{SEP}%s{EOR}",
+            "-n", str(limit), f"--skip={skip}")
+        if code != 0:
+            return {"commits": []}
+        commits = []
+        for rec in out.split(EOR):
+            rec = rec.strip("\n")
+            if not rec:
+                continue
+            h, short, parents, an, date, refs, subj = rec.split(SEP, 6)
+            commits.append({
+                "hash": h, "short": short,
+                "parents": parents.split() if parents else [],
+                "author": an, "date": date,
+                "refs": [r.strip() for r in refs.split(",") if r.strip()],
+                "subject": subj,
+            })
+        return {"commits": commits}
 
     return router
