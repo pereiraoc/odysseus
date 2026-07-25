@@ -36,6 +36,7 @@ const ICONS = {
   file: FI('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>', 11),
   folder: FI('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>', 11),
   cloud: FI('<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>', 13),
+  gem: FI('<polygon points="6 3 18 3 22 9 12 22 2 9"/><path d="M2 9h20"/><path d="M12 22 8 9l4-6 4 6-4 13"/>', 13),
 };
 
 const state = {
@@ -75,6 +76,7 @@ function buildPanel() {
       <div class="modal-content vaults-content">
         <div class="modal-header vaults-header">
           <span class="vaults-title"></span>
+          <button class="vaults-obsidian-btn" title="Abrir o Obsidian aqui dentro (app oficial do container)">${ICONS.gem}</button>
           <button class="vaults-sync-btn" title="Obsidian Sync">${ICONS.cloud}</button>
           <button class="close-btn" aria-label="Close vaults">✖</button>
         </div>
@@ -112,6 +114,7 @@ function buildPanel() {
     els.tasks = panel.querySelector('.vaults-tasks');
     els.syncBtn = panel.querySelector('.vaults-sync-btn');
     els.syncBtn.addEventListener('click', onSyncClick);
+    panel.querySelector('.vaults-obsidian-btn').addEventListener('click', openObsidianApp);
     // Abas Browser | Git | Tasks (feedback: layout estilo VS Code)
     const setTab = (t) => {
       els.nav.dataset.tab = t;
@@ -1191,6 +1194,76 @@ async function onSyncClick() {
     showError(`Obsidian Sync: ${e.message}`);
   }
   refreshSyncStatus();
+}
+
+// ── Obsidian embutido (KasmVNC do container oficial num modal) ──
+const OBSIDIAN_MODAL_ID = 'vaults-obsidian-modal';
+
+async function openObsidianApp() {
+  const s = state.sync || {};
+  if (!s.available || !s.installed) {
+    onSyncClick();
+    return;
+  }
+  if (!s.running) {
+    if (!(await styledConfirm('O container do Obsidian está parado. Ativar agora pra abrir o app?',
+      { confirmText: 'Ativar e abrir', title: 'Obsidian' }))) return;
+    try {
+      await api('/obsidian-sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enable: true }),
+      });
+    } catch (e) {
+      showError(`Obsidian: ${e.message}`);
+      return;
+    }
+    refreshSyncStatus();
+  }
+  buildObsidianModal(s.ui_url || 'http://localhost:3010');
+}
+
+function buildObsidianModal(url) {
+  let m = document.getElementById(OBSIDIAN_MODAL_ID);
+  if (!m) {
+    m = document.createElement('div');
+    m.id = OBSIDIAN_MODAL_ID;
+    m.className = 'modal hidden';
+    m.innerHTML = `
+      <div class="modal-content vaults-obsidian-content">
+        <div class="modal-header vaults-header">
+          <span class="vaults-title">${ICONS.gem} Obsidian</span>
+          <button class="close-btn" aria-label="Close obsidian">✖</button>
+        </div>
+        <iframe class="vaults-obsidian-frame" src="about:blank"
+          allow="clipboard-read; clipboard-write"></iframe>
+      </div>`;
+    document.body.appendChild(m);
+    m.querySelector('.close-btn').addEventListener('click', () => Modals.close(OBSIDIAN_MODAL_ID));
+    makeWindowDraggable(m, {
+      content: m.querySelector('.modal-content'),
+      header: m.querySelector('.modal-header'),
+    });
+  }
+  if (!Modals.isRegistered(OBSIDIAN_MODAL_ID)) {
+    Modals.register(OBSIDIAN_MODAL_ID, {
+      label: 'Obsidian',
+      icon: ICONS.gem,
+      restoreFn: () => {},
+      // fechar solta a sessão VNC (iframe em branco) mas NÃO para o container —
+      // o sync continua em background; o toggle da nuvem é quem liga/desliga.
+      closeFn: () => {
+        const el = document.getElementById(OBSIDIAN_MODAL_ID);
+        if (el) {
+          el.querySelector('iframe').src = 'about:blank';
+          el.classList.add('hidden');
+        }
+      },
+    });
+    Modals.injectMinimizeButton(m, OBSIDIAN_MODAL_ID);
+  }
+  const fr = m.querySelector('iframe');
+  if (fr.getAttribute('src') !== url) fr.src = url;
+  m.classList.remove('hidden', 'modal-minimized');
 }
 
 // ── Sidebar ──

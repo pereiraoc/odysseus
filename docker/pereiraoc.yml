@@ -49,6 +49,9 @@ services:
       # Mecanismo UPSTREAM do entrypoint: com o socket montado, adiciona o
       # usuário do app ao grupo do socket e preserva grupos no gosu.
       - ODYSSEUS_ENABLE_HOST_DOCKER=true
+      # Permite iframar o KasmVNC do Obsidian dentro do Odysseus (patch
+      # fork-local no CSP do core/middleware.py; vazio = upstream intacto).
+      - CSP_EXTRA_FRAME_SRC=http://localhost:3010
 
   # Obsidian OFICIAL em background (linuxserver/obsidian, KasmVNC) pro
   # Obsidian Sync rodar sem abrir o app no desktop. Perfil opt-in:

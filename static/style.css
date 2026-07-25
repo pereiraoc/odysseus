@@ -41302,3 +41302,11 @@ body.theme-frosted .modal {
 .vaults-sync-btn.vaults-sync-warn { opacity: 1; color: #e5a54b; }
 /* Diálogos do painel de vaults usam mensagens multi-linha (status por vault) */
 #styled-confirm-msg { white-space: pre-line; }
+/* Obsidian embutido */
+.vaults-obsidian-btn { background: none; border: none; cursor: pointer; color: inherit; opacity: 0.45; display: inline-flex; padding: 4px; flex-shrink: 0; }
+.vaults-obsidian-btn:hover { opacity: 1; color: #a882ff; }
+.vaults-obsidian-content { width: min(1320px, 95vw); height: 90vh; padding: 0; display: flex; flex-direction: column; }
+.vaults-obsidian-frame { flex: 1; width: 100%; border: none; background: #1e1e28; }
+.vaults-side-obsidian { display: none; background: none; border: none; cursor: pointer; color: inherit; opacity: 0.5; padding: 0 3px; flex-shrink: 0; }
+.vaults-side-item:hover .vaults-side-obsidian { display: inline-flex; }
+.vaults-side-obsidian:hover { opacity: 1; color: #a882ff; }
