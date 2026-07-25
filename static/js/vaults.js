@@ -1134,15 +1134,30 @@ async function refreshSyncStatus() {
     state.sync = { available: false };
   }
   const s = state.sync;
-  els.syncBtn.classList.toggle('vaults-sync-on', !!s.running);
+  const nested = (s.vaults || []).some(v => v.nested_warning);
+  const conn = (s.vaults || []).filter(v => v.registered).length;
+  const syncable = (s.vaults || []).filter(v => v.syncable).length;
+  els.syncBtn.classList.toggle('vaults-sync-on', !!s.running && !nested);
+  els.syncBtn.classList.toggle('vaults-sync-warn', nested);
   els.syncBtn.classList.toggle('vaults-sync-unavailable', !s.available);
   els.syncBtn.title = !s.available
     ? 'Obsidian Sync: indisponível (socket docker não montado — ver LOCAL_CHANGES.md)'
     : !s.installed
       ? 'Obsidian Sync: container ainda não criado — clique pra ver como ativar'
-      : s.running
-        ? `Obsidian Sync: ATIVO (cliente oficial em background) — clique pra desativar. Primeira configuração: ${s.ui_url}`
-        : 'Obsidian Sync: desativado — clique pra ativar';
+      : nested
+        ? '⚠ Obsidian Sync: vault registrada com pasta ANINHADA — clique pra detalhes'
+        : s.running
+          ? `Obsidian Sync: ATIVO — ${conn}/${syncable} vaults conectadas. Clique pra detalhes/desativar.`
+          : 'Obsidian Sync: desativado — clique pra ativar';
+}
+
+function syncVaultLines(s) {
+  return (s.vaults || []).map(v => {
+    if (!v.syncable) return `○ ${v.name}: fora do sync (pasta não montada no container do Obsidian)`;
+    if (v.nested_warning) return `⚠ ${v.name}: registro ANINHADO (/vaults/${v.name}/${v.name}) — o download foi pra uma subpasta; corrija antes de sincronizar`;
+    if (v.registered) return `✓ ${v.name}: conectada — sincroniza enquanto o container roda`;
+    return `— ${v.name}: não conectada. Em ${s.ui_url}: "Open folder as vault" → /vaults/${v.name}, depois Settings → Sync → conectar à vault remota EXISTENTE (nunca "criar nova" — isso baixa tudo pra uma subpasta). O merge preserva os arquivos locais.`;
+  }).join('\n');
 }
 
 async function onSyncClick() {
@@ -1161,9 +1176,10 @@ async function onSyncClick() {
   }
   const enable = !s.running;
   if (!(await styledConfirm(
-    enable
-      ? 'Ativar o Obsidian Sync? O cliente oficial roda em background no container e sincroniza a vault.'
-      : 'Desativar o Obsidian Sync? O container é parado e a sincronização pausa.',
+    (enable
+      ? 'Ativar o Obsidian Sync? O cliente oficial roda em background e sincroniza as vaults conectadas.'
+      : 'Desativar o Obsidian Sync? O container é parado e a sincronização pausa.')
+    + '\n\n' + syncVaultLines(s),
     { confirmText: enable ? 'Ativar' : 'Desativar', title: 'Obsidian Sync', danger: !enable }))) return;
   try {
     await api('/obsidian-sync', {
