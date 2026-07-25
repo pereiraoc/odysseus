@@ -128,13 +128,24 @@ function renderToolbar() {
     <button class="vaults-btn" data-vaults-refresh title="Recarregar">↻</button>`;
 }
 
-// ── Árvore (Task 6) ──
+// ── Árvore ──
 async function refreshTree() {
   els.tree.innerHTML = '<div class="vaults-empty">Carregando…</div>';
   try {
     const { tree } = await api(`/tree?vault=${encodeURIComponent(state.currentId)}`);
     state.tree = tree;
     state.noteIndex = new Map();
+    (function index(nodes) {
+      for (const n of nodes) {
+        if (n.type === 'file') {
+          const base = n.name.replace(/\.md$/i, '').toLowerCase();
+          if (!state.noteIndex.has(base)) state.noteIndex.set(base, []);
+          state.noteIndex.get(base).push(n.path);
+        } else if (n.children) {
+          index(n.children);
+        }
+      }
+    })(tree);
     renderTree();
   } catch (e) {
     els.tree.innerHTML = `<div class="vaults-empty">Falha ao carregar: ${esc(e.message)}</div>`;
@@ -143,6 +154,54 @@ async function refreshTree() {
 
 function renderTree() {
   els.tree.innerHTML = '';
+  els.tree.appendChild(buildTreeNodes(state.tree || []));
+  if (state.openPath) highlightTreeRow(state.openPath);
+}
+
+function buildTreeNodes(nodes) {
+  const ul = document.createElement('ul');
+  ul.className = 'vaults-tree-list';
+  for (const n of nodes) {
+    const li = document.createElement('li');
+    const row = document.createElement('div');
+    row.className = `vaults-tree-row vaults-${n.type}`;
+    row.dataset.path = n.path;
+    row.innerHTML = n.type === 'dir'
+      ? `<span class="vaults-caret">▸</span><span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`
+      : `<span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`;
+    attachRowActions(row, n);
+    li.appendChild(row);
+    if (n.type === 'dir') {
+      const kids = buildTreeNodes(n.children || []);
+      kids.classList.add('vaults-collapsed');
+      li.appendChild(kids);
+      row.addEventListener('click', () => {
+        kids.classList.toggle('vaults-collapsed');
+        row.querySelector('.vaults-caret').textContent =
+          kids.classList.contains('vaults-collapsed') ? '▸' : '▾';
+      });
+    } else {
+      row.addEventListener('click', () => openFile(n.path));
+    }
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+function attachRowActions(row, n) { void row; void n; }
+
+function highlightTreeRow(relPath) {
+  els.tree.querySelectorAll('.vaults-tree-row.vaults-active').forEach(r => r.classList.remove('vaults-active'));
+  const row = els.tree.querySelector(`.vaults-tree-row[data-path="${CSS.escape(relPath)}"]`);
+  if (!row) return;
+  row.classList.add('vaults-active');
+  let ul = row.closest('ul');
+  while (ul && ul !== els.tree) {
+    ul.classList.remove('vaults-collapsed');
+    const caret = ul.parentElement.querySelector(':scope > .vaults-tree-row .vaults-caret');
+    if (caret) caret.textContent = '▾';
+    ul = ul.parentElement.closest('ul');
+  }
 }
 
 // ── Viewer/editor (Tasks 7-8) ──

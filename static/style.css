@@ -41149,3 +41149,12 @@ body.theme-frosted .modal {
   .vaults-body { flex-direction: column-reverse; }
   .vaults-nav { width: 100%; max-height: 45%; border-left: none; border-bottom: 1px solid var(--border, rgba(128,128,128,0.25)); }
 }
+.vaults-tree-list { list-style: none; margin: 0; padding-left: 12px; }
+.vaults-tree > .vaults-tree-list { padding-left: 4px; }
+.vaults-tree-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 5px; cursor: pointer; }
+.vaults-tree-row:hover { background: color-mix(in srgb, var(--accent-primary, #60a5fa) 12%, transparent); }
+.vaults-tree-row.vaults-active { background: color-mix(in srgb, var(--accent-primary, #60a5fa) 20%, transparent); }
+.vaults-collapsed { display: none; }
+.vaults-caret { width: 10px; opacity: 0.6; flex-shrink: 0; }
+.vaults-node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.vaults-badge { font-size: 10px; font-weight: 700; margin-left: auto; flex-shrink: 0; }
