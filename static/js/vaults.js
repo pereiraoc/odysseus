@@ -11,6 +11,7 @@ import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js'
 import { mdToHtml } from './markdown.js';
 import { renderCommitGraph } from './vaultsGraph.js';
 import { registerMenuDismiss } from './escMenuStack.js';
+import { runQuery } from './vaultsDataview.js';
 
 const PANEL_ID = 'vaults-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
@@ -437,106 +438,34 @@ function dvCell(note, field) {
   return esc(dvRaw(note, f));
 }
 
-function dvMatchFrom(note, expr) {
-  const e = (expr || '').trim();
-  if (!e) return true;
-  const orParts = e.split(/\s+or\s+/i);
-  if (orParts.length > 1) return orParts.some(p => dvMatchFrom(note, p));
-  const andParts = e.split(/\s+and\s+/i);
-  if (andParts.length > 1) return andParts.every(p => dvMatchFrom(note, p));
-  let t = e;
-  let neg = false;
-  if (t.startsWith('!')) { neg = true; t = t.slice(1).trim(); }
-  let ok;
-  if (t.startsWith('#')) {
-    ok = (note.tags || []).includes(t.slice(1));
-  } else {
-    const folder = t.replace(/^"+|"+$/g, '').replace(/\/$/, '');
-    ok = note.folder === folder || note.path.startsWith(folder + '/');
-  }
-  return neg ? !ok : ok;
-}
-
-function dvCompare(note, cond) {
-  const c = cond.trim();
-  const fn = /^!?contains\(\s*([^,]+)\s*,\s*"([^"]*)"\s*\)$/i.exec(c);
-  if (fn) {
-    const ok = String(dvRaw(note, fn[1])).toLowerCase().includes(fn[2].toLowerCase());
-    return c.startsWith('!') ? !ok : ok;
-  }
-  const m = /^(.+?)\s*(!=|>=|<=|=|>|<)\s*(.+)$/.exec(c);
-  if (!m) throw new Error(`WHERE não suportado: ${c}`);
-  const raw = dvRaw(note, m[1]);
-  const rhs = m[3].trim().replace(/^"+|"+$/g, '');
-  const a = parseFloat(raw);
-  const b = parseFloat(rhs);
-  const num = !Number.isNaN(a) && !Number.isNaN(b) && /^[\d.\-+]/.test(rhs);
-  switch (m[2]) {
-    case '=': return num ? a === b : String(raw) === rhs;
-    case '!=': return num ? a !== b : String(raw) !== rhs;
-    case '>': return num && a > b;
-    case '<': return num && a < b;
-    case '>=': return num && a >= b;
-    case '<=': return num && a <= b;
-    default: return false;
-  }
-}
-
-function dvWhere(note, expr) {
-  const orParts = expr.split(/\s+or\s+/i);
-  if (orParts.length > 1) return orParts.some(p => dvWhere(note, p));
-  const andParts = expr.split(/\s+and\s+/i);
-  if (andParts.length > 1) return andParts.every(p => dvWhere(note, p));
-  return dvCompare(note, expr);
-}
-
-function evalDataview(q, notes) {
-  const text = q.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//')).join(' ');
-  const m = /^(list|table|task|calendar)\b\s*(.*?)(?:\s+from\s+(.+?))?(?:\s+where\s+(.+?))?(?:\s+sort\s+(.+?))?(?:\s+limit\s+(\d+))?$/i.exec(text);
-  if (!m) throw new Error('query não reconhecida');
-  const type = m[1].toLowerCase();
-  if (type === 'task' || type === 'calendar') throw new Error(`${type.toUpperCase()} ainda não suportado`);
-  let rows = notes.filter(n => dvMatchFrom(n, m[3]));
-  if (m[4]) rows = rows.filter(n => { try { return dvWhere(n, m[4]); } catch (e) { throw e; } });
-  if (m[5]) {
-    const sm = /^(\S+)(?:\s+(asc|desc))?$/i.exec(m[5].trim());
-    if (sm) {
-      const dir = (sm[2] || '').toLowerCase() === 'desc' ? -1 : 1;
-      rows = rows.slice().sort((x, y) => {
-        const a = dvRaw(x, sm[1]);
-        const b = dvRaw(y, sm[1]);
-        return (a < b ? -1 : a > b ? 1 : 0) * dir;
-      });
-    }
-  }
-  if (m[6]) rows = rows.slice(0, parseInt(m[6], 10));
-  if (type === 'list') {
-    return `<ul class="vaults-dv-list">${rows.map(n => `<li>${dvCell(n, 'file.link')}</li>`).join('')}</ul>`;
-  }
-  const cols = (m[2] || '').replace(/^without\s+id\s*/i, '').trim()
-    ? m[2].replace(/^without\s+id\s*/i, '').split(',').map(cSpec => {
-        const am = /^(.+?)\s+as\s+"?([^"]+?)"?$/i.exec(cSpec.trim());
-        return am ? { f: am[1].trim(), label: am[2] } : { f: cSpec.trim(), label: cSpec.trim() };
-      })
-    : [];
-  const head = `<tr><th>File</th>${cols.map(cSpec => `<th>${esc(cSpec.label)}</th>`).join('')}</tr>`;
-  const body = rows.map(n =>
-    `<tr><td>${dvCell(n, 'file.link')}</td>${cols.map(cSpec => `<td>${dvCell(n, cSpec.f)}</td>`).join('')}</tr>`).join('');
-  return `<table class="vaults-dv-table">${head}${body}</table><div class="vaults-dv-count">${rows.length} resultado(s)</div>`;
-}
-
 function renderDataviewBlocks() {
-  const blocks = els.viewer.querySelectorAll('code[data-lang="dataview"], code.language-dataview');
-  if (!blocks.length) return;
+  const dvBlocks = els.viewer.querySelectorAll('code[data-lang="dataview"], code.language-dataview');
+  const dvjsBlocks = els.viewer.querySelectorAll('code[data-lang="dataviewjs"], code.language-dataviewjs');
+  dvjsBlocks.forEach(code => {
+    const pre = code.closest('pre');
+    if (!pre) return;
+    const div = document.createElement('div');
+    div.className = 'vaults-dv';
+    div.innerHTML = `<div class="vaults-dv-warn">dataviewjs não é suportado (execução de JS arbitrário)</div>`;
+    pre.replaceWith(div);
+  });
+  if (!dvBlocks.length) return;
   ensureMeta().then(notes => {
-    blocks.forEach(code => {
+    const ctx = {
+      notes,
+      current: state.openPath,
+      linkHtml: (path, label) => path
+        ? `<a class="vaults-wikilink" data-vaults-open="${esc(path)}">${esc(label)}</a>`
+        : `<span class="vaults-wikilink vaults-wikilink-missing">${esc(label)}</span>`,
+    };
+    dvBlocks.forEach(code => {
       const pre = code.closest('pre');
       if (!pre) return;
       const q = code.textContent;
       const div = document.createElement('div');
       div.className = 'vaults-dv';
       try {
-        div.innerHTML = evalDataview(q, notes);
+        div.innerHTML = runQuery(q, ctx).html;
       } catch (e) {
         div.innerHTML = `<div class="vaults-dv-warn">dataview: ${esc(e.message)}</div><pre class="vaults-dv-src">${esc(q)}</pre>`;
       }
