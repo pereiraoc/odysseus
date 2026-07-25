@@ -11,7 +11,7 @@ import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js'
 import { mdToHtml } from './markdown.js';
 import { renderCommitGraph } from './vaultsGraph.js';
 import { registerMenuDismiss } from './escMenuStack.js';
-import { runQuery } from './vaultsDataview.js';
+import { runQuery, runBase } from './vaultsDataview.js';
 
 const PANEL_ID = 'vaults-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
@@ -33,6 +33,8 @@ const ICONS = {
   down: FI('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>', 11),
   up: FI('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>', 11),
   chevron: FI('<polyline points="9 18 15 12 9 6"/>', 11),
+  file: FI('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>', 11),
+  folder: FI('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>', 11),
 };
 
 const state = {
@@ -260,8 +262,8 @@ function buildTreeNodes(nodes) {
     row.className = `vaults-tree-row vaults-${n.type}`;
     row.dataset.path = n.path;
     row.innerHTML = n.type === 'dir'
-      ? `<span class="vaults-caret">▸</span><span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`
-      : `<span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`;
+      ? `<span class="vaults-caret">${ICONS.chevron}</span><span class="vaults-node-icon">${ICONS.folder}</span><span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`
+      : `<span class="vaults-node-icon">${ICONS.file}</span><span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`;
     attachRowActions(row, n);
     li.appendChild(row);
     if (n.type === 'dir') {
@@ -270,8 +272,7 @@ function buildTreeNodes(nodes) {
       li.appendChild(kids);
       row.addEventListener('click', () => {
         kids.classList.toggle('vaults-collapsed');
-        row.querySelector('.vaults-caret').textContent =
-          kids.classList.contains('vaults-collapsed') ? '▸' : '▾';
+        row.classList.toggle('vaults-open', !kids.classList.contains('vaults-collapsed'));
       });
     } else {
       row.addEventListener('click', () => openFile(n.path));
@@ -330,8 +331,7 @@ function highlightTreeRow(relPath) {
   let ul = row.closest('ul');
   while (ul && ul !== els.tree) {
     ul.classList.remove('vaults-collapsed');
-    const caret = ul.parentElement.querySelector(':scope > .vaults-tree-row .vaults-caret');
-    if (caret) caret.textContent = '▾';
+    ul.parentElement.querySelector(':scope > .vaults-tree-row')?.classList.add('vaults-open');
     ul = ul.parentElement.closest('ul');
   }
 }
@@ -419,25 +419,6 @@ async function ensureMeta() {
   return notes;
 }
 
-function dvRaw(note, field) {
-  const f = String(field).trim().replace(/^note\./, '');
-  if (f === 'file.name' || f === 'file.link') return note.name;
-  if (f === 'file.folder') return note.folder;
-  if (f === 'file.path') return note.path;
-  if (f === 'file.mtime') return new Date(note.mtime * 1000).toISOString().slice(0, 10);
-  const v = note.props?.[f];
-  if (v == null) return '';
-  return Array.isArray(v) ? v.join(', ') : String(v);
-}
-
-function dvCell(note, field) {
-  const f = String(field).trim().replace(/^note\./, '');
-  if (f === 'file.link' || f === 'file.name') {
-    return `<a class="vaults-wikilink" data-vaults-open="${esc(note.path)}">${esc(note.name)}</a>`;
-  }
-  return esc(dvRaw(note, f));
-}
-
 function renderDataviewBlocks() {
   const dvBlocks = els.viewer.querySelectorAll('code[data-lang="dataview"], code.language-dataview');
   const dvjsBlocks = els.viewer.querySelectorAll('code[data-lang="dataviewjs"], code.language-dataviewjs');
@@ -474,22 +455,7 @@ function renderDataviewBlocks() {
   }).catch(e => console.warn('vaults: meta indisponível', e));
 }
 
-function baseCond(note, s) {
-  const str = String(s);
-  const ht = /^\s*(!?)\s*(?:file\.)?hasTag\(\s*"([^"]+)"\s*\)\s*$/i.exec(str);
-  if (ht) {
-    const ok = (note.tags || []).includes(ht[2]);
-    return ht[1] ? !ok : ok;
-  }
-  const m = /^\s*(\S+)\s*(==|!=)\s*"?([^"]*?)"?\s*$/.exec(str);
-  if (m) {
-    const raw = String(dvRaw(note, m[1]));
-    return m[2] === '==' ? raw === m[3] : raw !== m[3];
-  }
-  throw new Error(str);
-}
-
-async function openBase(relPath) {
+async function openBase(relPath, viewIndex = null) {
   try {
     const [{ base }, notes] = await Promise.all([
       api(`/base?vault=${encodeURIComponent(state.currentId)}&path=${encodeURIComponent(relPath)}`),
@@ -498,38 +464,31 @@ async function openBase(relPath) {
     state.openPath = relPath;
     state.mode = 'base';
     state.dirty = false;
-    highlightTreeRow(relPath);
-    const views = Array.isArray(base?.views) ? base.views : [];
-    const view = views.find(v => (v.type || 'table') === 'table') || views[0];
-    if (!view) {
-      els.viewer.innerHTML = '<div class="vaults-empty">.base sem views definidas</div>';
-      return;
+    const viewKey = `odysseus-vaults-baseview:${state.currentId}:${relPath}`;
+    if (viewIndex === null) {
+      try { viewIndex = parseInt(localStorage.getItem(viewKey) || '0', 10) || 0; } catch (_) { viewIndex = 0; }
     }
-    const warns = [];
-    const applyFilter = (rows, f) => {
-      if (!f) return rows;
-      if (typeof f === 'string') {
-        try { return rows.filter(n => baseCond(n, f)); }
-        catch (_) { warns.push(f); return rows; }
-      }
-      if (Array.isArray(f?.and)) return f.and.reduce((r, sub) => applyFilter(r, sub), rows);
-      if (Array.isArray(f?.or)) {
-        const sets = f.or.map(sub => new Set(applyFilter(rows, sub).map(n => n.path)));
-        return rows.filter(n => sets.some(set => set.has(n.path)));
-      }
-      warns.push(JSON.stringify(f));
-      return rows;
+    highlightTreeRow(relPath);
+    const ctx = {
+      notes,
+      current: relPath,
+      linkHtml: (path, label) => path
+        ? `<a class="vaults-wikilink" data-vaults-open="${esc(path)}">${esc(label)}</a>`
+        : `<span class="vaults-wikilink vaults-wikilink-missing">${esc(label)}</span>`,
     };
-    let rows = applyFilter(notes, base?.filters);
-    rows = applyFilter(rows, view.filters);
-    const order = Array.isArray(view.order) && view.order.length ? view.order : ['file.name'];
-    const head = `<tr>${order.map(c => `<th>${esc(String(c).replace(/^note\./, ''))}</th>`).join('')}</tr>`;
-    const body = rows.map(n => `<tr>${order.map(c => `<td>${dvCell(n, c)}</td>`).join('')}</tr>`).join('');
+    const r = runBase(base, ctx, viewIndex);
+    try { localStorage.setItem(viewKey, String(r.viewIndex)); } catch (_) {}
+    const pills = r.views.map((v, i) =>
+      `<button class="vaults-view-pill${i === r.viewIndex ? ' vaults-view-active' : ''}"
+        data-vaults-baseview="${i}" title="view ${esc(v.type)}">${esc(v.name)}</button>`).join('');
     els.viewer.innerHTML = `<div class="vaults-viewbar">
-        <span class="vaults-open-name">${esc(relPath)} · ${esc(view.name || 'view')} (${rows.length})</span>
-      </div>`
-      + (warns.length ? `<div class="vaults-dv-warn">Filtros não suportados ignorados: ${esc(warns.join(' · '))}</div>` : '')
-      + `<table class="vaults-dv-table">${head}${body}</table>`;
+        <span class="vaults-open-name">${esc(relPath)}</span>
+      </div>
+      ${r.views.length > 1 ? `<div class="vaults-view-pills">${pills}</div>` : ''}`
+      + (r.warns.length
+        ? `<div class="vaults-dv-warn">Não suportado (ignorado): ${esc([...new Set(r.warns)].join(' · ').slice(0, 400))}</div>`
+        : '')
+      + r.html;
   } catch (e) {
     showError(`base: ${e.message}`);
   }
@@ -691,6 +650,11 @@ function wireViewerClicks() {
           showError(`Falha ao criar: ${err.message}`);
         }
       }
+      return;
+    }
+    const bview = e.target.closest('[data-vaults-baseview]');
+    if (bview && state.mode === 'base') {
+      openBase(state.openPath, parseInt(bview.dataset.vaultsBaseview, 10));
       return;
     }
     const mode = e.target.closest('[data-vaults-mode]');

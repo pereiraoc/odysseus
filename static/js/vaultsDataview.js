@@ -34,7 +34,16 @@ class Index {
         this.byBase.get(ab).push(n.path);
       }
     }
-    this.current = currentPath ? this.byPath.get(currentPath) || null : null;
+    // arquivo atual pode não ser uma nota .md (ex.: o próprio .base) —
+    // cria um wrapper sintético pra `this.file.*` continuar funcionando.
+    this.current = currentPath
+      ? this.byPath.get(currentPath) || {
+          path: currentPath,
+          name: currentPath.split('/').pop().replace(/\.[^.]+$/, ''),
+          folder: currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/')) : '',
+          mtime: 0, ctime: 0, size: 0, tags: [], aliases: [], outlinks: [], props: {},
+        }
+      : null;
     this._out = new Map();   // path -> Set(resolved outlink paths)
     this._in = null;         // path -> Set(paths que linkam pra ele)
     this._wrap = new Map();
@@ -93,7 +102,9 @@ class Index {
     }
     const idx = this;
     const file = {
+      __file: note,
       name: note.name,
+      basename: note.name,
       path: note.path,
       folder: note.folder,
       link: Link(note.path, note.name),
@@ -142,8 +153,8 @@ function coerceValue(v) {
 }
 
 // ── Tokenizer ──
-const OPS2 = ['!=', '>=', '<='];
-const OPS1 = ['=', '>', '<', '(', ')', ',', '+', '-', '*', '/', '%', '!', '.'];
+const OPS2 = ['==', '!=', '>=', '<=', '&&', '||'];
+const OPS1 = ['=', '>', '<', '(', ')', ',', '+', '-', '*', '/', '%', '!', '.', '[', ']'];
 const ID_RE = /^[\p{L}_][\p{L}\p{N}_-]*/u;
 
 function lex(src) {
@@ -207,11 +218,13 @@ class P {
     for (;;) {
       const t = this.peek();
       let op = null, bp = 0;
-      if (t.t === 'op' && ['=', '!=', '>', '<', '>=', '<='].includes(t.v)) { op = t.v; bp = 30; }
-      else if (t.t === 'op' && ['+', '-'].includes(t.v)) { op = t.v; bp = 40; }
+      if (t.t === 'op' && ['=', '==', '!=', '>', '<', '>=', '<='].includes(t.v)) {
+        op = t.v === '==' ? '=' : t.v;
+        bp = 30;
+      } else if (t.t === 'op' && ['+', '-'].includes(t.v)) { op = t.v; bp = 40; }
       else if (t.t === 'op' && ['*', '/', '%'].includes(t.v)) { op = t.v; bp = 50; }
-      else if (t.t === 'id' && t.v.toLowerCase() === 'and') { op = 'and'; bp = 20; }
-      else if (t.t === 'id' && t.v.toLowerCase() === 'or') { op = 'or'; bp = 10; }
+      else if ((t.t === 'id' && t.v.toLowerCase() === 'and') || (t.t === 'op' && t.v === '&&')) { op = 'and'; bp = 20; }
+      else if ((t.t === 'id' && t.v.toLowerCase() === 'or') || (t.t === 'op' && t.v === '||')) { op = 'or'; bp = 10; }
       if (!op || bp < minBp) break;
       this.next();
       const right = this.expr(bp + 1);
@@ -246,20 +259,35 @@ class P {
     throw new Error(`token inesperado: ${t.v ?? t.t}`);
   }
 
+  parseArgs() {
+    const args = [];
+    if (!(this.peek().t === 'op' && this.peek().v === ')')) {
+      do { args.push(this.expr(0)); } while (this.eatOp(','));
+    }
+    this.expectOp(')');
+    return args;
+  }
+
   postfix(node) {
     for (;;) {
       if (this.eatOp('.')) {
         const f = this.next();
         if (f.t !== 'id') throw new Error("esperado campo após '.'");
-        node = { k: 'member', obj: node, f: f.v };
+        // método encadeado (Bases): file.tags.contains("X"), s.startsWith(...)
+        if (this.peek().t === 'op' && this.peek().v === '(') {
+          this.next();
+          node = { k: 'mcall', obj: node, m: f.v.toLowerCase(), args: this.parseArgs() };
+        } else {
+          node = { k: 'member', obj: node, f: f.v };
+        }
+      } else if (this.eatOp('[')) {
+        // acesso por colchete (Bases): note["object-type"]
+        const key = this.expr(0);
+        this.expectOp(']');
+        node = { k: 'index', obj: node, key };
       } else if (this.peek().t === 'op' && this.peek().v === '(' && node.k === 'id') {
         this.next();
-        const args = [];
-        if (!(this.peek().t === 'op' && this.peek().v === ')')) {
-          do { args.push(this.expr(0)); } while (this.eatOp(','));
-        }
-        this.expectOp(')');
-        node = this.postfix({ k: 'call', fn: node.v.toLowerCase(), args });
+        node = { k: 'call', fn: node.v.toLowerCase(), args: this.parseArgs() };
       } else {
         return node;
       }
@@ -311,13 +339,17 @@ function cmp(a, b, idx) {
   }
 }
 
+// normaliza alvo de link pra comparação (case, extensão .md/.base/.canvas)
+function normLinkBase(target) {
+  return String(target || '').split('/').pop().replace(/\.(md|base|canvas)$/i, '').toLowerCase();
+}
+
 function eq(a, b, idx) {
   if (a == null || b == null) return a == null && b == null;
   if (isLink(a) && isLink(b)) {
     const pa = idx.resolve(a.target), pb = idx.resolve(b.target);
     if (pa && pb) return pa === pb;
-    return a.target.split('/').pop().replace(/\.md$/i, '').toLowerCase()
-      === b.target.split('/').pop().replace(/\.md$/i, '').toLowerCase();
+    return normLinkBase(a.target) === normLinkBase(b.target);
   }
   if (isDate(a) && isDate(b)) return a.getTime() === b.getTime();
   if (Array.isArray(a) && Array.isArray(b)) {
@@ -420,13 +452,23 @@ function evalNode(node, env) {
       const low = node.v.toLowerCase();
       if (low === 'this') return { __this: true };
       if (low === 'file') return env.page?.file ?? null;
-      if (low === 'row') return { __row: true };
+      if (low === 'row' || low === 'note') return { __row: true };
       if (env.extra && low in env.extra) return env.extra[low];
       return env.page ? (env.page.props.get(low) ?? null) : null;
     }
     case 'member': {
       const obj = evalNode(node.obj, env);
       return member(obj, node.f, env);
+    }
+    case 'index': {
+      const obj = evalNode(node.obj, env);
+      const key = evalNode(node.key, env);
+      return member(obj, String(key ?? ''), env);
+    }
+    case 'mcall': {
+      const obj = evalNode(node.obj, env);
+      const args = node.args.map(a => evalNode(a, env));
+      return methodCall(obj, node.m, args, env);
     }
     case 'call': {
       const fn = fns[node.fn];
@@ -492,6 +534,74 @@ function member(obj, field, env) {
     return lk !== undefined ? coerceValue(obj[lk]) : null;
   }
   return null;
+}
+
+// métodos encadeados estilo Bases: file.hasTag(), tags.contains(), s.endsWith()…
+function methodCall(obj, m, args, env) {
+  const { idx } = env;
+  if (obj == null) {
+    if (m === 'isempty') return true;
+    if (['contains', 'containsany', 'containsall', 'hastag', 'haslink',
+         'infolder', 'startswith', 'endswith', 'hasproperty'].includes(m)) return false;
+    return null;
+  }
+  if (obj.__file) {
+    const note = obj.__file;
+    if (m === 'hastag') {
+      const t = String(args[0] ?? '').replace(/^#/, '');
+      return (note.tags || []).some(x => x === t || x.startsWith(t + '/'));
+    }
+    if (m === 'haslink') {
+      const traw = isLink(args[0]) ? args[0].target : String(args[0] ?? '');
+      const tb = normLinkBase(traw);
+      const tres = idx.resolve(traw);
+      return (note.outlinks || []).some(raw => {
+        if (normLinkBase(raw) === tb) return true;
+        const r = idx.resolve(raw);
+        return !!(r && tres && r === tres);
+      });
+    }
+    if (m === 'infolder') {
+      const f = String(args[0] ?? '').replace(/\/$/, '');
+      return note.path.startsWith(f + '/') || note.folder === f || note.folder.startsWith(f + '/');
+    }
+    if (m === 'hasproperty') {
+      return Object.keys(note.props || {}).some(k => k.toLowerCase() === String(args[0] ?? '').toLowerCase());
+    }
+  }
+  if (typeof obj === 'string') {
+    switch (m) {
+      case 'contains': return obj.includes(String(args[0] ?? ''));
+      case 'containsany': return args.some(x => obj.includes(String(x ?? '')));
+      case 'startswith': return obj.startsWith(String(args[0] ?? ''));
+      case 'endswith': return obj.endsWith(String(args[0] ?? ''));
+      case 'lower': return obj.toLowerCase();
+      case 'upper': return obj.toUpperCase();
+      case 'trim': return obj.trim();
+      case 'replace': return obj.split(String(args[0])).join(String(args[1] ?? ''));
+      case 'split': return obj.split(String(args[0] ?? ''));
+      case 'slice': return obj.slice(Number(args[0]) || 0, args[1] !== undefined ? Number(args[1]) : undefined);
+      case 'isempty': return obj.length === 0;
+      case 'length': return obj.length;
+    }
+  }
+  if (Array.isArray(obj)) {
+    const st = v => typeof v === 'string' ? v.replace(/^#/, '') : v;
+    switch (m) {
+      case 'contains':
+        return obj.some(x => eq(st(x), st(args[0]), idx)
+          || (typeof x === 'string' && typeof args[0] === 'string' && st(x).startsWith(st(args[0]) + '/')));
+      case 'containsany': return args.some(a => obj.some(x => eq(st(x), st(a), idx)));
+      case 'containsall': return args.every(a => obj.some(x => eq(st(x), st(a), idx)));
+      case 'isempty': return obj.length === 0;
+      case 'join': return obj.map(x => display(x, idx)).join(String(args[0] ?? ', '));
+      case 'reverse': return obj.slice().reverse();
+      case 'sort': return obj.slice().sort((x, y) => cmp(x, y, idx));
+      case 'length': return obj.length;
+    }
+  }
+  if (isDate(obj) && m === 'format') return env.fns.dateformat(obj, args[0]);
+  throw new Error(`método não suportado: .${m}()`);
 }
 
 // ── FROM (fontes) ──
@@ -790,4 +900,112 @@ export function runQuery(src, ctx) {
     return `<tr>${tds.map(td => `<td>${td}</td>`).join('')}</tr>`;
   }).join('');
   return { html: `<table class="vaults-dv-table">${headHtml}${bodyHtml}</table><div class="vaults-dv-count">${rows.length} resultado(s)</div>` };
+}
+
+// ── Obsidian Bases (.base) ──
+// runBase(base, ctx, viewIndex) → { html, warns, views, viewIndex }
+// Suporta: filters aninhados (and/or/not + condições string na linguagem
+// Bases: ==, !=, métodos file.hasTag/hasLink/inFolder, note["x"], this.*),
+// properties.displayName, views table e cards, sort [{property, direction}].
+export function runBase(base, ctx, viewIndex = 0) {
+  const idx = new Index(ctx.notes, ctx.current);
+  const fns = makeFns(idx);
+  const views = Array.isArray(base?.views) ? base.views : [];
+  if (!views.length) throw new Error('.base sem views definidas');
+  const vi = Math.max(0, Math.min(viewIndex, views.length - 1));
+  const view = views[vi];
+  const warns = [];
+  const envFor = page => ({ idx, fns, page });
+
+  const applyF = (rows, f) => {
+    if (f == null) return rows;
+    if (typeof f === 'string') {
+      let ast;
+      try { ast = parseExpr(f); } catch (e) { warns.push(`${f} — ${e.message}`); return rows; }
+      return rows.filter(pg => {
+        try { return truthy(evalNode(ast, envFor(pg))); } catch (_) { return false; }
+      });
+    }
+    if (Array.isArray(f?.and)) return f.and.reduce((r, s) => applyF(r, s), rows);
+    if (Array.isArray(f?.or)) {
+      const sets = f.or.map(s => new Set(applyF(rows, s).map(p => p.note.path)));
+      return rows.filter(p => sets.some(x => x.has(p.note.path)));
+    }
+    if (f?.not != null) {
+      const inner = Array.isArray(f.not) ? { and: f.not } : f.not;
+      const ex = new Set(applyF(rows, inner).map(p => p.note.path));
+      return rows.filter(p => !ex.has(p.note.path));
+    }
+    warns.push(JSON.stringify(f).slice(0, 80));
+    return rows;
+  };
+
+  let rows = idx.notes.map(n => idx.page(n));
+  rows = applyF(rows, base?.filters);
+  rows = applyF(rows, view?.filters);
+
+  const sortKeys = [];
+  for (const s of (Array.isArray(view?.sort) ? view.sort : [])) {
+    const propSrc = typeof s === 'string' ? s : (s?.property ?? '');
+    if (!propSrc) continue;
+    try {
+      sortKeys.push({
+        ast: parseExpr(String(propSrc)),
+        dir: String((typeof s === 'object' && s?.direction) || 'ASC').toUpperCase() === 'DESC' ? -1 : 1,
+      });
+    } catch (_) { warns.push(`sort: ${propSrc}`); }
+  }
+  if (sortKeys.length) {
+    rows = rows.slice().sort((x, y) => {
+      for (const kSpec of sortKeys) {
+        const c = cmp(evalNode(kSpec.ast, envFor(x)), evalNode(kSpec.ast, envFor(y)), idx) * kSpec.dir;
+        if (c) return c;
+      }
+      return 0;
+    });
+  }
+  if (Number.isFinite(view?.limit)) rows = rows.slice(0, view.limit);
+
+  const order = Array.isArray(view?.order) && view.order.length ? view.order : ['file.name'];
+  const propsCfg = base?.properties || {};
+  const colLabel = src => propsCfg[src]?.displayName
+    || propsCfg[`note.${src}`]?.displayName
+    || String(src).replace(/^(note|file|formula)\./, '');
+  const cols = order.map(src => {
+    const s = String(src);
+    let ast = null;
+    try { ast = parseExpr(s); } catch (_) { warns.push(`coluna: ${s}`); }
+    return { src: s, label: colLabel(s), ast, isFileCol: /^file\.(name|basename|link)$/i.test(s) };
+  });
+  const cell = (pg, col) => {
+    if (col.isFileCol) return valueHtml(pg.file.link, idx, ctx);
+    if (!col.ast) return '';
+    let v = null;
+    try { v = evalNode(col.ast, envFor(pg)); } catch (_) {}
+    return valueHtml(v, idx, ctx);
+  };
+
+  let html;
+  if ((view.type || 'table') === 'cards') {
+    html = '<div class="vaults-cards">' + rows.map(pg => {
+      const rest = cols.filter(c => !c.isFileCol).map(c => {
+        const v = cell(pg, c);
+        return v && !v.includes('vaults-dv-null')
+          ? `<div class="vaults-card-row"><span class="vaults-card-k">${_esc(c.label)}</span><span>${v}</span></div>`
+          : '';
+      }).join('');
+      return `<div class="vaults-card"><div class="vaults-card-title">${valueHtml(pg.file.link, idx, ctx)}</div>${rest}</div>`;
+    }).join('') + '</div>';
+  } else {
+    const headHtml = `<tr>${cols.map(c => `<th>${_esc(c.label)}</th>`).join('')}</tr>`;
+    const bodyHtml = rows.map(pg => `<tr>${cols.map(c => `<td>${cell(pg, c)}</td>`).join('')}</tr>`).join('');
+    html = `<table class="vaults-dv-table">${headHtml}${bodyHtml}</table>`;
+  }
+  html += `<div class="vaults-dv-count">${rows.length} resultado(s)</div>`;
+  return {
+    html,
+    warns,
+    viewIndex: vi,
+    views: views.map((v, i) => ({ name: v.name || `view ${i + 1}`, type: v.type || 'table' })),
+  };
 }

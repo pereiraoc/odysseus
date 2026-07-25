@@ -73,4 +73,40 @@ sort rank asc, file.name`, ctx('Classes/Guerreiro.md'));
   check('TASK degrada com mensagem', msg.includes('TASK'));
 }
 
+// ── Bases (.base) ──
+import { runBase } from '../static/js/vaultsDataview.js';
+{
+  const base = {
+    properties: { 'note.rank': { displayName: 'Ranque' } },
+    filters: { and: ['file.inFolder("Técnicas")'] },
+    views: [
+      { type: 'table', name: 'Todas', order: ['file.name', 'rank'],
+        sort: [{ property: 'rank', direction: 'DESC' }] },
+      { type: 'table', name: 'Do Guerreiro',
+        filters: { and: ['file.hasLink("Guerreiro")', '!file.name.endsWith(".base")',
+                         'note["rank"] == "Adepta"'] },
+        order: ['file.name', 'nível'] },
+      { type: 'cards', name: 'Cards', order: ['file.basename', 'title'] },
+    ],
+  };
+  const r0 = runBase(base, { notes, current: 'Painel.base', linkHtml }, 0);
+  check('base view 0: filtro de pasta + sort DESC', r0.html.includes('2 resultado')
+    && r0.html.indexOf('Investida') < r0.html.indexOf('Aparar'), r0.html);
+  check('base: displayName aplicado', r0.html.includes('<th>Ranque</th>'));
+  check('base: zero warns', r0.warns.length === 0, r0.warns.join(' | '));
+  const r1 = runBase(base, { notes, current: 'Painel.base', linkHtml }, 1);
+  check('base view 1: hasLink + método + note["x"]', r1.html.includes('1 resultado')
+    && r1.html.includes('Aparar'), r1.html);
+  const r2 = runBase(base, { notes, current: 'Painel.base', linkHtml }, 2);
+  check('base view cards renderiza', r2.html.includes('vaults-card') && r2.warns.length === 0);
+  check('base: lista de views', r2.views.length === 3 && r2.views[1].name === 'Do Guerreiro');
+}
+{
+  // this.file.folder em contexto de .base sintético + == e !=
+  const r = runBase({ views: [{ name: 'x', order: ['file.name'],
+    filters: { and: ['file.folder.startsWith(this.file.folder)', 'file.name != this.file.name'] } }] },
+    { notes, current: 'Técnicas/Painel.base', linkHtml }, 0);
+  check('this.file.folder no .base sintético', r.html.includes('2 resultado'), r.html);
+}
+
 console.log(fail ? '\nFALHOU' : '\nOK');
