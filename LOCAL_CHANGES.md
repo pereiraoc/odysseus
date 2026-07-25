@@ -61,11 +61,20 @@ branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
 `static/js/vaults.js`, `static/js/vaultsGraph.js`, `static/js/vaultsDataview.js` (engine DQL validado contra as 378 queries reais das vaults), `tests/test_vaultfs_routes.py`, `tests/vaults_dataview_spec.mjs`,
 `tests/test_vaultfs_git.py`, specs/planos em `docs/superpowers/`.
 
-**Edições em arquivos do upstream (3 blocos pequenos, conflito improvável):**
+**Edições em arquivos do upstream (4 blocos pequenos, conflito improvável):**
 - `static/index.html`: seção `#vaults-section` no sidebar (após Tools) +
   `<script type="module" src="/static/js/vaults.js">` no bloco de módulos.
 - `app.py`: registro `setup_vaultfs_routes()` logo após o `vault_routes` (~L855).
 - `static/style.css`: bloco `.vaults-*` append-only no final.
+- `core/middleware.py`: `frame-src 'self'` ganha extensão opcional via env
+  `CSP_EXTRA_FRAME_SRC` (vazio = upstream intacto) — permite iframar o
+  KasmVNC do Obsidian (localhost:3010) no modal embutido do painel.
+
+**Obsidian embutido:** o app OFICIAL do container abre dentro do Odysseus
+(modal iframe). O 💎 em cada vault do sidebar (e no header do painel) abre a
+vault direto no Obsidian: `POST /api/vaultfs/obsidian-open` registra a janela
+no `obsidian.json` e reinicia o container quando preciso — sync, plugins e
+tudo mais controlados dentro do próprio Obsidian.
 
 **Envs no overlay (item 2):** `GIT_AUTHOR_*`/`GIT_COMMITTER_*` (identidade dos
 commits feitos pela UI dentro do container) e `VAULTFS_GIT_USER` +
