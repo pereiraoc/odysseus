@@ -41263,3 +41263,18 @@ body.theme-frosted .modal {
 .vaults-dv-count { font-size: 10.5px; opacity: 0.45; margin-bottom: 8px; }
 .vaults-dv-warn { font-size: 11.5px; color: #e5a54b; border: 1px dashed color-mix(in srgb, #e5a54b 50%, transparent); border-radius: 6px; padding: 5px 10px; margin: 6px 0; }
 .vaults-dv-src { font-size: 11px; opacity: 0.6; }
+.vaults-view-pills { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.vaults-view-pill { font-size: 11px; padding: 3px 12px; border-radius: 12px; border: 1px solid var(--border, rgba(128,128,128,0.3)); background: transparent; color: inherit; cursor: pointer; opacity: 0.7; }
+.vaults-view-pill:hover { opacity: 1; }
+.vaults-view-pill.vaults-view-active { opacity: 1; border-color: var(--accent-primary, #60a5fa); background: color-mix(in srgb, var(--accent-primary, #60a5fa) 18%, transparent); }
+.vaults-dv-null { opacity: 0.3; }
+.vaults-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 8px 0; }
+.vaults-card { border: 1px solid var(--border, rgba(128,128,128,0.25)); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; }
+.vaults-card-title { font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+.vaults-card-row { display: flex; gap: 8px; padding: 1px 0; }
+.vaults-card-k { opacity: 0.5; min-width: 80px; flex-shrink: 0; }
+.vaults-caret { display: inline-flex; width: 12px; flex-shrink: 0; opacity: 0.55; }
+.vaults-caret svg { transition: transform 0.14s ease; }
+.vaults-tree-row.vaults-open .vaults-caret svg { transform: rotate(90deg); }
+.vaults-node-icon { display: inline-flex; flex-shrink: 0; opacity: 0.45; }
+.vaults-file .vaults-node-icon { margin-left: 12px; }
