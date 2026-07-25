@@ -412,6 +412,15 @@ function relDirOf(p) {
 }
 
 // ── Dataview + bases do Obsidian (issue #2, read-only) ──
+// Link renderer dos resultados: alvo não-nota (.base, anexo) resolve pela
+// árvore, então clicar num [[X.base]] abre a base no painel.
+function dvLinkHtml(path, label) {
+  const target = path || findAsset(label);
+  return target
+    ? `<a class="vaults-wikilink" data-vaults-open="${esc(target)}">${esc(label)}</a>`
+    : `<span class="vaults-wikilink vaults-wikilink-missing">${esc(label)}</span>`;
+}
+
 async function ensureMeta() {
   if (state.meta) return state.meta;
   const { notes } = await api(`/meta?vault=${encodeURIComponent(state.currentId)}`);
@@ -432,13 +441,7 @@ function renderDataviewBlocks() {
   });
   if (!dvBlocks.length) return;
   ensureMeta().then(notes => {
-    const ctx = {
-      notes,
-      current: state.openPath,
-      linkHtml: (path, label) => path
-        ? `<a class="vaults-wikilink" data-vaults-open="${esc(path)}">${esc(label)}</a>`
-        : `<span class="vaults-wikilink vaults-wikilink-missing">${esc(label)}</span>`,
-    };
+    const ctx = { notes, current: state.openPath, linkHtml: dvLinkHtml };
     dvBlocks.forEach(code => {
       const pre = code.closest('pre');
       if (!pre) return;
@@ -469,14 +472,7 @@ async function openBase(relPath, viewIndex = null) {
       try { viewIndex = parseInt(localStorage.getItem(viewKey) || '0', 10) || 0; } catch (_) { viewIndex = 0; }
     }
     highlightTreeRow(relPath);
-    const ctx = {
-      notes,
-      current: relPath,
-      linkHtml: (path, label) => path
-        ? `<a class="vaults-wikilink" data-vaults-open="${esc(path)}">${esc(label)}</a>`
-        : `<span class="vaults-wikilink vaults-wikilink-missing">${esc(label)}</span>`,
-    };
-    const r = runBase(base, ctx, viewIndex);
+    const r = runBase(base, { notes, current: relPath, linkHtml: dvLinkHtml }, viewIndex);
     try { localStorage.setItem(viewKey, String(r.viewIndex)); } catch (_) {}
     const pills = r.views.map((v, i) =>
       `<button class="vaults-view-pill${i === r.viewIndex ? ' vaults-view-active' : ''}"

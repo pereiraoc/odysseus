@@ -178,3 +178,15 @@ def test_meta_outlinks_inline_fields_aliases(client, vault):
     assert note["props"]["rank"] == "A"
     assert note["aliases"] == ["Apelido"]
     assert isinstance(note["ctime"], float)
+
+
+def test_meta_inline_field_vazio_nao_engole_linha(client, vault):
+    (vault / "Dash.md").write_text(
+        "## Info\naliases::\nproject:: [[Alvo]]\nparent::\narchive:: true\n",
+        encoding="utf-8")
+    r = client.get("/api/vaultfs/meta", params={"vault": "test-vault"})
+    note = next(n for n in r.json()["notes"] if n["path"] == "Dash.md")
+    assert note["props"]["aliases"] is None       # vazio ≠ linha seguinte
+    assert note["props"]["project"] == "[[Alvo]]"
+    assert note["props"]["parent"] is None
+    assert note["props"]["archive"] == "true"
