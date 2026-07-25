@@ -79,6 +79,32 @@ function buildPanel() {
       }
     });
     wireViewerClicks();
+    els.toolbar.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      try {
+        if (btn.dataset.vaultsNew) {
+          const kind = btn.dataset.vaultsNew;
+          const p = await styledPrompt(
+            kind === 'file' ? 'Caminho da nova nota (ex: Pasta/Nome.md):' : 'Caminho da nova pasta:',
+            { title: kind === 'file' ? 'Nova nota' : 'Nova pasta', maxLength: 300 });
+          if (!p) return;
+          const path = (kind === 'file' && !/\.[a-z0-9]+$/i.test(p)) ? `${p}.md` : p;
+          await api('/file', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vault: state.currentId, path, kind }),
+          });
+          await refreshTree();
+          if (kind === 'file') openFile(path);
+          refreshGit();
+        } else if ('vaultsRefresh' in btn.dataset) {
+          await refreshTree();
+          refreshGit();
+        }
+      } catch (err) {
+        showError(`Falha: ${err.message}`);
+      }
+    });
   }
   if (!Modals.isRegistered(PANEL_ID)) {
     Modals.register(PANEL_ID, {
@@ -188,7 +214,46 @@ function buildTreeNodes(nodes) {
   return ul;
 }
 
-function attachRowActions(row, n) { void row; void n; }
+function attachRowActions(row, n) {
+  const acts = document.createElement('span');
+  acts.className = 'vaults-row-acts';
+  acts.innerHTML = `<button class="vaults-row-btn" data-act="rename" title="Renomear/mover">✎</button>
+    <button class="vaults-row-btn" data-act="delete" title="Apagar">×</button>`;
+  row.appendChild(acts);
+  acts.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    try {
+      if (act === 'rename') {
+        const np = await styledPrompt('Novo caminho (relativo à vault):',
+          { title: 'Renomear/mover', defaultValue: n.path, maxLength: 300 });
+        if (!np || np === n.path) return;
+        await api('/rename', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vault: state.currentId, path: n.path, new_path: np }),
+        });
+        if (state.openPath === n.path) state.openPath = np;
+        await refreshTree();
+        refreshGit();
+      } else if (act === 'delete') {
+        const isDir = n.type === 'dir';
+        if (!(await styledConfirm(
+          isDir ? `Apagar a pasta "${n.path}" e TODO o conteúdo?` : `Apagar "${n.path}"?`,
+          { confirmText: 'Apagar', danger: true }))) return;
+        await api(`/file?vault=${encodeURIComponent(state.currentId)}&path=${encodeURIComponent(n.path)}&recursive=${isDir}`,
+          { method: 'DELETE' });
+        if (state.openPath === n.path || (isDir && state.openPath?.startsWith(n.path + '/'))) {
+          state.openPath = null;
+          renderViewerEmpty();
+        }
+        await refreshTree();
+        refreshGit();
+      }
+    } catch (err) {
+      showError(`Falha: ${err.message}`);
+    }
+  });
+}
 
 function highlightTreeRow(relPath) {
   els.tree.querySelectorAll('.vaults-tree-row.vaults-active').forEach(r => r.classList.remove('vaults-active'));

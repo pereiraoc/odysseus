@@ -41168,3 +41168,7 @@ body.theme-frosted .modal {
 .vaults-dirty { color: #f59e0b; flex-shrink: 0; }
 .vaults-md { font-size: 14px; line-height: 1.6; }
 .vaults-md img { max-width: 100%; }
+.vaults-row-acts { display: none; margin-left: 4px; gap: 2px; flex-shrink: 0; }
+.vaults-tree-row:hover .vaults-row-acts { display: inline-flex; }
+.vaults-row-btn { background: none; border: none; cursor: pointer; opacity: 0.55; font-size: 11px; padding: 0 3px; color: inherit; line-height: 1; }
+.vaults-row-btn:hover { opacity: 1; }
