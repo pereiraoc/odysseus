@@ -134,6 +134,7 @@ function stripTime(d) { return isDate(d) ? new Date(d.getFullYear(), d.getMonth(
 
 function coerceValue(v) {
   if (v == null) return null;
+  if (isDate(v) || isLink(v)) return v;
   if (Array.isArray(v)) return v.map(coerceValue);
   if (typeof v === 'string') {
     if (ISO_DATE.test(v.trim())) {
