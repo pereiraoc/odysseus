@@ -15,6 +15,25 @@ import { registerMenuDismiss } from './escMenuStack.js';
 const PANEL_ID = 'vaults-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
 
+// Ícones feather-style no mesmo padrão visual do resto do Odysseus (issue #3).
+const FI = (paths, s = 12) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const ICONS = {
+  notePlus: FI('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/>'),
+  folderPlus: FI('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/>'),
+  refresh: FI('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'),
+  pencil: FI('<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>', 11),
+  trash: FI('<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>', 11),
+  plus: FI('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 11),
+  minus: FI('<line x1="5" y1="12" x2="19" y2="12"/>', 11),
+  discard: FI('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', 11),
+  check: FI('<polyline points="20 6 9 17 4 12"/>'),
+  undo: FI('<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>', 11),
+  branch: FI('<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>'),
+  down: FI('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>', 11),
+  up: FI('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>', 11),
+  chevron: FI('<polyline points="9 18 15 12 9 6"/>', 11),
+};
+
 const state = {
   vaults: [],
   currentId: null,
@@ -56,10 +75,18 @@ function buildPanel() {
         </div>
         <div class="vaults-body">
           <div class="vaults-viewer"></div>
-          <div class="vaults-nav">
-            <div class="vaults-toolbar"></div>
-            <div class="vaults-tree"></div>
-            <div class="vaults-git"></div>
+          <div class="vaults-nav" data-tab="browser">
+            <div class="vaults-tabs">
+              <button class="vaults-tab" data-vaults-tab="browser">Browser</button>
+              <button class="vaults-tab" data-vaults-tab="git">Git<span class="vaults-tab-badge" style="display:none"></span></button>
+            </div>
+            <div class="vaults-tabpane vaults-pane-browser">
+              <div class="vaults-toolbar"></div>
+              <div class="vaults-tree"></div>
+            </div>
+            <div class="vaults-tabpane vaults-pane-git">
+              <div class="vaults-git"></div>
+            </div>
           </div>
         </div>
       </div>`;
@@ -68,10 +95,27 @@ function buildPanel() {
     els.content = panel.querySelector('.modal-content');
     els.header = panel.querySelector('.modal-header');
     els.title = panel.querySelector('.vaults-title');
+    els.nav = panel.querySelector('.vaults-nav');
     els.toolbar = panel.querySelector('.vaults-toolbar');
     els.tree = panel.querySelector('.vaults-tree');
     els.viewer = panel.querySelector('.vaults-viewer');
     els.git = panel.querySelector('.vaults-git');
+    // Abas Browser | Git (feedback: layout estilo VS Code)
+    const setTab = (t) => {
+      els.nav.dataset.tab = t;
+      els.nav.querySelectorAll('.vaults-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.vaultsTab === t));
+      try { localStorage.setItem('odysseus-vaults-tab', t); } catch (_) {}
+      if (t === 'git') maybeLoadGraph();
+    };
+    els.setTab = setTab;
+    els.nav.querySelector('.vaults-tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-vaults-tab]');
+      if (b) setTab(b.dataset.vaultsTab);
+    });
+    let savedTab = 'browser';
+    try { savedTab = localStorage.getItem('odysseus-vaults-tab') || 'browser'; } catch (_) {}
+    setTab(savedTab);
     panel.querySelector('.close-btn').addEventListener('click', () => Modals.close(PANEL_ID));
     makeWindowDraggable(panel, { content: els.content, header: els.header });
     panel.addEventListener('keydown', (e) => {
@@ -82,6 +126,13 @@ function buildPanel() {
     });
     wireViewerClicks();
     wireGitClicks();
+    els.git.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'
+          && e.target.classList.contains('vaults-commit-msg')) {
+        e.preventDefault();
+        els.git.querySelector('[data-git="commit"]')?.click();
+      }
+    });
     els.toolbar.addEventListener('click', async (e) => {
       const btn = e.target.closest('button');
       if (!btn) return;
@@ -136,6 +187,14 @@ async function openVault(id) {
   els.title.textContent = v ? v.name : id;
   panel.classList.remove('hidden', 'modal-minimized');
   if (!panel.classList.contains('modal-right-docked')) {
+    // Issue #1: largura default estilo Obsidian (~700px de viewer + coluna de
+    // nav), só enquanto o usuário nunca redimensionou este painel — depois a
+    // largura salva pelo modalSnap (localStorage) manda.
+    try {
+      if (!localStorage.getItem(`odysseus-edge-dock-width:right:${PANEL_ID}`) && !els.content._userDockWidth) {
+        els.content._userDockWidth = Math.min(1000, Math.round(window.innerWidth * 0.55));
+      }
+    } catch (_) {}
     applyEdgeDock(panel, 'right');
   }
   renderToolbar();
@@ -154,9 +213,9 @@ function renderViewerEmpty() {
 
 function renderToolbar() {
   els.toolbar.innerHTML = `
-    <button class="vaults-btn" data-vaults-new="file" title="Nova nota">＋ nota</button>
-    <button class="vaults-btn" data-vaults-new="dir" title="Nova pasta">＋ pasta</button>
-    <button class="vaults-btn" data-vaults-refresh title="Recarregar">↻</button>`;
+    <button class="vaults-btn" data-vaults-new="file" title="Nova nota">${ICONS.notePlus}<span>nota</span></button>
+    <button class="vaults-btn" data-vaults-new="dir" title="Nova pasta">${ICONS.folderPlus}<span>pasta</span></button>
+    <button class="vaults-btn vaults-btn-icon" data-vaults-refresh title="Recarregar">${ICONS.refresh}</button>`;
 }
 
 // ── Árvore ──
@@ -222,8 +281,8 @@ function buildTreeNodes(nodes) {
 function attachRowActions(row, n) {
   const acts = document.createElement('span');
   acts.className = 'vaults-row-acts';
-  acts.innerHTML = `<button class="vaults-row-btn" data-act="rename" title="Renomear/mover">✎</button>
-    <button class="vaults-row-btn" data-act="delete" title="Apagar">×</button>`;
+  acts.innerHTML = `<button class="vaults-row-btn" data-act="rename" title="Renomear/mover">${ICONS.pencil}</button>
+    <button class="vaults-row-btn" data-act="delete" title="Apagar">${ICONS.trash}</button>`;
   row.appendChild(acts);
   acts.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -349,6 +408,42 @@ function relDirOf(p) {
   return i < 0 ? '' : p.slice(0, i);
 }
 
+// ── Frontmatter (issue #4): oculto no view, barra Properties expansível ──
+function splitFrontmatter(src) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(src);
+  if (!m) return { props: null, body: src };
+  return { props: m[1], body: src.slice(m[0].length) };
+}
+
+function parseProps(yamlText) {
+  // Parse raso: `chave: valor` + listas `- item` (suficiente pra exibição).
+  const out = [];
+  let cur = null;
+  for (const line of yamlText.split(/\r?\n/)) {
+    const kv = /^([^\s:][^:]*):\s*(.*)$/.exec(line);
+    const li = /^\s+-\s*(.*)$/.exec(line) || /^-\s*(.*)$/.exec(line);
+    if (kv) {
+      cur = { key: kv[1].trim(), value: kv[2].trim() };
+      out.push(cur);
+    } else if (li && cur) {
+      cur.value = (cur.value ? cur.value + ', ' : '') + li[1].trim();
+    }
+  }
+  return out;
+}
+
+function propsBarHtml(propsText) {
+  const props = parseProps(propsText);
+  const rows = props.map(p => `<tr><td class="vaults-prop-k">${esc(p.key)}</td><td>${esc(p.value)}</td></tr>`).join('');
+  return `<div class="vaults-props">
+      <div class="vaults-props-head" data-vaults-props-toggle>
+        <span class="vaults-sec-chev">${ICONS.chevron}</span>
+        <span>Properties</span><span class="vaults-sec-badge">${props.length}</span>
+      </div>
+      <div class="vaults-props-body"><table>${rows}</table></div>
+    </div>`;
+}
+
 // ── Viewer/editor ──
 async function openFile(relPath) {
   if (state.dirty && !(await styledConfirm('Há edição não salva. Descartar?', { danger: true }))) return;
@@ -387,7 +482,10 @@ function renderViewer() {
       <span class="vaults-dirty" style="display:${state.dirty ? '' : 'none'}" title="Não salvo">●</span>
     </div>`;
   if (state.mode === 'view') {
-    els.viewer.innerHTML = bar + `<div class="vaults-md">${mdToHtml(preprocessMd(state.content, relDirOf(state.openPath || '')))}</div>`;
+    const { props, body } = splitFrontmatter(state.content);
+    els.viewer.innerHTML = bar
+      + (props ? propsBarHtml(props) : '')
+      + `<div class="vaults-md">${mdToHtml(preprocessMd(body, relDirOf(state.openPath || '')))}</div>`;
   } else {
     els.viewer.innerHTML = bar + `<textarea class="vaults-editor" spellcheck="false"></textarea>`;
     const ta = els.viewer.querySelector('.vaults-editor');
@@ -439,6 +537,11 @@ async function saveFile(force = false) {
 
 function wireViewerClicks() {
   els.viewer.addEventListener('click', async (e) => {
+    const propsToggle = e.target.closest('[data-vaults-props-toggle]');
+    if (propsToggle) {
+      propsToggle.closest('.vaults-props').classList.toggle('vaults-props-open');
+      return;
+    }
     const open = e.target.closest('[data-vaults-open]');
     if (open) { openFile(open.dataset.vaultsOpen); return; }
     const create = e.target.closest('[data-vaults-create]');
@@ -499,91 +602,140 @@ function gitOp(route, body) {
   });
 }
 
+// Seções colapsáveis estilo VS Code (issue #5), estado por seção no localStorage.
+const SEC_KEY = k => `odysseus-vaults-sec:${k}`;
+function secOpen(k, def = true) {
+  try {
+    const v = localStorage.getItem(SEC_KEY(k));
+    return v === null ? def : v === '1';
+  } catch (_) { return def; }
+}
+
+function gitSection(key, title, badge, bodyHtml) {
+  const open = secOpen(key);
+  return `<div class="vaults-sec${open ? ' vaults-sec-open' : ''}" data-sec="${key}">
+      <div class="vaults-sec-head" data-sec-toggle="${key}">
+        <span class="vaults-sec-chev">${ICONS.chevron}</span>
+        <span class="vaults-sec-title">${title}</span>
+        ${badge ? `<span class="vaults-sec-badge">${badge}</span>` : ''}
+      </div>
+      <div class="vaults-sec-body">${bodyHtml}</div>
+    </div>`;
+}
+
+function chgRow(p, code, cls, staged, acts) {
+  const i = p.lastIndexOf('/');
+  const name = i < 0 ? p : p.slice(i + 1);
+  const dir = i < 0 ? '' : p.slice(0, i);
+  return `<div class="vaults-chg" data-path="${esc(p)}" data-staged="${staged}">
+      <span class="vaults-chg-name" data-git="diff" title="${esc(p)}">${esc(name)}</span>
+      ${dir ? `<span class="vaults-chg-dir">${esc(dir)}</span>` : ''}
+      <span class="vaults-chg-acts">${acts}</span>
+      <span class="vaults-chg-code ${cls}">${esc(code)}</span>
+    </div>`;
+}
+
 function renderGit() {
   const g = state.git;
+  const n = g?.has_git ? g.staged.length + g.unstaged.length + g.untracked.length : 0;
+  const tabBadge = els.panel?.querySelector('.vaults-tab-badge');
+  if (tabBadge) {
+    tabBadge.textContent = String(n);
+    tabBadge.style.display = n ? '' : 'none';
+  }
   if (!g) { els.git.innerHTML = ''; return; }
   if (!g.has_git) {
     els.git.innerHTML = `<div class="vaults-git-sec">
-      <button class="vaults-btn" data-git="init">Inicializar repositório git</button></div>`;
+      <button class="vaults-btn" data-git="init">${ICONS.branch}<span>Inicializar repositório git</span></button></div>`;
     return;
   }
-  const n = g.staged.length + g.unstaged.length + g.untracked.length;
-  const row = (p, code, staged, acts) => `
-    <div class="vaults-chg" data-path="${esc(p)}" data-staged="${staged}">
-      <span class="vaults-chg-name" data-git="diff" title="${esc(p)}">${esc(p.split('/').pop())}</span>
-      <span class="vaults-chg-code">${esc(code)}</span>${acts}
-    </div>`;
   const syncLabel = `${g.ahead ? g.ahead + '↑' : ''}${g.behind ? ' ' + g.behind + '↓' : ''}`.trim();
+  const stagedRows = g.staged.map(c => chgRow(c.path, c.code, 'vaults-b-staged', true,
+    `<button class="vaults-row-btn" data-git="unstage" title="Unstage">${ICONS.minus}</button>`)).join('');
+  const changeRows = [
+    ...g.unstaged.map(c => chgRow(c.path, c.code, 'vaults-b-mod', false,
+      `<button class="vaults-row-btn" data-git="stage" title="Stage">${ICONS.plus}</button><button class="vaults-row-btn" data-git="discard" title="Descartar mudanças">${ICONS.discard}</button>`)),
+    ...g.untracked.map(p => chgRow(p, 'U', 'vaults-b-new', false,
+      `<button class="vaults-row-btn" data-git="stage" title="Stage">${ICONS.plus}</button><button class="vaults-row-btn" data-git="discard" title="Apagar (untracked)">${ICONS.discard}</button>`)),
+  ].join('');
+  const changesBody = `
+      <textarea class="vaults-commit-msg" placeholder="Mensagem (Ctrl+Enter pra commitar)" rows="2"></textarea>
+      <div class="vaults-commit-row">
+        <button class="vaults-commit-btn" data-git="commit">${ICONS.check}<span>Commit</span></button>
+        <label class="vaults-amend" title="Emendar o último commit"><input type="checkbox" class="vaults-amend-cb"> amend</label>
+        <button class="vaults-row-btn" data-git="undo" title="Desfazer último commit (reset soft)">${ICONS.undo}</button>
+      </div>
+      ${stagedRows ? `<div class="vaults-chg-group">Staged Changes</div>${stagedRows}` : ''}
+      ${changeRows ? `<div class="vaults-chg-group">Changes</div>${changeRows}`
+        : (stagedRows ? '' : '<div class="vaults-git-clean">✓ working tree limpo</div>')}`;
   els.git.innerHTML = `
     <div class="vaults-branch-row">
-      <span class="vaults-branch" data-git="branches" title="Trocar/criar branch">⎇ ${esc(g.branch || '?')}</span>
+      <span class="vaults-branch" data-git="branches" title="Trocar/criar branch">${ICONS.branch}<span>${esc(g.branch || '?')}</span></span>
       <span class="vaults-sync" title="ahead/behind do upstream">${syncLabel}</span>
-      <button class="vaults-row-btn" data-git="pull" title="Pull (ff-only)">⇣</button>
-      <button class="vaults-row-btn" data-git="push" title="Push">⇡</button>
-      <button class="vaults-row-btn" data-git="fetch" title="Fetch">↺</button>
+      <button class="vaults-row-btn" data-git="pull" title="Pull (ff-only)">${ICONS.down}</button>
+      <button class="vaults-row-btn" data-git="push" title="Push">${ICONS.up}</button>
+      <button class="vaults-row-btn" data-git="fetch" title="Fetch">${ICONS.refresh}</button>
     </div>
-    <div class="vaults-git-sec">
-      <div class="vaults-git-head">MUDANÇAS (${n})</div>
-      ${g.staged.map(c => row(c.path, c.code, true,
-        `<button class="vaults-row-btn" data-git="unstage" title="Unstage">−</button>`)).join('')}
-      ${g.unstaged.map(c => row(c.path, c.code, false,
-        `<button class="vaults-row-btn" data-git="stage" title="Stage">＋</button>
-         <button class="vaults-row-btn" data-git="discard" title="Descartar mudanças">↶</button>`)).join('')}
-      ${g.untracked.map(p => row(p, 'U', false,
-        `<button class="vaults-row-btn" data-git="stage" title="Stage">＋</button>
-         <button class="vaults-row-btn" data-git="discard" title="Apagar (untracked)">↶</button>`)).join('')}
-      ${n ? `<textarea class="vaults-commit-msg" placeholder="Mensagem de commit…" rows="2"></textarea>
-      <div class="vaults-commit-row">
-        <button class="vaults-btn" data-git="commit">✓ Commit</button>
-        <label class="vaults-amend"><input type="checkbox" class="vaults-amend-cb"> amend</label>
-        <button class="vaults-row-btn" data-git="undo" title="Desfazer último commit (reset soft)">↩</button>
-      </div>` : `<div class="vaults-git-clean">✓ working tree limpo
-        <button class="vaults-row-btn" data-git="undo" title="Desfazer último commit (reset soft)">↩</button></div>`}
-    </div>
-    <div class="vaults-git-sec vaults-log-sec"></div>`;
-  renderGitLog();
+    ${gitSection('changes', 'Changes', n, changesBody)}
+    ${gitSection('graph', 'Graph', null, '<div class="vaults-graph-host"></div>')}`;
+  state.graphLoaded = false;
+  maybeLoadGraph();
+}
+
+function maybeLoadGraph(limit = 150) {
+  if (!state.git?.has_git || state.graphLoaded) return;
+  if (els.nav?.dataset.tab !== 'git' || !secOpen('graph')) return;
+  const host = els.git.querySelector('.vaults-graph-host');
+  if (!host) return;
+  state.graphLoaded = true;
+  api(`/git/graph?vault=${encodeURIComponent(state.currentId)}&limit=${limit}`)
+    .then(({ commits }) => {
+      renderCommitGraph(host, commits, openCommit, { compact: true });
+      if (commits.length >= limit) {
+        const more = document.createElement('button');
+        more.className = 'vaults-btn vaults-graph-more';
+        more.textContent = 'mais commits';
+        more.addEventListener('click', () => {
+          state.graphLoaded = false;
+          maybeLoadGraph(limit + 300);
+        });
+        host.appendChild(more);
+      }
+    })
+    .catch(e => {
+      state.graphLoaded = false;
+      host.innerHTML = `<div class="vaults-git-err">${esc(e.message)}</div>`;
+    });
 }
 
 function applyTreeBadges() {
   const g = state.git;
   const map = new Map();
   if (g?.has_git) {
-    for (const c of g.unstaged) map.set(c.path, { code: c.code, cls: 'vaults-b-mod' });
-    for (const c of g.staged) if (!map.has(c.path)) map.set(c.path, { code: c.code, cls: 'vaults-b-staged' });
-    for (const p of g.untracked) map.set(p, { code: 'U', cls: 'vaults-b-new' });
+    for (const c of g.unstaged) map.set(c.path, { code: c.code, cls: 'vaults-b-mod', row: 'vaults-row-mod' });
+    for (const c of g.staged) if (!map.has(c.path)) map.set(c.path, { code: c.code, cls: 'vaults-b-staged', row: 'vaults-row-staged' });
+    for (const p of g.untracked) map.set(p, { code: 'U', cls: 'vaults-b-new', row: 'vaults-row-new' });
   }
   const changedKeys = [...map.keys()];
   els.tree.querySelectorAll('.vaults-tree-row').forEach(rowEl => {
     const badge = rowEl.querySelector('.vaults-badge');
     if (!badge) return;
+    rowEl.classList.remove('vaults-row-mod', 'vaults-row-staged', 'vaults-row-new');
     const p = rowEl.dataset.path;
     const hit = map.get(p);
     if (hit) {
       badge.textContent = hit.code;
       badge.className = `vaults-badge ${hit.cls}`;
+      rowEl.classList.add(hit.row);
     } else {
+      // pasta ancestral de alguma mudança → nome colorido + dot (estilo VS Code)
       const isDirWithChange = rowEl.classList.contains('vaults-dir')
         && changedKeys.some(k => k.startsWith(p + '/'));
       badge.textContent = isDirWithChange ? '•' : '';
       badge.className = 'vaults-badge' + (isDirWithChange ? ' vaults-b-mod' : '');
+      if (isDirWithChange) rowEl.classList.add('vaults-row-mod');
     }
   });
-}
-
-async function renderGitLog() {
-  const sec = els.git.querySelector('.vaults-log-sec');
-  if (!sec || !state.git?.has_git) return;
-  try {
-    const { commits } = await api(`/git/log?vault=${encodeURIComponent(state.currentId)}&limit=30`);
-    sec.innerHTML = `<div class="vaults-git-head">COMMITS (${esc(state.git.branch || '')})</div>`
-      + commits.map(c => `<div class="vaults-log-row" data-git="show-commit" data-hash="${c.hash}"
-          title="${esc(c.subject)} — ${esc(c.author)}">
-          <span class="vaults-log-hash">${c.short}</span><span class="vaults-log-subj">${esc(c.subject)}</span>
-        </div>`).join('')
-      + `<div class="vaults-log-row vaults-log-more" data-git="graph">⋯ ver grafo completo</div>`;
-  } catch (e) {
-    sec.innerHTML = `<div class="vaults-git-head">COMMITS</div><div class="vaults-git-err">${esc(e.message)}</div>`;
-  }
 }
 
 // ── Diff no viewer ──
@@ -635,6 +787,14 @@ async function openCommit(hash) {
 // ── Delegated handler do strip git ──
 function wireGitClicks() {
   els.git.addEventListener('click', async (e) => {
+    const secT = e.target.closest('[data-sec-toggle]');
+    if (secT) {
+      const sec = secT.closest('.vaults-sec');
+      const open = sec.classList.toggle('vaults-sec-open');
+      try { localStorage.setItem(SEC_KEY(secT.dataset.secToggle), open ? '1' : '0'); } catch (_) {}
+      if (open && secT.dataset.secToggle === 'graph') maybeLoadGraph();
+      return;
+    }
     const el = e.target.closest('[data-git]');
     if (!el) return;
     const action = el.dataset.git;
@@ -662,8 +822,6 @@ function wireGitClicks() {
           { confirmText: 'Desfazer', danger: true })) {
           await gitOp('undo_commit', {});
         }
-      } else if (action === 'show-commit') {
-        openCommit(el.dataset.hash);
       } else if (action === 'push' || action === 'pull' || action === 'fetch') {
         el.disabled = true;
         el.classList.add('vaults-busy');
@@ -679,8 +837,6 @@ function wireGitClicks() {
       } else if (action === 'init') {
         await gitOp('init', {});
         showToast('Repositório git inicializado');
-      } else if (action === 'graph') {
-        openGraph();
       }
     } catch (_) { /* gitOp já mostrou o erro */ }
   });
@@ -728,21 +884,6 @@ async function openBranchMenu(anchor) {
   });
 }
 
-async function openGraph(limit = 200) {
-  try {
-    const { commits } = await api(`/git/graph?vault=${encodeURIComponent(state.currentId)}&limit=${limit}`);
-    state.mode = 'graph';
-    els.viewer.innerHTML = `<div class="vaults-viewbar">
-        <span class="vaults-open-name">grafo de commits (todas as branches, ${commits.length})</span>
-        ${commits.length >= limit ? '<button class="vaults-btn vaults-graph-more">mais commits</button>' : ''}
-      </div><div class="vaults-graph-host"></div>`;
-    els.viewer.querySelector('.vaults-graph-more')
-      ?.addEventListener('click', () => openGraph(limit + 300));
-    renderCommitGraph(els.viewer.querySelector('.vaults-graph-host'), commits, openCommit);
-  } catch (e) {
-    showError(`grafo: ${e.message}`);
-  }
-}
 
 // ── Sidebar ──
 async function initSidebar() {
