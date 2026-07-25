@@ -32,9 +32,10 @@ Ativar no `.env` (gitignored, NÃO comitado):
 `COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/pereiraoc.yml`
 
 ## 3. `data/settings.json` — `tool_path_extra_roots`  [runtime, gitignored]
-`"tool_path_extra_roots": ["/app/vaults/OP Vault"]` → o *second brain* fica sempre
-acessível às file-tools do agente. Projetos (pleitost, RPG) entram por conversa via
-o **Workspace picker**. Setável pelo chat (`manage_settings`) ou editando o arquivo.
+`"tool_path_extra_roots"` lista as vaults acessíveis às file-tools do agente **e ao
+painel de Vaults** (item 5): `OP Vault`, `pleitost`, `pleitost-app` e
+`caelestia-arch-setup` (os dois últimos montados pelo overlay do item 2, de
+`/data/projects/*`). Setável pelo chat (`manage_settings`) ou editando o arquivo.
 
 ## 4. `Dockerfile` — pin Python em 3.12  [inline patch]
 Upstream usa `FROM python:3.14-slim`; trocado por `ARG PYTHON_VERSION=3.12` +
