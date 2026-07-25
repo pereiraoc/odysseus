@@ -10,6 +10,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js';
 import { mdToHtml } from './markdown.js';
 import { renderCommitGraph } from './vaultsGraph.js';
+import { registerMenuDismiss } from './escMenuStack.js';
 
 const PANEL_ID = 'vaults-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
@@ -704,7 +705,15 @@ async function openBranchMenu(anchor) {
   menu.style.cssText = `position:fixed; left:${Math.max(8, r.right - 200)}px; top:${r.bottom + 4}px;`
     + 'display:block; z-index:400; min-width:180px; max-height:50vh; overflow-y:auto;';
   document.body.appendChild(menu);
-  const closeMenu = () => menu.remove();
+  // Escape fecha SÓ o menu (LIFO do escMenuStack), não o painel inteiro.
+  let unregister = () => {};
+  const closeMenu = () => {
+    menu.remove();
+    unregister();
+    document.removeEventListener('click', closeMenu);
+  };
+  menu._dismiss = closeMenu;
+  unregister = registerMenuDismiss(closeMenu);
   setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
   menu.addEventListener('click', async (e) => {
     const item = e.target.closest('.vaults-branch-item');
