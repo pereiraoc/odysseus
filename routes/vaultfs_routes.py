@@ -387,14 +387,31 @@ def setup_vaultfs_routes() -> APIRouter:
                     tags.update(t.strip().lstrip("#") for t in re.split(r"[,\s]+", fm_tags) if t.strip())
                 elif isinstance(fm_tags, list):
                     tags.update(str(t).strip().lstrip("#") for t in fm_tags if str(t).strip())
-                # tags inline: fora de code blocks (``` e `inline`), como no Obsidian
+                # corpo sem code blocks (``` e `inline`) — tags/links/fields como no Obsidian
                 no_code = re.sub(r"```.*?(```|\Z)", "", head, flags=re.S)
                 no_code = re.sub(r"`[^`\n]*`", "", no_code)
                 tags.update(mt.group(1) for mt in re.finditer(r"(?<![\w#])#([\w\-/]+)", no_code))
+                # wikilinks de saída (grafo pro dataview: FROM [[]], outgoing())
+                outlinks = []
+                for lm in re.finditer(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]", no_code):
+                    t = lm.group(1).strip()
+                    if t and t not in outlinks:
+                        outlinks.append(t)
+                # campos inline do Dataview: `Chave:: valor` (linha ou item de lista)
+                for im in re.finditer(
+                        r"^\s*(?:[-*]\s+)?([A-Za-zÀ-ÿ][\w À-ÿ.-]*?)::\s*(.+?)\s*$",
+                        no_code, re.M):
+                    key = im.group(1).strip()
+                    if key and key not in props:
+                        props[key] = im.group(2).strip()
+                aliases = props.get("aliases") or props.get("alias") or []
+                if isinstance(aliases, str):
+                    aliases = [a.strip() for a in aliases.split(",") if a.strip()]
                 notes.append({
                     "path": rel, "name": fn[:-3], "folder": os.path.dirname(rel),
-                    "mtime": st.st_mtime, "size": st.st_size,
-                    "tags": sorted(tags), "props": props,
+                    "mtime": st.st_mtime, "ctime": st.st_ctime, "size": st.st_size,
+                    "tags": sorted(tags), "aliases": aliases,
+                    "outlinks": outlinks, "props": props,
                 })
         return {"notes": notes}
 
