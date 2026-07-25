@@ -42,16 +42,20 @@ export function layoutGraph(commits) {
 
 const _esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
-export function renderCommitGraph(container, commits, onSelect) {
+export function renderCommitGraph(container, commits, onSelect, opts = {}) {
   if (!commits.length) {
     container.innerHTML = '<div class="vaults-empty">Sem commits ainda.</div>';
     return;
   }
+  // compact: modo coluna-lateral (issue #5) — linhas menores, sem autor/data.
+  const compact = !!opts.compact;
+  const ROWH = compact ? 22 : ROW_H;
+  const LANEW = compact ? 11 : LANE_W;
   const { rows, laneCount } = layoutGraph(commits);
-  const gw = PAD * 2 + laneCount * LANE_W;
-  const h = rows.length * ROW_H;
-  const cx = l => PAD + l * LANE_W + LANE_W / 2;
-  const cy = i => i * ROW_H + ROW_H / 2;
+  const gw = PAD * 2 + laneCount * LANEW;
+  const h = rows.length * ROWH;
+  const cx = l => PAD + l * LANEW + LANEW / 2;
+  const cy = i => i * ROWH + ROWH / 2;
   const color = l => COLORS[l % COLORS.length];
   const hashRow = new Map(rows.map((r, i) => [r.commit.hash, i]));
 
@@ -62,14 +66,14 @@ export function renderCommitGraph(container, commits, onSelect) {
       const j = hashRow.get(ph);
       if (j === undefined) {
         // parent fora da página carregada — linha curta pra baixo indicando continuação
-        paths += `<line x1="${cx(r.lane)}" y1="${cy(i)}" x2="${cx(r.lane)}" y2="${cy(i) + ROW_H * 0.6}" stroke="${color(r.lane)}" stroke-dasharray="2,3"/>`;
+        paths += `<line x1="${cx(r.lane)}" y1="${cy(i)}" x2="${cx(r.lane)}" y2="${cy(i) + ROWH * 0.6}" stroke="${color(r.lane)}" stroke-dasharray="2,3"/>`;
         return;
       }
       const jl = rows[j].lane;
       if (r.lane === jl && pi === 0) {
         paths += `<line x1="${cx(r.lane)}" y1="${cy(i)}" x2="${cx(jl)}" y2="${cy(j)}" stroke="${color(r.lane)}"/>`;
       } else {
-        paths += `<path d="M${cx(r.lane)},${cy(i)} C${cx(r.lane)},${cy(i) + ROW_H * 0.8} ${cx(jl)},${cy(j) - ROW_H * 0.8} ${cx(jl)},${cy(j)}" stroke="${color(jl)}" fill="none"/>`;
+        paths += `<path d="M${cx(r.lane)},${cy(i)} C${cx(r.lane)},${cy(i) + ROWH * 0.8} ${cx(jl)},${cy(j) - ROWH * 0.8} ${cx(jl)},${cy(j)}" stroke="${color(jl)}" fill="none"/>`;
       }
     });
     dots += `<circle cx="${cx(r.lane)}" cy="${cy(i)}" r="${DOT_R}" fill="${color(r.lane)}"/>`;
@@ -83,11 +87,11 @@ export function renderCommitGraph(container, commits, onSelect) {
       <div class="vaults-graph-rows">
         ${rows.map(r => `
           <div class="vaults-graph-row" data-hash="${r.commit.hash}"
-            style="height:${ROW_H}px" title="${_esc(r.commit.subject)}">
+            style="height:${ROWH}px" title="${_esc(r.commit.subject)}">
             <span class="vaults-log-hash">${r.commit.short}</span>
             ${r.commit.refs.map(x => `<span class="vaults-ref">${_esc(x)}</span>`).join('')}
             <span class="vaults-log-subj">${_esc(r.commit.subject)}</span>
-            <span class="vaults-graph-meta">${_esc(r.commit.author)} · ${new Date(r.commit.date).toLocaleDateString()}</span>
+            ${compact ? '' : `<span class="vaults-graph-meta">${_esc(r.commit.author)} · ${new Date(r.commit.date).toLocaleDateString()}</span>`}
           </div>`).join('')}
       </div>
     </div>`;
