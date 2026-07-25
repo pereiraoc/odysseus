@@ -18,6 +18,11 @@ from pydantic import BaseModel
 from src.auth_helpers import require_user
 from src.settings import get_setting
 
+try:
+    import yaml as _yaml
+except ImportError:  # pragma: no cover - imagem sempre tem pyyaml
+    _yaml = None
+
 logger = logging.getLogger(__name__)
 
 TEXT_MAX_BYTES = 5 * 1024 * 1024  # leitura de texto: 5MB
@@ -82,6 +87,32 @@ def _reject_git(rel: str):
     parts = [p for p in (rel or "").replace("\\", "/").split("/") if p]
     if ".git" in parts:
         raise HTTPException(403, "paths inside .git are not accessible")
+
+
+def _parse_frontmatter(text: str) -> dict:
+    """Frontmatter YAML do topo da nota → dict (pyyaml, com fallback raso)."""
+    m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?", text, re.S)
+    if not m:
+        return {}
+    if _yaml is not None:
+        try:
+            data = _yaml.safe_load(m.group(1))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    out: dict = {}
+    cur = None
+    for line in m.group(1).splitlines():
+        kv = re.match(r"^([^\s:][^:]*):\s*(.*)$", line)
+        li = re.match(r"^\s*-\s*(.*)$", line)
+        if kv:
+            cur = kv.group(1).strip()
+            out[cur] = kv.group(2).strip()
+        elif li and cur is not None:
+            if not isinstance(out.get(cur), list):
+                out[cur] = [out[cur]] if out.get(cur) else []
+            out[cur].append(li.group(1).strip())
+    return out
 
 
 # ── Git (subprocess confinado à raiz da vault) ──
@@ -329,6 +360,58 @@ def setup_vaultfs_routes() -> APIRouter:
         else:
             raise HTTPException(404, "not found")
         return {"ok": True}
+
+    @router.get("/meta")
+    def vault_meta(request: Request, vault: str = Query(...), user: str = Depends(require_user)):
+        """Metadados de todas as notas .md (frontmatter + tags) — base do
+        Dataview/bases no frontend (issue #2)."""
+        root = _vault_root(vault)
+        notes = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for fn in filenames:
+                if fn.startswith(".") or not fn.lower().endswith(".md"):
+                    continue
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
+                try:
+                    st = os.stat(full)
+                    with open(full, "r", encoding="utf-8", errors="replace") as f:
+                        head = f.read(65536)
+                except OSError:
+                    continue
+                props = _parse_frontmatter(head)
+                tags: set = set()
+                fm_tags = props.get("tags") or props.get("tag")
+                if isinstance(fm_tags, str):
+                    tags.update(t.strip().lstrip("#") for t in re.split(r"[,\s]+", fm_tags) if t.strip())
+                elif isinstance(fm_tags, list):
+                    tags.update(str(t).strip().lstrip("#") for t in fm_tags if str(t).strip())
+                tags.update(mt.group(1) for mt in re.finditer(r"(?<![\w#])#([\w\-/]+)", head))
+                notes.append({
+                    "path": rel, "name": fn[:-3], "folder": os.path.dirname(rel),
+                    "mtime": st.st_mtime, "size": st.st_size,
+                    "tags": sorted(tags), "props": props,
+                })
+        return {"notes": notes}
+
+    @router.get("/base")
+    def read_base(request: Request, vault: str = Query(...), path: str = Query(...),
+                  user: str = Depends(require_user)):
+        """Arquivo .base (databases do Obsidian) parseado como YAML → JSON."""
+        root = _vault_root(vault)
+        _reject_git(path)
+        target = _resolve(root, path)
+        if not os.path.isfile(target):
+            raise HTTPException(404, "file not found")
+        if _yaml is None:
+            raise HTTPException(501, "pyyaml not available for .base parsing")
+        try:
+            with open(target, "r", encoding="utf-8", errors="replace") as f:
+                data = _yaml.safe_load(f.read())
+        except Exception as e:
+            raise HTTPException(400, f"invalid base yaml: {e}")
+        return {"base": data if isinstance(data, dict) else {}}
 
     # ── Git ──
 

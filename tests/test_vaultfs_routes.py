@@ -132,3 +132,24 @@ def test_create_rename_delete(client, vault):
     assert client.delete("/api/vaultfs/file",
         params={"vault": "test-vault", "path": "Novo", "recursive": "true"}).status_code == 200
     assert not (vault / "Novo").exists()
+
+
+def test_meta_frontmatter_and_tags(client, vault):
+    (vault / "Meta.md").write_text(
+        "---\nstatus: ativo\ntags:\n  - rpg\n  - heroi\n---\n\n# Meta\ncorpo #inline\n",
+        encoding="utf-8")
+    r = client.get("/api/vaultfs/meta", params={"vault": "test-vault"})
+    assert r.status_code == 200
+    note = next(n for n in r.json()["notes"] if n["path"] == "Meta.md")
+    assert note["props"]["status"] == "ativo"
+    assert "rpg" in note["tags"] and "inline" in note["tags"]
+    assert note["name"] == "Meta"
+
+
+def test_base_parse(client, vault):
+    (vault / "Todos.base").write_text(
+        "views:\n  - type: table\n    name: Todos\n    order:\n      - file.name\n      - status\n",
+        encoding="utf-8")
+    r = client.get("/api/vaultfs/base", params={"vault": "test-vault", "path": "Todos.base"})
+    assert r.status_code == 200
+    assert r.json()["base"]["views"][0]["type"] == "table"
