@@ -58,7 +58,7 @@ branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
 `docs/superpowers/plans/2026-07-25-vaults-panel.md`.
 
 **Arquivos novos (aditivos, nunca conflitam):** `routes/vaultfs_routes.py`,
-`static/js/vaults.js`, `static/js/vaultsGraph.js`, `tests/test_vaultfs_routes.py`,
+`static/js/vaults.js`, `static/js/vaultsGraph.js`, `static/js/vaultsDataview.js` (engine DQL validado contra as 378 queries reais das vaults), `tests/test_vaultfs_routes.py`, `tests/vaults_dataview_spec.mjs`,
 `tests/test_vaultfs_git.py`, specs/planos em `docs/superpowers/`.
 
 **Edições em arquivos do upstream (3 blocos pequenos, conflito improvável):**

@@ -164,3 +164,17 @@ def test_meta_ignores_tags_inside_code_blocks(client, vault):
     assert "naoconta" not in note["tags"]
     assert "inline-code" not in note["tags"]
     assert "valido" in note["tags"]
+
+
+def test_meta_outlinks_inline_fields_aliases(client, vault):
+    (vault / "Rica.md").write_text(
+        "---\naliases: [Apelido]\n---\n# Rica\n\nVeja [[Nota]] e [[Sistema/Heróis/Dante|o cara]].\n"
+        "Chave Inline:: valor x\n- rank:: A\n\n```\n[[NaoConta]]\n```\n",
+        encoding="utf-8")
+    r = client.get("/api/vaultfs/meta", params={"vault": "test-vault"})
+    note = next(n for n in r.json()["notes"] if n["path"] == "Rica.md")
+    assert note["outlinks"] == ["Nota", "Sistema/Heróis/Dante"]
+    assert note["props"]["Chave Inline"] == "valor x"
+    assert note["props"]["rank"] == "A"
+    assert note["aliases"] == ["Apelido"]
+    assert isinstance(note["ctime"], float)
