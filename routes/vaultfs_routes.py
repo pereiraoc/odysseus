@@ -397,13 +397,16 @@ def setup_vaultfs_routes() -> APIRouter:
                     t = lm.group(1).strip()
                     if t and t not in outlinks:
                         outlinks.append(t)
-                # campos inline do Dataview: `Chave:: valor` (linha ou item de lista)
+                # campos inline do Dataview: `Chave:: valor` (linha ou item de
+                # lista). O valor NÃO cruza linha ([ \t], não \s — senão um
+                # campo vazio `chave::` engole a linha seguinte) e campo vazio
+                # vira null, como no Dataview.
                 for im in re.finditer(
-                        r"^\s*(?:[-*]\s+)?([A-Za-zÀ-ÿ][\w À-ÿ.-]*?)::\s*(.+?)\s*$",
+                        r"^[ \t]*(?:[-*][ \t]+)?([A-Za-zÀ-ÿ][\w À-ÿ.-]*?)::[ \t]*(.*)$",
                         no_code, re.M):
                     key = im.group(1).strip()
                     if key and key not in props:
-                        props[key] = im.group(2).strip()
+                        props[key] = im.group(2).strip() or None
                 aliases = props.get("aliases") or props.get("alias") or []
                 if isinstance(aliases, str):
                     aliases = [a.strip() for a in aliases.split(",") if a.strip()]
