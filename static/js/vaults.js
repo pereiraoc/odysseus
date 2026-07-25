@@ -79,6 +79,7 @@ function buildPanel() {
       }
     });
     wireViewerClicks();
+    wireGitClicks();
     els.toolbar.addEventListener('click', async (e) => {
       const btn = e.target.closest('button');
       if (!btn) return;
@@ -138,9 +139,11 @@ async function openVault(id) {
   renderToolbar();
   if (switching) {
     state.openPath = null;
+    state.git = null;
     renderViewerEmpty();
   }
   await refreshTree();
+  await refreshGit();
 }
 
 function renderViewerEmpty() {
@@ -465,8 +468,257 @@ function wireViewerClicks() {
   });
 }
 
-// ── Git (Fase 2) ──
-function refreshGit() {}
+// ── Git ──
+async function refreshGit() {
+  if (!state.currentId) return;
+  try {
+    state.git = await api(`/git/status?vault=${encodeURIComponent(state.currentId)}`);
+  } catch (e) {
+    state.git = null;
+    els.git.innerHTML = `<div class="vaults-git-sec vaults-git-err">git: ${esc(e.message)}</div>`;
+    applyTreeBadges();
+    return;
+  }
+  renderGit();
+  applyTreeBadges();
+}
+
+function gitOp(route, body) {
+  return api(`/git/${route}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vault: state.currentId, ...body }),
+  }).then(r => {
+    refreshGit();
+    return r;
+  }).catch(e => {
+    showError(`git ${route}: ${e.message}`);
+    refreshGit();
+    throw e;
+  });
+}
+
+function renderGit() {
+  const g = state.git;
+  if (!g) { els.git.innerHTML = ''; return; }
+  if (!g.has_git) {
+    els.git.innerHTML = `<div class="vaults-git-sec">
+      <button class="vaults-btn" data-git="init">Inicializar repositório git</button></div>`;
+    return;
+  }
+  const n = g.staged.length + g.unstaged.length + g.untracked.length;
+  const row = (p, code, staged, acts) => `
+    <div class="vaults-chg" data-path="${esc(p)}" data-staged="${staged}">
+      <span class="vaults-chg-name" data-git="diff" title="${esc(p)}">${esc(p.split('/').pop())}</span>
+      <span class="vaults-chg-code">${esc(code)}</span>${acts}
+    </div>`;
+  const syncLabel = `${g.ahead ? g.ahead + '↑' : ''}${g.behind ? ' ' + g.behind + '↓' : ''}`.trim();
+  els.git.innerHTML = `
+    <div class="vaults-branch-row">
+      <span class="vaults-branch" data-git="branches" title="Trocar/criar branch">⎇ ${esc(g.branch || '?')}</span>
+      <span class="vaults-sync" title="ahead/behind do upstream">${syncLabel}</span>
+      <button class="vaults-row-btn" data-git="pull" title="Pull (ff-only)">⇣</button>
+      <button class="vaults-row-btn" data-git="push" title="Push">⇡</button>
+      <button class="vaults-row-btn" data-git="fetch" title="Fetch">↺</button>
+    </div>
+    <div class="vaults-git-sec">
+      <div class="vaults-git-head">MUDANÇAS (${n})</div>
+      ${g.staged.map(c => row(c.path, c.code, true,
+        `<button class="vaults-row-btn" data-git="unstage" title="Unstage">−</button>`)).join('')}
+      ${g.unstaged.map(c => row(c.path, c.code, false,
+        `<button class="vaults-row-btn" data-git="stage" title="Stage">＋</button>
+         <button class="vaults-row-btn" data-git="discard" title="Descartar mudanças">↶</button>`)).join('')}
+      ${g.untracked.map(p => row(p, 'U', false,
+        `<button class="vaults-row-btn" data-git="stage" title="Stage">＋</button>
+         <button class="vaults-row-btn" data-git="discard" title="Apagar (untracked)">↶</button>`)).join('')}
+      ${n ? `<textarea class="vaults-commit-msg" placeholder="Mensagem de commit…" rows="2"></textarea>
+      <div class="vaults-commit-row">
+        <button class="vaults-btn" data-git="commit">✓ Commit</button>
+        <label class="vaults-amend"><input type="checkbox" class="vaults-amend-cb"> amend</label>
+        <button class="vaults-row-btn" data-git="undo" title="Desfazer último commit (reset soft)">↩</button>
+      </div>` : `<div class="vaults-git-clean">✓ working tree limpo
+        <button class="vaults-row-btn" data-git="undo" title="Desfazer último commit (reset soft)">↩</button></div>`}
+    </div>
+    <div class="vaults-git-sec vaults-log-sec"></div>`;
+  renderGitLog();
+}
+
+function applyTreeBadges() {
+  const g = state.git;
+  const map = new Map();
+  if (g?.has_git) {
+    for (const c of g.unstaged) map.set(c.path, { code: c.code, cls: 'vaults-b-mod' });
+    for (const c of g.staged) if (!map.has(c.path)) map.set(c.path, { code: c.code, cls: 'vaults-b-staged' });
+    for (const p of g.untracked) map.set(p, { code: 'U', cls: 'vaults-b-new' });
+  }
+  const changedKeys = [...map.keys()];
+  els.tree.querySelectorAll('.vaults-tree-row').forEach(rowEl => {
+    const badge = rowEl.querySelector('.vaults-badge');
+    if (!badge) return;
+    const p = rowEl.dataset.path;
+    const hit = map.get(p);
+    if (hit) {
+      badge.textContent = hit.code;
+      badge.className = `vaults-badge ${hit.cls}`;
+    } else {
+      const isDirWithChange = rowEl.classList.contains('vaults-dir')
+        && changedKeys.some(k => k.startsWith(p + '/'));
+      badge.textContent = isDirWithChange ? '•' : '';
+      badge.className = 'vaults-badge' + (isDirWithChange ? ' vaults-b-mod' : '');
+    }
+  });
+}
+
+async function renderGitLog() {
+  const sec = els.git.querySelector('.vaults-log-sec');
+  if (!sec || !state.git?.has_git) return;
+  try {
+    const { commits } = await api(`/git/log?vault=${encodeURIComponent(state.currentId)}&limit=30`);
+    sec.innerHTML = `<div class="vaults-git-head">COMMITS (${esc(state.git.branch || '')})</div>`
+      + commits.map(c => `<div class="vaults-log-row" data-git="show-commit" data-hash="${c.hash}"
+          title="${esc(c.subject)} — ${esc(c.author)}">
+          <span class="vaults-log-hash">${c.short}</span><span class="vaults-log-subj">${esc(c.subject)}</span>
+        </div>`).join('')
+      + `<div class="vaults-log-row vaults-log-more" data-git="graph">⋯ ver grafo completo</div>`;
+  } catch (e) {
+    sec.innerHTML = `<div class="vaults-git-head">COMMITS</div><div class="vaults-git-err">${esc(e.message)}</div>`;
+  }
+}
+
+// ── Diff no viewer ──
+function renderDiffText(text) {
+  if (!text.trim()) {
+    return '<div class="vaults-empty">Sem diferenças registradas (arquivo novo ainda não rastreado?)</div>';
+  }
+  return '<pre class="vaults-diff">' + text.split('\n').map(l => {
+    const c = l.startsWith('+') && !l.startsWith('+++') ? 'vaults-dl-add'
+      : l.startsWith('-') && !l.startsWith('---') ? 'vaults-dl-del'
+      : l.startsWith('@@') ? 'vaults-dl-hunk'
+      : (l.startsWith('diff ') || l.startsWith('commit ')) ? 'vaults-dl-head' : '';
+    return `<span class="${c}">${esc(l)}</span>`;
+  }).join('\n') + '</pre>';
+}
+
+async function fetchDiffText(params) {
+  const q = new URLSearchParams({ vault: state.currentId, ...params });
+  const r = await fetch(`/api/vaultfs/git/diff?${q}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.text();
+}
+
+async function openDiff(path, { staged = false } = {}) {
+  try {
+    const text = await fetchDiffText({ path, staged: String(staged) });
+    state.mode = 'diff';
+    els.viewer.innerHTML = `<div class="vaults-viewbar">
+        <span class="vaults-open-name">diff${staged ? ' (staged)' : ''}: ${esc(path)}</span>
+        <button class="vaults-btn" data-vaults-open="${esc(path)}">Abrir nota</button>
+      </div>` + renderDiffText(text);
+  } catch (e) {
+    showError(`diff: ${e.message}`);
+  }
+}
+
+async function openCommit(hash) {
+  try {
+    const text = await fetchDiffText({ commit: hash });
+    state.mode = 'diff';
+    els.viewer.innerHTML = `<div class="vaults-viewbar">
+        <span class="vaults-open-name">commit ${esc(hash.slice(0, 10))}</span>
+      </div>` + renderDiffText(text);
+  } catch (e) {
+    showError(`commit: ${e.message}`);
+  }
+}
+
+// ── Delegated handler do strip git ──
+function wireGitClicks() {
+  els.git.addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-git]');
+    if (!el) return;
+    const action = el.dataset.git;
+    const chg = e.target.closest('.vaults-chg');
+    const p = chg?.dataset.path;
+    try {
+      if (action === 'stage' || action === 'unstage') {
+        await gitOp(action, { paths: [p] });
+      } else if (action === 'discard') {
+        if (await styledConfirm(`Descartar as mudanças de "${p}"? (untracked será apagado)`,
+          { confirmText: 'Descartar', danger: true })) {
+          await gitOp('discard', { paths: [p] });
+          if (state.openPath === p) openFile(p);
+        }
+      } else if (action === 'diff') {
+        openDiff(p, { staged: chg?.dataset.staged === 'true' });
+      } else if (action === 'commit') {
+        const msg = els.git.querySelector('.vaults-commit-msg')?.value || '';
+        const amend = !!els.git.querySelector('.vaults-amend-cb')?.checked;
+        if (!msg.trim() && !amend) { showError('Escreva a mensagem de commit.'); return; }
+        await gitOp('commit', { message: msg, amend });
+        showToast(amend ? 'Commit emendado' : 'Commit criado');
+      } else if (action === 'undo') {
+        if (await styledConfirm('Desfazer o último commit? (reset soft — as mudanças voltam pro stage)',
+          { confirmText: 'Desfazer', danger: true })) {
+          await gitOp('undo_commit', {});
+        }
+      } else if (action === 'show-commit') {
+        openCommit(el.dataset.hash);
+      } else if (action === 'push' || action === 'pull' || action === 'fetch') {
+        el.disabled = true;
+        el.classList.add('vaults-busy');
+        try {
+          const r = await gitOp(action, {});
+          showToast(`${action}: ok${r.output ? '' : ''}`);
+        } finally {
+          el.disabled = false;
+          el.classList.remove('vaults-busy');
+        }
+      } else if (action === 'branches') {
+        openBranchMenu(el);
+      } else if (action === 'init') {
+        await gitOp('init', {});
+        showToast('Repositório git inicializado');
+      } else if (action === 'graph') {
+        openGraph();
+      }
+    } catch (_) { /* gitOp já mostrou o erro */ }
+  });
+}
+
+async function openBranchMenu(anchor) {
+  document.querySelector('.vaults-branch-menu')?.remove();
+  let branches;
+  try {
+    ({ branches } = await api(`/git/branches?vault=${encodeURIComponent(state.currentId)}`));
+  } catch (e) {
+    showError(`branches: ${e.message}`);
+    return;
+  }
+  const menu = document.createElement('div');
+  menu.className = 'dropdown vaults-branch-menu';
+  menu.innerHTML = branches.map(b => `
+      <div class="dropdown-item vaults-branch-item${b.current ? ' vaults-branch-current' : ''}"
+        data-branch="${esc(b.name)}">${b.current ? '✓ ' : ''}${esc(b.name)}</div>`).join('')
+    + `<div class="dropdown-item vaults-branch-item vaults-branch-new">＋ nova branch…</div>`;
+  const r = anchor.getBoundingClientRect();
+  menu.style.cssText = `position:fixed; left:${Math.max(8, r.right - 200)}px; top:${r.bottom + 4}px;`
+    + 'display:block; z-index:400; min-width:180px; max-height:50vh; overflow-y:auto;';
+  document.body.appendChild(menu);
+  const closeMenu = () => menu.remove();
+  setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
+  menu.addEventListener('click', async (e) => {
+    const item = e.target.closest('.vaults-branch-item');
+    if (!item) return;
+    closeMenu();
+    if (item.classList.contains('vaults-branch-new')) {
+      const name = await styledPrompt('Nome da nova branch:', { title: 'Nova branch', maxLength: 120 });
+      if (name) await gitOp('checkout', { branch: name, create: true });
+    } else if (!item.classList.contains('vaults-branch-current')) {
+      await gitOp('checkout', { branch: item.dataset.branch });
+    }
+  });
+}
+
+function openGraph() { /* Task 18 */ }
 
 // ── Sidebar ──
 async function initSidebar() {
