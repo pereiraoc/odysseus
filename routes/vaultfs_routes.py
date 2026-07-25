@@ -84,6 +84,27 @@ def _reject_git(rel: str):
         raise HTTPException(403, "paths inside .git are not accessible")
 
 
+class WriteBody(BaseModel):
+    vault: str
+    path: str
+    content: str
+    base_mtime: Optional[float] = None
+    force: bool = False
+
+
+class CreateBody(BaseModel):
+    vault: str
+    path: str
+    kind: str = "file"  # "file" | "dir"
+    content: str = ""
+
+
+class RenameBody(BaseModel):
+    vault: str
+    path: str
+    new_path: str
+
+
 def setup_vaultfs_routes() -> APIRouter:
     router = APIRouter(prefix="/api/vaultfs", tags=["vaultfs"])
 
@@ -147,5 +168,71 @@ def setup_vaultfs_routes() -> APIRouter:
         if not os.path.isfile(target):
             raise HTTPException(404, "file not found")
         return FileResponse(target)
+
+    @router.put("/file")
+    def write_file(body: WriteBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _reject_git(body.path)
+        target = _resolve(root, body.path)
+        if os.path.isdir(target):
+            raise HTTPException(400, "target is a directory")
+        if os.path.exists(target) and body.base_mtime is not None and not body.force:
+            disk = os.stat(target).st_mtime
+            if abs(disk - body.base_mtime) > 1e-4:
+                raise HTTPException(409, {"code": "mtime_conflict", "disk_mtime": disk})
+        os.makedirs(os.path.dirname(target) or root, exist_ok=True)
+        tmp = target + ".vaultfs-tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(body.content)
+        os.replace(tmp, target)
+        return {"ok": True, "mtime": os.stat(target).st_mtime}
+
+    @router.post("/file")
+    def create_entry(body: CreateBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _reject_git(body.path)
+        target = _resolve(root, body.path)
+        if os.path.exists(target):
+            raise HTTPException(409, "already exists")
+        if body.kind == "dir":
+            os.makedirs(target)
+        else:
+            os.makedirs(os.path.dirname(target) or root, exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(body.content)
+        return {"ok": True, "path": body.path}
+
+    @router.post("/rename")
+    def rename_entry(body: RenameBody, request: Request, user: str = Depends(require_user)):
+        root = _vault_root(body.vault)
+        _reject_git(body.path)
+        _reject_git(body.new_path)
+        src = _resolve(root, body.path)
+        dst = _resolve(root, body.new_path)
+        if not os.path.exists(src):
+            raise HTTPException(404, "source not found")
+        if os.path.exists(dst):
+            raise HTTPException(409, "destination already exists")
+        os.makedirs(os.path.dirname(dst) or root, exist_ok=True)
+        os.rename(src, dst)
+        return {"ok": True}
+
+    @router.delete("/file")
+    def delete_entry(request: Request, vault: str = Query(...), path: str = Query(...),
+                     recursive: bool = Query(False), user: str = Depends(require_user)):
+        root = _vault_root(vault)
+        _reject_git(path)
+        target = _resolve(root, path)
+        if target == root:
+            raise HTTPException(400, "cannot delete vault root")
+        if os.path.isdir(target):
+            if not recursive:
+                raise HTTPException(400, "directory delete requires recursive=true")
+            shutil.rmtree(target)
+        elif os.path.isfile(target):
+            os.remove(target)
+        else:
+            raise HTTPException(404, "not found")
+        return {"ok": True}
 
     return router
