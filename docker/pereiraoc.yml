@@ -46,6 +46,9 @@ services:
       # (KasmVNC) usada só na primeira configuração/login da conta.
       - OBSIDIAN_SYNC_CONTAINER=odysseus-obsidian
       - OBSIDIAN_SYNC_UI_URL=http://localhost:3010
+      # Mecanismo UPSTREAM do entrypoint: com o socket montado, adiciona o
+      # usuário do app ao grupo do socket e preserva grupos no gosu.
+      - ODYSSEUS_ENABLE_HOST_DOCKER=true
 
   # Obsidian OFICIAL em background (linuxserver/obsidian, KasmVNC) pro
   # Obsidian Sync rodar sem abrir o app no desktop. Perfil opt-in:

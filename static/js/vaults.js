@@ -731,8 +731,8 @@ function secOpen(k, def = true) {
   } catch (_) { return def; }
 }
 
-function gitSection(key, title, badge, bodyHtml) {
-  const open = secOpen(key);
+function gitSection(key, title, badge, bodyHtml, defOpen = true) {
+  const open = secOpen(key, defOpen);
   return `<div class="vaults-sec${open ? ' vaults-sec-open' : ''}" data-sec="${key}">
       <div class="vaults-sec-head" data-sec-toggle="${key}">
         <span class="vaults-sec-chev">${ICONS.chevron}</span>
@@ -1042,22 +1042,25 @@ function taskRow(t) {
     </div>`);
 }
 
-function tasksSection(key, title, items) {
+function tasksSection(key, title, items, defOpen = true) {
   if (!items.length) return '';
-  return gitSection(key, title, items.length, items.map(taskRow).join(''));
+  return gitSection(key, title, items.length, items.map(taskRow).join(''), defOpen);
 }
 
 function renderTasks() {
   const all = state.tasks || [];
   const today = TODAY();
-  const pending = all.filter(t => t.status !== 'x' && t.status !== 'X' && t.status !== '-');
-  const done = all.filter(t => t.status === 'x' || t.status === 'X');
+  // acionáveis = a fazer / em progresso; x|X = feitas, - = canceladas;
+  // demais status custom do Tasks (i = informação, * etc.) não são "faltando"
+  const actionable = all.filter(t => t.status === ' ' || t.status === '/');
+  const done = all.filter(t => t.status === 'x' || t.status === 'X' || t.status === '-');
+  const other = all.filter(t => !actionable.includes(t) && !done.includes(t));
   const badge = els.panel?.querySelector('.vaults-tasks-badge');
   if (badge) {
-    badge.textContent = String(pending.length);
-    badge.style.display = pending.length ? '' : 'none';
+    badge.textContent = String(actionable.length);
+    badge.style.display = actionable.length ? '' : 'none';
   }
-  const byDue = f => pending.filter(f).sort((a, b) =>
+  const byDue = f => actionable.filter(f).sort((a, b) =>
     (a.due || '9999').localeCompare(b.due || '9999') || a.path.localeCompare(b.path));
   els.tasks.innerHTML = `
     <div class="vaults-tasks-bar">
@@ -1070,9 +1073,10 @@ function renderTasks() {
     + tasksSection('tasks-today', 'Hoje', byDue(t => t.due === today))
     + tasksSection('tasks-next', 'Próximas', byDue(t => t.due && t.due > today))
     + tasksSection('tasks-nodate', 'Sem data', byDue(t => !t.due))
-    + (state.showDoneTasks ? tasksSection('tasks-done', 'Concluídas',
+    + tasksSection('tasks-other', 'Outros estados', other, false)
+    + (state.showDoneTasks ? tasksSection('tasks-done', 'Concluídas / canceladas',
         done.sort((a, b) => (b.done_at || '').localeCompare(a.done_at || ''))) : '')
-    + (!pending.length && !state.showDoneTasks
+    + (!actionable.length && !state.showDoneTasks && !other.length
         ? '<div class="vaults-empty">Nenhuma tarefa pendente 🎉</div>' : '');
 }
 
