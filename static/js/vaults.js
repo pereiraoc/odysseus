@@ -9,6 +9,7 @@ import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js';
 import { mdToHtml } from './markdown.js';
+import { renderCommitGraph } from './vaultsGraph.js';
 
 const PANEL_ID = 'vaults-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
@@ -718,7 +719,21 @@ async function openBranchMenu(anchor) {
   });
 }
 
-function openGraph() { /* Task 18 */ }
+async function openGraph(limit = 200) {
+  try {
+    const { commits } = await api(`/git/graph?vault=${encodeURIComponent(state.currentId)}&limit=${limit}`);
+    state.mode = 'graph';
+    els.viewer.innerHTML = `<div class="vaults-viewbar">
+        <span class="vaults-open-name">grafo de commits (todas as branches, ${commits.length})</span>
+        ${commits.length >= limit ? '<button class="vaults-btn vaults-graph-more">mais commits</button>' : ''}
+      </div><div class="vaults-graph-host"></div>`;
+    els.viewer.querySelector('.vaults-graph-more')
+      ?.addEventListener('click', () => openGraph(limit + 300));
+    renderCommitGraph(els.viewer.querySelector('.vaults-graph-host'), commits, openCommit);
+  } catch (e) {
+    showError(`grafo: ${e.message}`);
+  }
+}
 
 // ── Sidebar ──
 async function initSidebar() {
