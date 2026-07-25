@@ -571,18 +571,47 @@ def setup_vaultfs_routes() -> APIRouter:
         except OSError as e:
             raise HTTPException(502, f"docker socket: {e}")
 
+    OBSIDIAN_CONFIG_DIR = os.getenv("OBSIDIAN_CONFIG_DIR", "/app/data/obsidian-config")
+
+    def _sync_vault_states() -> list:
+        """Por vault do painel: está registrada no Obsidian do container?
+        Detecta também o erro clássico de conectar criando pasta ANINHADA
+        (path /vaults/X/X) que baixa o remoto pra dentro da vault."""
+        registry = {}
+        try:
+            import json as _json
+            with open(os.path.join(OBSIDIAN_CONFIG_DIR, ".config", "obsidian", "obsidian.json"),
+                      encoding="utf-8") as f:
+                registry = _json.load(f).get("vaults", {})
+        except (OSError, ValueError):
+            pass
+        reg_paths = [v.get("path", "") for v in registry.values()]
+        out = []
+        for v in _list_vaults():
+            # só o mount raiz /data/vaults é visível pro container do Obsidian;
+            # vaults que são bind-mounts próprios (ismount) ficam fora do sync
+            syncable = v["exists"] and not os.path.ismount(v["path"])
+            opath = f"/vaults/{v['name']}"
+            out.append({
+                "id": v["id"], "name": v["name"], "syncable": syncable,
+                "registered": opath in reg_paths,
+                "nested_warning": any(p.startswith(opath + "/") for p in reg_paths),
+            })
+        return out
+
     @router.get("/obsidian-sync")
     def sync_status(request: Request, user: str = Depends(require_user)):
+        vault_states = _sync_vault_states()
         try:
             status, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
         except HTTPException as e:
             if getattr(e, "status_code", None) == 501:
                 return {"available": False, "installed": False, "running": False,
-                        "reason": "no_docker_socket", "ui_url": SYNC_UI_URL}
+                        "reason": "no_docker_socket", "ui_url": SYNC_UI_URL, "vaults": vault_states}
             raise
         if status == 404:
             return {"available": True, "installed": False, "running": False,
-                    "reason": "container_missing", "ui_url": SYNC_UI_URL,
+                    "reason": "container_missing", "ui_url": SYNC_UI_URL, "vaults": vault_states,
                     "hint": "docker compose --profile obsidian-sync up -d obsidian"}
         import json as _json
         running = False
@@ -590,7 +619,8 @@ def setup_vaultfs_routes() -> APIRouter:
             running = bool(_json.loads(body_txt).get("State", {}).get("Running"))
         except Exception:
             pass
-        return {"available": True, "installed": True, "running": running, "ui_url": SYNC_UI_URL}
+        return {"available": True, "installed": True, "running": running,
+                "ui_url": SYNC_UI_URL, "vaults": vault_states}
 
     @router.post("/obsidian-sync")
     def sync_toggle(body: SyncToggleBody, request: Request, user: str = Depends(require_user)):

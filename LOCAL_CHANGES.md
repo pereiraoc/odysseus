@@ -84,4 +84,15 @@ desliga o container via socket do docker montado no serviço odysseus —
 tradeoff de segurança documentado no próprio overlay; backend só aceita
 start/stop do container de nome fixo `odysseus-obsidian` (rotas autenticadas
 `GET/POST /api/vaultfs/obsidian-sync`). Config do Obsidian persiste em
-`data/obsidian-config/` (gitignored).
+`data/obsidian-config/` (gitignored; volume declarado com caminho ABSOLUTO —
+relativo em overlay resolve contra a raiz do projeto, não contra docker/).
+
+**Multi-vault:** o status do sync lista cada vault do painel: conectada /
+não conectada (com o passo-a-passo certo: "Open folder as vault" →
+`/vaults/<nome>` + Sync → vault remota EXISTENTE) / fora do sync (bind-mounts
+próprios como pleitost-app não são visíveis pro container do Obsidian).
+Detecta e alerta o erro de conexão ANINHADA (`/vaults/X/X`) — aconteceu na
+primeira config da OP Vault (o fluxo "create new" baixou o remoto pra uma
+subpasta): corrigido reapontando o `obsidian.json` pra pasta real; a cópia
+parcial foi movida (NÃO deletada) pra `/data/vaults-backups/`, junto com
+tarballs pré-sync das duas vaults (2026-07-25).
