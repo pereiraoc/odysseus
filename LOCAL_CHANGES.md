@@ -47,3 +47,25 @@ Cookbook**, reaproveitando os engines CUDA já instalados em `./data/local`
 upstream; conflita quando o upstream mexe nos `FROM` (aconteceu no sync de
 2026-07-25: Dockerfile virou 2 estágios — `realesrgan-wheels` + main — e o `ARG`
 global no topo agora parametriza os dois).
+
+## 5. Painel de Vaults — browse/edição markdown + git na UI  [feature local]
+Espaço dedicado na UI pras vaults do `tool_path_extra_roots` (item 3): browse em
+painel dockado à direita, viewer/editor de markdown com wikilinks Obsidian, CRUD
+de arquivos e git estilo VS Code (status/badges, stage/commit/amend/undo, diff,
+branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
+`docs/superpowers/specs/2026-07-25-vaults-panel-design.md` e
+`docs/superpowers/plans/2026-07-25-vaults-panel.md`.
+
+**Arquivos novos (aditivos, nunca conflitam):** `routes/vaultfs_routes.py`,
+`static/js/vaults.js`, `static/js/vaultsGraph.js`, `tests/test_vaultfs_routes.py`,
+`tests/test_vaultfs_git.py`, specs/planos em `docs/superpowers/`.
+
+**Edições em arquivos do upstream (3 blocos pequenos, conflito improvável):**
+- `static/index.html`: seção `#vaults-section` no sidebar (após Tools) +
+  `<script type="module" src="/static/js/vaults.js">` no bloco de módulos.
+- `app.py`: registro `setup_vaultfs_routes()` logo após o `vault_routes` (~L855).
+- `static/style.css`: bloco `.vaults-*` append-only no final.
+
+**Envs no overlay (item 2):** `GIT_AUTHOR_*`/`GIT_COMMITTER_*` (identidade dos
+commits feitos pela UI dentro do container) e `VAULTFS_GIT_USER` +
+`VAULTFS_GIT_TOKEN` (push/pull https; token preenchido via `.env`, nunca comitado).

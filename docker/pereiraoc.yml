@@ -22,3 +22,13 @@ services:
       # em ./data/local foram instalados sob python3.12 → reinstalar sob 3.14 ao
       # voltar a servir GPU e ajustar este path (ver LOCAL_CHANGES.md).
       - LD_LIBRARY_PATH=/app/.local/lib/python3.12/site-packages/nvidia/cu13/lib
+      # Painel de Vaults (routes/vaultfs_routes.py): identidade git dos commits
+      # feitos pela UI e credencial de push/pull https. O token vai SÓ por env
+      # (o credential helper inline referencia $VAULTFS_GIT_TOKEN — nunca em
+      # argv nem em disco). Preencher o token via .env do compose.
+      - GIT_AUTHOR_NAME=pereiraoc
+      - GIT_AUTHOR_EMAIL=pereiraoc@gmail.com
+      - GIT_COMMITTER_NAME=pereiraoc
+      - GIT_COMMITTER_EMAIL=pereiraoc@gmail.com
+      - VAULTFS_GIT_USER=sfynz
+      - VAULTFS_GIT_TOKEN=${VAULTFS_GIT_TOKEN:-}
