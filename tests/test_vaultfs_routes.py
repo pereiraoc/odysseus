@@ -228,3 +228,24 @@ def test_obsidian_sync_sem_socket(client, monkeypatch):
     body = r.json()
     # no host de teste o socket pode existir; só valida o shape da resposta
     assert set(body) >= {"available", "installed", "running", "ui_url"}
+
+
+def test_obsidian_sync_vault_states(client, vault, tmp_path, monkeypatch):
+    import routes.vaultfs_routes as vr
+    cfg = tmp_path / "obs-config" / ".config" / "obsidian"
+    cfg.mkdir(parents=True)
+    (cfg / "obsidian.json").write_text(
+        '{"vaults": {"a1": {"path": "/vaults/Test Vault", "open": true},'
+        ' "b2": {"path": "/vaults/Outra/Outra", "open": false}}}')
+    # OBSIDIAN_CONFIG_DIR é lido no setup do router → re-monta com o env novo
+    monkeypatch.setenv("OBSIDIAN_CONFIG_DIR", str(tmp_path / "obs-config"))
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    app = FastAPI()
+    app.include_router(vr.setup_vaultfs_routes())
+    c = TestClient(app)
+    r = c.get("/api/vaultfs/obsidian-sync")
+    assert r.status_code == 200
+    vs = {v["name"]: v for v in r.json()["vaults"]}
+    tv = vs["Test Vault"]
+    assert tv["registered"] is True and tv["nested_warning"] is False

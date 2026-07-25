@@ -67,7 +67,10 @@ services:
       - PGID=1000
       - TZ=America/Sao_Paulo
     volumes:
-      - ../data/obsidian-config:/config
+      # Absoluto de propósito: caminho relativo em overlay resolve contra o
+      # diretório do PROJETO (raiz do repo), não contra docker/ — o config
+      # foi parar em /data/projects/data até este fix.
+      - /data/projects/odysseus/data/obsidian-config:/config
       - /data/vaults:/vaults
     ports:
       - "127.0.0.1:3010:3000"
