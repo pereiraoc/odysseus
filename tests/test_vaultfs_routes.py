@@ -190,3 +190,41 @@ def test_meta_inline_field_vazio_nao_engole_linha(client, vault):
     assert note["props"]["project"] == "[[Alvo]]"
     assert note["props"]["parent"] is None
     assert note["props"]["archive"] == "true"
+
+
+def test_tasks_parse_e_toggle(client, vault):
+    (vault / "Tarefas.md").write_text(
+        "# T\n\n- [ ] Comprar pão 📅 2026-08-01 ⏫\n- [x] Feita ✅ 2026-07-20\n"
+        "- [-] Cancelada ❌ 2026-07-01\n- [/] Em progresso 🔁 every week ⏳ 2026-07-30\n"
+        "```\n- [ ] dentro de code fence não conta\n```\n",
+        encoding="utf-8")
+    r = client.get("/api/vaultfs/tasks", params={"vault": "test-vault"})
+    assert r.status_code == 200
+    ts = [t for t in r.json()["tasks"] if t["path"] == "Tarefas.md"]
+    assert len(ts) == 4
+    todo = next(t for t in ts if t["status"] == " ")
+    assert todo["text"] == "Comprar pão" and todo["due"] == "2026-08-01" and todo["priority"] == "high"
+    prog = next(t for t in ts if t["status"] == "/")
+    assert prog["recurrence"] == "every week" and prog["scheduled"] == "2026-07-30"
+    # toggle → done com ✅ de hoje
+    r = client.post("/api/vaultfs/tasks/toggle", json={
+        "vault": "test-vault", "path": "Tarefas.md", "line": todo["line"], "done": True})
+    assert r.status_code == 200
+    content = (vault / "Tarefas.md").read_text()
+    assert "- [x] Comprar pão" in content and content.count("✅") == 2
+    # untoggle remove o ✅
+    r = client.post("/api/vaultfs/tasks/toggle", json={
+        "vault": "test-vault", "path": "Tarefas.md", "line": todo["line"], "done": False})
+    assert "- [ ] Comprar pão 📅 2026-08-01 ⏫" in (vault / "Tarefas.md").read_text()
+    # linha errada → 409
+    r = client.post("/api/vaultfs/tasks/toggle", json={
+        "vault": "test-vault", "path": "Tarefas.md", "line": 0, "done": True})
+    assert r.status_code == 409
+
+
+def test_obsidian_sync_sem_socket(client, monkeypatch):
+    r = client.get("/api/vaultfs/obsidian-sync")
+    assert r.status_code == 200
+    body = r.json()
+    # no host de teste o socket pode existir; só valida o shape da resposta
+    assert set(body) >= {"available", "installed", "running", "ui_url"}
