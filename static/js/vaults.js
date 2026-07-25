@@ -114,7 +114,8 @@ function buildPanel() {
     els.tasks = panel.querySelector('.vaults-tasks');
     els.syncBtn = panel.querySelector('.vaults-sync-btn');
     els.syncBtn.addEventListener('click', onSyncClick);
-    panel.querySelector('.vaults-obsidian-btn').addEventListener('click', openObsidianApp);
+    panel.querySelector('.vaults-obsidian-btn').addEventListener('click', () =>
+      state.currentId ? openVaultInObsidian(state.currentId) : openObsidianApp());
     // Abas Browser | Git | Tasks (feedback: layout estilo VS Code)
     const setTab = (t) => {
       els.nav.dataset.tab = t;
@@ -1264,6 +1265,39 @@ function buildObsidianModal(url) {
   const fr = m.querySelector('iframe');
   if (fr.getAttribute('src') !== url) fr.src = url;
   m.classList.remove('hidden', 'modal-minimized');
+  return m;
+}
+
+// Abre a vault específica DENTRO do Obsidian: registra a janela dela no
+// container (restart quando preciso) e mostra o app embutido.
+async function openVaultInObsidian(vaultId) {
+  const s = state.sync || {};
+  if (!s.available || !s.installed) {
+    onSyncClick();
+    return;
+  }
+  const vs = (s.vaults || []).find(v => v.id === vaultId);
+  if (vs && !vs.syncable) {
+    showError(`${vs.name} não está montada no container do Obsidian (só /data/vaults) — ver LOCAL_CHANGES.md.`);
+    return;
+  }
+  try {
+    const r = await api('/obsidian-open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vault: vaultId }),
+    });
+    refreshSyncStatus();
+    const m = buildObsidianModal(r.ui_url);
+    if (r.restarted) {
+      // container reiniciando: dá uns segundos pro KasmVNC voltar e recarrega
+      const fr = m.querySelector('iframe');
+      fr.src = 'about:blank';
+      showToast('Abrindo a vault no Obsidian… (reiniciando o app)');
+      setTimeout(() => { fr.src = r.ui_url; }, 4000);
+    }
+  } catch (e) {
+    showError(`Obsidian: ${e.message}`);
+  }
 }
 
 // ── Sidebar ──
@@ -1278,8 +1312,19 @@ async function initSidebar() {
       const item = document.createElement('div');
       item.className = 'list-item vaults-side-item' + (v.exists ? '' : ' vaults-missing');
       item.title = v.exists ? v.path : `Pasta não encontrada: ${v.path}`;
-      item.innerHTML = `${VAULT_ICON_SVG.replace('<svg ', '<svg style="flex-shrink:0;opacity:0.5;" ')}<span class="grow">${esc(v.name)}</span>`;
-      if (v.exists) item.addEventListener('click', () => openVault(v.id));
+      item.innerHTML = `${VAULT_ICON_SVG.replace('<svg ', '<svg style="flex-shrink:0;opacity:0.5;" ')}<span class="grow">${esc(v.name)}</span>
+        <button class="vaults-side-obsidian" title="Abrir no Obsidian (app oficial embutido)">${ICONS.gem}</button>`;
+      if (v.exists) {
+        item.addEventListener('click', () => openVault(v.id));
+        item.querySelector('.vaults-side-obsidian').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!state.sync) {
+            buildPanel();
+            await refreshSyncStatus();
+          }
+          openVaultInObsidian(v.id);
+        });
+      }
       list.appendChild(item);
     }
     const section = document.getElementById('vaults-section');
