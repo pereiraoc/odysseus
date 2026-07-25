@@ -70,3 +70,18 @@ branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
 **Envs no overlay (item 2):** `GIT_AUTHOR_*`/`GIT_COMMITTER_*` (identidade dos
 commits feitos pela UI dentro do container) e `VAULTFS_GIT_USER` +
 `VAULTFS_GIT_TOKEN` (push/pull https; token preenchido via `.env`, nunca comitado).
+
+**My Tasks (Obsidian Tasks):** aba TASKS no painel lê `- [ ]` de todas as notas
+(formato do plugin: 📅⏳🛫✅❌, prioridades, 🔁), agrupa por Atrasadas/Hoje/
+Próximas/Sem data e o checkbox conclui a tarefa reescrevendo a linha (`[x]` +
+`✅ data`, como o plugin). Rotas `/api/vaultfs/tasks` e `/tasks/toggle`.
+
+**Obsidian Sync:** serviço opcional `obsidian` no overlay (perfil
+`obsidian-sync`, imagem lscr.io/linuxserver/obsidian) roda o cliente OFICIAL em
+background com a vault montada; primeira config via http://localhost:3010
+(login na conta + abrir a vault uma vez). O toggle no header do painel liga/
+desliga o container via socket do docker montado no serviço odysseus —
+tradeoff de segurança documentado no próprio overlay; backend só aceita
+start/stop do container de nome fixo `odysseus-obsidian` (rotas autenticadas
+`GET/POST /api/vaultfs/obsidian-sync`). Config do Obsidian persiste em
+`data/obsidian-config/` (gitignored).

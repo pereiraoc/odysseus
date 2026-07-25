@@ -17,6 +17,13 @@ services:
       # Vaults extras do painel de Vaults que vivem fora de /data/vaults:
       - /data/projects/pleitost-app:/app/vaults/pleitost-app
       - /data/projects/caelestia-arch-setup:/app/vaults/caelestia-arch-setup
+      # Toggle do Obsidian Sync pelo painel de Vaults: o backend fala com o
+      # socket pra dar start/stop APENAS no container `odysseus-obsidian`
+      # (nome fixo no código; rotas com auth). TRADEOFF consciente: montar o
+      # socket dá poder de docker ao container do app — aceitável neste
+      # deploy single-user local; remova esta linha pra desligar o recurso
+      # (o painel passa a mostrar o toggle como indisponível).
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # CUDA loader path para a wheel llama-cpp-python (cu132): libcudart/libcublas
       # vêm das wheels nvidia em ~/.local (.../nvidia/cu13/lib), fora do loader path
@@ -35,3 +42,31 @@ services:
       - GIT_COMMITTER_EMAIL=pereiraoc@gmail.com
       - VAULTFS_GIT_USER=sfynz
       - VAULTFS_GIT_TOKEN=${VAULTFS_GIT_TOKEN:-}
+      # Obsidian Sync: nome do container controlado pelo toggle + URL da UI
+      # (KasmVNC) usada só na primeira configuração/login da conta.
+      - OBSIDIAN_SYNC_CONTAINER=odysseus-obsidian
+      - OBSIDIAN_SYNC_UI_URL=http://localhost:3010
+
+  # Obsidian OFICIAL em background (linuxserver/obsidian, KasmVNC) pro
+  # Obsidian Sync rodar sem abrir o app no desktop. Perfil opt-in:
+  #   docker compose --profile obsidian-sync up -d obsidian   (primeira vez)
+  # Depois: abra http://localhost:3010, logue na conta do Obsidian Sync e
+  # abra a vault /vaults/OP Vault UMA vez — dali em diante o toggle do
+  # painel de Vaults liga/desliga este container.
+  obsidian:
+    image: lscr.io/linuxserver/obsidian:latest
+    container_name: odysseus-obsidian
+    profiles: ["obsidian-sync"]
+    security_opt:
+      - seccomp:unconfined  # requerido pelo Chromium/Electron do Obsidian
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ../data/obsidian-config:/config
+      - /data/vaults:/vaults
+    ports:
+      - "127.0.0.1:3010:3000"
+    shm_size: "1gb"
+    restart: unless-stopped

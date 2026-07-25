@@ -1010,3 +1010,12 @@ export function runBase(base, ctx, viewIndex = 0) {
     views: views.map((v, i) => ({ name: v.name || `view ${i + 1}`, type: v.type || 'table' })),
   };
 }
+
+// ── Inline query do Dataview: `= expr` avaliada no contexto da nota aberta ──
+export function evalInline(src, ctx) {
+  const idx = new Index(ctx.notes, ctx.current);
+  const fns = makeFns(idx);
+  const page = idx.current ? idx.page(idx.current) : null;
+  const v = evalNode(parseExpr(src), { idx, fns, page });
+  return valueHtml(v, idx, ctx);
+}

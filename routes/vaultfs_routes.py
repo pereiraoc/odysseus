@@ -4,11 +4,14 @@
 Serve as vaults (Obsidian) de tool_path_extra_roots pro painel de Vaults:
 browse/CRUD de arquivos markdown e operações git estilo VS Code.
 """
+import http.client
 import logging
 import os
 import re
 import shutil
+import socket as _socket
 import subprocess
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -231,6 +234,50 @@ class GitCheckoutBody(BaseModel):
     create: bool = False
 
 
+class TaskToggleBody(BaseModel):
+    vault: str
+    path: str
+    line: int
+    done: bool
+
+
+class SyncToggleBody(BaseModel):
+    enable: bool
+
+
+# ── Obsidian Tasks (formato do plugin: emojis de data/prioridade) ──
+TASK_RE = re.compile(r"^(\s*)[-*] \[(.)\] (.*)$")
+TASK_DATE_MARKS = {
+    "due": "📅", "scheduled": "⏳", "start": "🛫",
+    "created": "➕", "done_at": "✅", "cancelled_at": "❌",
+}
+TASK_PRIORITY = {"🔺": "highest", "⏫": "high", "🔼": "medium", "🔽": "low", "⏬": "lowest"}
+_ALL_MARKS = "📅⏳🛫➕✅❌🔁🔺⏫🔼🔽⏬🆔⛔"
+
+
+def _parse_task_line(line: str):
+    m = TASK_RE.match(line)
+    if not m:
+        return None
+    body = m.group(3)
+    task = {"status": m.group(2)}
+    for key, mark in TASK_DATE_MARKS.items():
+        dm = re.search(re.escape(mark) + r"\s*(\d{4}-\d{2}-\d{2})", body)
+        task[key] = dm.group(1) if dm else None
+    task["priority"] = next((v for e, v in TASK_PRIORITY.items() if e in body), None)
+    rm = re.search(r"🔁\s*([^" + _ALL_MARKS + r"]+)", body)
+    task["recurrence"] = rm.group(1).strip() if rm else None
+    clean = body
+    for mark in TASK_DATE_MARKS.values():
+        clean = re.sub(re.escape(mark) + r"\s*\d{4}-\d{2}-\d{2}", "", clean)
+    clean = re.sub(r"🔁\s*[^" + _ALL_MARKS + r"]+", "", clean)
+    for e in TASK_PRIORITY:
+        clean = clean.replace(e, "")
+    clean = re.sub(r"🆔\s*\S+|⛔\s*\S+", "", clean)
+    task["text"] = clean.strip()
+    return task
+
+
 def setup_vaultfs_routes() -> APIRouter:
     router = APIRouter(prefix="/api/vaultfs", tags=["vaultfs"])
 
@@ -435,6 +482,127 @@ def setup_vaultfs_routes() -> APIRouter:
         except Exception as e:
             raise HTTPException(400, f"invalid base yaml: {e}")
         return {"base": data if isinstance(data, dict) else {}}
+
+    @router.get("/tasks")
+    def vault_tasks(request: Request, vault: str = Query(...), user: str = Depends(require_user)):
+        """Tarefas estilo Obsidian Tasks de todas as notas .md da vault."""
+        root = _vault_root(vault)
+        tasks = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for fn in filenames:
+                if fn.startswith(".") or not fn.lower().endswith(".md"):
+                    continue
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
+                try:
+                    with open(full, "r", encoding="utf-8", errors="replace") as f:
+                        lines = f.read().splitlines()
+                except OSError:
+                    continue
+                in_fence = False
+                for i, line in enumerate(lines):
+                    if line.lstrip().startswith("```"):
+                        in_fence = not in_fence
+                        continue
+                    if in_fence:
+                        continue
+                    t = _parse_task_line(line)
+                    if t:
+                        t.update({"path": rel, "line": i})
+                        tasks.append(t)
+        return {"tasks": tasks}
+
+    @router.post("/tasks/toggle")
+    def task_toggle(body: TaskToggleBody, request: Request, user: str = Depends(require_user)):
+        """Marca/desmarca uma tarefa reescrevendo a linha (com ✅ data, como o plugin)."""
+        root = _vault_root(body.vault)
+        _reject_git(body.path)
+        target = _resolve(root, body.path)
+        if not os.path.isfile(target):
+            raise HTTPException(404, "file not found")
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines(keepends=False)
+        if not (0 <= body.line < len(lines)) or not TASK_RE.match(lines[body.line]):
+            raise HTTPException(409, {"code": "task_moved",
+                                      "message": "a linha mudou no disco — recarregue as tarefas"})
+        line = lines[body.line]
+        if body.done:
+            line = re.sub(r"\[.\]", "[x]", line, count=1)
+            line = re.sub(r"\s*✅\s*\d{4}-\d{2}-\d{2}", "", line)
+            line += f" ✅ {date.today().isoformat()}"
+        else:
+            line = re.sub(r"\[.\]", "[ ]", line, count=1)
+            line = re.sub(r"\s*✅\s*\d{4}-\d{2}-\d{2}", "", line)
+        lines[body.line] = line
+        tmp = target + ".vaultfs-tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, target)
+        return {"ok": True, "task": {**_parse_task_line(line), "path": body.path, "line": body.line}}
+
+    # ── Obsidian Sync (container oficial controlado via socket docker) ──
+
+    class _UnixHTTP(http.client.HTTPConnection):
+        def __init__(self, sock_path):
+            super().__init__("localhost")
+            self._sock_path = sock_path
+
+        def connect(self):
+            s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            s.settimeout(10)
+            s.connect(self._sock_path)
+            self.sock = s
+
+    DOCKER_SOCK = "/var/run/docker.sock"
+    SYNC_CONTAINER = os.getenv("OBSIDIAN_SYNC_CONTAINER", "odysseus-obsidian")
+    SYNC_UI_URL = os.getenv("OBSIDIAN_SYNC_UI_URL", "http://localhost:3010")
+
+    def _docker_api(method: str, endpoint: str):
+        if not os.path.exists(DOCKER_SOCK):
+            raise HTTPException(501, {"code": "no_docker_socket",
+                                      "message": "socket do docker não montado no container "
+                                                 "(ver LOCAL_CHANGES.md, item do Obsidian Sync)"})
+        try:
+            conn = _UnixHTTP(DOCKER_SOCK)
+            conn.request(method, endpoint)
+            resp = conn.getresponse()
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+        except OSError as e:
+            raise HTTPException(502, f"docker socket: {e}")
+
+    @router.get("/obsidian-sync")
+    def sync_status(request: Request, user: str = Depends(require_user)):
+        try:
+            status, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
+        except HTTPException as e:
+            if getattr(e, "status_code", None) == 501:
+                return {"available": False, "installed": False, "running": False,
+                        "reason": "no_docker_socket", "ui_url": SYNC_UI_URL}
+            raise
+        if status == 404:
+            return {"available": True, "installed": False, "running": False,
+                    "reason": "container_missing", "ui_url": SYNC_UI_URL,
+                    "hint": "docker compose --profile obsidian-sync up -d obsidian"}
+        import json as _json
+        running = False
+        try:
+            running = bool(_json.loads(body_txt).get("State", {}).get("Running"))
+        except Exception:
+            pass
+        return {"available": True, "installed": True, "running": running, "ui_url": SYNC_UI_URL}
+
+    @router.post("/obsidian-sync")
+    def sync_toggle(body: SyncToggleBody, request: Request, user: str = Depends(require_user)):
+        action = "start" if body.enable else "stop"
+        status, out = _docker_api("POST", f"/containers/{SYNC_CONTAINER}/{action}")
+        if status == 404:
+            raise HTTPException(404, {"code": "container_missing",
+                                      "message": "container do Obsidian ainda não foi criado — rode: "
+                                                 "docker compose --profile obsidian-sync up -d obsidian"})
+        if status not in (204, 304):
+            raise HTTPException(502, f"docker {action}: HTTP {status} {out[:200]}")
+        return {"ok": True, "running": body.enable}
 
     # ── Git ──
 

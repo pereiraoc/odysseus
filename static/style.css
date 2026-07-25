@@ -41278,3 +41278,24 @@ body.theme-frosted .modal {
 .vaults-tree-row.vaults-open .vaults-caret svg { transform: rotate(90deg); }
 .vaults-node-icon { display: inline-flex; flex-shrink: 0; opacity: 0.45; }
 .vaults-file .vaults-node-icon { margin-left: 12px; }
+/* Vaults: aba Tasks + Obsidian Sync */
+.vaults-nav[data-tab="tasks"] .vaults-pane-tasks { display: flex; }
+.vaults-pane-tasks .vaults-tasks { flex: 1; overflow-y: auto; font-size: 12px; }
+.vaults-tasks-bar { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--border, rgba(128,128,128,0.2)); position: sticky; top: 0; background: var(--panel, #1e1e28); z-index: 2; }
+.vaults-tasks-title { font-weight: 700; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; flex: 1; }
+.vaults-task { display: flex; align-items: flex-start; gap: 6px; padding: 3px 4px; border-radius: 5px; flex-wrap: wrap; }
+.vaults-task:hover { background: color-mix(in srgb, var(--accent-primary, #60a5fa) 8%, transparent); }
+.vaults-task-cb { margin: 2px 0 0; cursor: pointer; flex-shrink: 0; }
+.vaults-task-text { flex: 1; min-width: 55%; line-height: 1.4; }
+.vaults-task-done .vaults-task-text { text-decoration: line-through; opacity: 0.5; }
+.vaults-task-cancelled .vaults-task-text { text-decoration: line-through; opacity: 0.35; }
+.vaults-task-chip { font-size: 10px; padding: 0 5px; border-radius: 7px; border: 1px solid var(--border, rgba(128,128,128,0.25)); white-space: nowrap; opacity: 0.8; flex-shrink: 0; }
+.vaults-task-late { color: #e06c75; border-color: color-mix(in srgb, #e06c75 55%, transparent); }
+.vaults-task-note { font-size: 10px; opacity: 0.45; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex-shrink: 0; margin-left: auto; }
+.vaults-task-note:hover { opacity: 0.9; color: var(--accent-primary, #60a5fa); }
+.vaults-sync-btn { background: none; border: none; cursor: pointer; color: inherit; opacity: 0.4; display: inline-flex; padding: 4px; flex-shrink: 0; }
+.vaults-sync-btn:hover { opacity: 0.8; }
+.vaults-sync-btn.vaults-sync-on { opacity: 1; color: #5fbf77; }
+.vaults-sync-btn.vaults-sync-unavailable { opacity: 0.18; }
+.vaults-dv-inline { color: var(--accent-primary, #60a5fa); }
+.vaults-dv-inline-err { opacity: 0.5; font-family: ui-monospace, monospace; font-size: 12px; }

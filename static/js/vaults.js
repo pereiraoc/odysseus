@@ -8,10 +8,10 @@ import { applyEdgeDock } from './modalSnap.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js';
-import { mdToHtml } from './markdown.js';
+import { mdToHtml, svgifyEmoji } from './markdown.js';
 import { renderCommitGraph } from './vaultsGraph.js';
 import { registerMenuDismiss } from './escMenuStack.js';
-import { runQuery, runBase } from './vaultsDataview.js';
+import { runQuery, runBase, evalInline } from './vaultsDataview.js';
 
 const PANEL_ID = 'vaults-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
@@ -35,6 +35,7 @@ const ICONS = {
   chevron: FI('<polyline points="9 18 15 12 9 6"/>', 11),
   file: FI('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>', 11),
   folder: FI('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>', 11),
+  cloud: FI('<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>', 13),
 };
 
 const state = {
@@ -74,6 +75,7 @@ function buildPanel() {
       <div class="modal-content vaults-content">
         <div class="modal-header vaults-header">
           <span class="vaults-title"></span>
+          <button class="vaults-sync-btn" title="Obsidian Sync">${ICONS.cloud}</button>
           <button class="close-btn" aria-label="Close vaults">✖</button>
         </div>
         <div class="vaults-body">
@@ -81,7 +83,8 @@ function buildPanel() {
           <div class="vaults-nav" data-tab="browser">
             <div class="vaults-tabs">
               <button class="vaults-tab" data-vaults-tab="browser">Browser</button>
-              <button class="vaults-tab" data-vaults-tab="git">Git<span class="vaults-tab-badge" style="display:none"></span></button>
+              <button class="vaults-tab" data-vaults-tab="git">Git<span class="vaults-tab-badge vaults-git-badge" style="display:none"></span></button>
+              <button class="vaults-tab" data-vaults-tab="tasks">Tasks<span class="vaults-tab-badge vaults-tasks-badge" style="display:none"></span></button>
             </div>
             <div class="vaults-tabpane vaults-pane-browser">
               <div class="vaults-toolbar"></div>
@@ -89,6 +92,9 @@ function buildPanel() {
             </div>
             <div class="vaults-tabpane vaults-pane-git">
               <div class="vaults-git"></div>
+            </div>
+            <div class="vaults-tabpane vaults-pane-tasks">
+              <div class="vaults-tasks"></div>
             </div>
           </div>
         </div>
@@ -103,13 +109,17 @@ function buildPanel() {
     els.tree = panel.querySelector('.vaults-tree');
     els.viewer = panel.querySelector('.vaults-viewer');
     els.git = panel.querySelector('.vaults-git');
-    // Abas Browser | Git (feedback: layout estilo VS Code)
+    els.tasks = panel.querySelector('.vaults-tasks');
+    els.syncBtn = panel.querySelector('.vaults-sync-btn');
+    els.syncBtn.addEventListener('click', onSyncClick);
+    // Abas Browser | Git | Tasks (feedback: layout estilo VS Code)
     const setTab = (t) => {
       els.nav.dataset.tab = t;
       els.nav.querySelectorAll('.vaults-tab').forEach(b =>
         b.classList.toggle('active', b.dataset.vaultsTab === t));
       try { localStorage.setItem('odysseus-vaults-tab', t); } catch (_) {}
       if (t === 'git') maybeLoadGraph();
+      if (t === 'tasks') loadTasks();
     };
     els.setTab = setTab;
     els.nav.querySelector('.vaults-tabs').addEventListener('click', (e) => {
@@ -129,6 +139,7 @@ function buildPanel() {
     });
     wireViewerClicks();
     wireGitClicks();
+    wireTasksClicks();
     els.git.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'
           && e.target.classList.contains('vaults-commit-msg')) {
@@ -206,10 +217,13 @@ async function openVault(id) {
     state.openPath = null;
     state.git = null;
     state.meta = null;
+    state.tasks = null;
     renderViewerEmpty();
   }
+  refreshSyncStatus();
   await refreshTree();
   await refreshGit();
+  if (els.nav.dataset.tab === 'tasks') loadTasks(true);
 }
 
 function renderViewerEmpty() {
@@ -262,8 +276,8 @@ function buildTreeNodes(nodes) {
     row.className = `vaults-tree-row vaults-${n.type}`;
     row.dataset.path = n.path;
     row.innerHTML = n.type === 'dir'
-      ? `<span class="vaults-caret">${ICONS.chevron}</span><span class="vaults-node-icon">${ICONS.folder}</span><span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`
-      : `<span class="vaults-node-icon">${ICONS.file}</span><span class="vaults-node-name">${esc(n.name)}</span><span class="vaults-badge"></span>`;
+      ? `<span class="vaults-caret">${ICONS.chevron}</span><span class="vaults-node-icon">${ICONS.folder}</span><span class="vaults-node-name">${svgifyEmoji(esc(n.name))}</span><span class="vaults-badge"></span>`
+      : `<span class="vaults-node-icon">${ICONS.file}</span><span class="vaults-node-name">${svgifyEmoji(esc(n.name))}</span><span class="vaults-badge"></span>`;
     attachRowActions(row, n);
     li.appendChild(row);
     if (n.type === 'dir') {
@@ -449,11 +463,27 @@ function renderDataviewBlocks() {
       const div = document.createElement('div');
       div.className = 'vaults-dv';
       try {
-        div.innerHTML = runQuery(q, ctx).html;
+        div.innerHTML = svgifyEmoji(runQuery(q, ctx).html);
       } catch (e) {
         div.innerHTML = `<div class="vaults-dv-warn">dataview: ${esc(e.message)}</div><pre class="vaults-dv-src">${esc(q)}</pre>`;
       }
       pre.replaceWith(div);
+    });
+    // inline queries do Dataview: `= this.campo` viram o valor avaliado
+    els.viewer.querySelectorAll('.vaults-md code').forEach(code => {
+      if (code.closest('pre')) return;
+      const t = code.textContent.trim();
+      if (!t.startsWith('=') || t.startsWith('==')) return;
+      const span = document.createElement('span');
+      span.className = 'vaults-dv-inline';
+      try {
+        span.innerHTML = svgifyEmoji(evalInline(t.slice(1).trim(), ctx));
+      } catch (e) {
+        span.className = 'vaults-dv-inline vaults-dv-inline-err';
+        span.textContent = t;
+        span.title = `dataview inline: ${e.message}`;
+      }
+      code.replaceWith(span);
     });
   }).catch(e => console.warn('vaults: meta indisponível', e));
 }
@@ -484,7 +514,7 @@ async function openBase(relPath, viewIndex = null) {
       + (r.warns.length
         ? `<div class="vaults-dv-warn">Não suportado (ignorado): ${esc([...new Set(r.warns)].join(' · ').slice(0, 400))}</div>`
         : '')
-      + r.html;
+      + svgifyEmoji(r.html);
   } catch (e) {
     showError(`base: ${e.message}`);
   }
@@ -567,7 +597,7 @@ function renderViewer() {
   if (state.mode === 'view') {
     const { props, body } = splitFrontmatter(state.content);
     els.viewer.innerHTML = bar
-      + (props ? propsBarHtml(props) : '')
+      + (props ? svgifyEmoji(propsBarHtml(props)) : '')
       + `<div class="vaults-md">${mdToHtml(preprocessMd(body, relDirOf(state.openPath || '')))}</div>`;
     renderDataviewBlocks();
   } else {
@@ -728,7 +758,7 @@ function chgRow(p, code, cls, staged, acts) {
 function renderGit() {
   const g = state.git;
   const n = g?.has_git ? g.staged.length + g.unstaged.length + g.untracked.length : 0;
-  const tabBadge = els.panel?.querySelector('.vaults-tab-badge');
+  const tabBadge = els.panel?.querySelector('.vaults-git-badge');
   if (tabBadge) {
     tabBadge.textContent = String(n);
     tabBadge.style.display = n ? '' : 'none';
@@ -974,6 +1004,174 @@ async function openBranchMenu(anchor) {
   });
 }
 
+
+// ── My Tasks (Obsidian Tasks) ──
+const TODAY = () => new Date().toISOString().slice(0, 10);
+
+async function loadTasks(force = false) {
+  if (!state.currentId || !els.tasks) return;
+  if (state.tasks && !force) { renderTasks(); return; }
+  els.tasks.innerHTML = '<div class="vaults-empty">Carregando…</div>';
+  try {
+    const { tasks } = await api(`/tasks?vault=${encodeURIComponent(state.currentId)}`);
+    state.tasks = tasks;
+  } catch (e) {
+    els.tasks.innerHTML = `<div class="vaults-git-err">tasks: ${esc(e.message)}</div>`;
+    return;
+  }
+  renderTasks();
+}
+
+function taskRow(t) {
+  const done = t.status === 'x' || t.status === 'X';
+  const cancelled = t.status === '-';
+  const chips = [
+    t.due ? `<span class="vaults-task-chip vaults-task-due${t.due < TODAY() && !done && !cancelled ? ' vaults-task-late' : ''}">📅 ${t.due}</span>` : '',
+    t.scheduled ? `<span class="vaults-task-chip">⏳ ${t.scheduled}</span>` : '',
+    t.priority ? `<span class="vaults-task-chip vaults-task-pri-${t.priority}">${
+      { highest: '🔺', high: '⏫', medium: '🔼', low: '🔽', lowest: '⏬' }[t.priority]}</span>` : '',
+    t.recurrence ? `<span class="vaults-task-chip">🔁</span>` : '',
+  ].join('');
+  const noteName = t.path.split('/').pop().replace(/\.md$/i, '');
+  return svgifyEmoji(`<div class="vaults-task${done ? ' vaults-task-done' : ''}${cancelled ? ' vaults-task-cancelled' : ''}"
+      data-path="${esc(t.path)}" data-line="${t.line}">
+      <input type="checkbox" class="vaults-task-cb" ${done ? 'checked' : ''} ${cancelled ? 'disabled' : ''}>
+      <span class="vaults-task-text" title="${esc(t.text)}">${esc(t.text)}</span>
+      ${chips}
+      <a class="vaults-task-note" data-vaults-tasknote="${esc(t.path)}" title="${esc(t.path)}">${esc(noteName)}</a>
+    </div>`);
+}
+
+function tasksSection(key, title, items) {
+  if (!items.length) return '';
+  return gitSection(key, title, items.length, items.map(taskRow).join(''));
+}
+
+function renderTasks() {
+  const all = state.tasks || [];
+  const today = TODAY();
+  const pending = all.filter(t => t.status !== 'x' && t.status !== 'X' && t.status !== '-');
+  const done = all.filter(t => t.status === 'x' || t.status === 'X');
+  const badge = els.panel?.querySelector('.vaults-tasks-badge');
+  if (badge) {
+    badge.textContent = String(pending.length);
+    badge.style.display = pending.length ? '' : 'none';
+  }
+  const byDue = f => pending.filter(f).sort((a, b) =>
+    (a.due || '9999').localeCompare(b.due || '9999') || a.path.localeCompare(b.path));
+  els.tasks.innerHTML = `
+    <div class="vaults-tasks-bar">
+      <span class="vaults-tasks-title">My Tasks</span>
+      <label class="vaults-amend"><input type="checkbox" class="vaults-tasks-showdone"
+        ${state.showDoneTasks ? 'checked' : ''}> concluídas</label>
+      <button class="vaults-row-btn" data-tasks-refresh title="Recarregar">${ICONS.refresh}</button>
+    </div>`
+    + tasksSection('tasks-late', 'Atrasadas', byDue(t => t.due && t.due < today))
+    + tasksSection('tasks-today', 'Hoje', byDue(t => t.due === today))
+    + tasksSection('tasks-next', 'Próximas', byDue(t => t.due && t.due > today))
+    + tasksSection('tasks-nodate', 'Sem data', byDue(t => !t.due))
+    + (state.showDoneTasks ? tasksSection('tasks-done', 'Concluídas',
+        done.sort((a, b) => (b.done_at || '').localeCompare(a.done_at || ''))) : '')
+    + (!pending.length && !state.showDoneTasks
+        ? '<div class="vaults-empty">Nenhuma tarefa pendente 🎉</div>' : '');
+}
+
+function wireTasksClicks() {
+  els.tasks.addEventListener('click', async (e) => {
+    const secT = e.target.closest('[data-sec-toggle]');
+    if (secT) {
+      const open = secT.closest('.vaults-sec').classList.toggle('vaults-sec-open');
+      try { localStorage.setItem(SEC_KEY(secT.dataset.secToggle), open ? '1' : '0'); } catch (_) {}
+      return;
+    }
+    if (e.target.closest('[data-tasks-refresh]')) { loadTasks(true); return; }
+    if (e.target.classList.contains('vaults-tasks-showdone')) {
+      state.showDoneTasks = e.target.checked;
+      renderTasks();
+      return;
+    }
+    const note = e.target.closest('[data-vaults-tasknote]');
+    if (note) { openFile(note.dataset.vaultsTasknote); return; }
+    if (e.target.classList.contains('vaults-task-cb')) {
+      const row = e.target.closest('.vaults-task');
+      const path = row.dataset.path;
+      const line = parseInt(row.dataset.line, 10);
+      const doneNow = e.target.checked;
+      try {
+        const r = await api('/tasks/toggle', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vault: state.currentId, path, line, done: doneNow }),
+        });
+        const i = (state.tasks || []).findIndex(t => t.path === path && t.line === line);
+        if (i >= 0) state.tasks[i] = r.task;
+        state.meta = null;
+        renderTasks();
+        refreshGit();
+        showToast(doneNow ? 'Tarefa concluída ✅' : 'Tarefa reaberta');
+      } catch (err) {
+        if (err.detail?.code === 'task_moved') {
+          showError('A nota mudou no disco — recarregando as tarefas.');
+          loadTasks(true);
+        } else {
+          showError(`tasks: ${err.message}`);
+          e.target.checked = !doneNow;
+        }
+      }
+    }
+  });
+}
+
+// ── Obsidian Sync (container oficial, toggle liga/desliga) ──
+async function refreshSyncStatus() {
+  if (!els.syncBtn) return;
+  try {
+    state.sync = await api('/obsidian-sync');
+  } catch (_) {
+    state.sync = { available: false };
+  }
+  const s = state.sync;
+  els.syncBtn.classList.toggle('vaults-sync-on', !!s.running);
+  els.syncBtn.classList.toggle('vaults-sync-unavailable', !s.available);
+  els.syncBtn.title = !s.available
+    ? 'Obsidian Sync: indisponível (socket docker não montado — ver LOCAL_CHANGES.md)'
+    : !s.installed
+      ? 'Obsidian Sync: container ainda não criado — clique pra ver como ativar'
+      : s.running
+        ? `Obsidian Sync: ATIVO (cliente oficial em background) — clique pra desativar. Primeira configuração: ${s.ui_url}`
+        : 'Obsidian Sync: desativado — clique pra ativar';
+}
+
+async function onSyncClick() {
+  const s = state.sync || {};
+  if (!s.available) {
+    showError('Socket do docker não está montado no container — veja o item do Obsidian Sync no LOCAL_CHANGES.md.');
+    return;
+  }
+  if (!s.installed) {
+    await styledConfirm(
+      'O container do Obsidian ainda não foi criado. Rode no host:\n\n'
+      + 'docker compose --profile obsidian-sync up -d obsidian\n\n'
+      + `Depois abra ${s.ui_url} uma vez pra logar na sua conta do Obsidian Sync.`,
+      { confirmText: 'Entendi', cancelText: 'Fechar', title: 'Obsidian Sync' });
+    return;
+  }
+  const enable = !s.running;
+  if (!(await styledConfirm(
+    enable
+      ? 'Ativar o Obsidian Sync? O cliente oficial roda em background no container e sincroniza a vault.'
+      : 'Desativar o Obsidian Sync? O container é parado e a sincronização pausa.',
+    { confirmText: enable ? 'Ativar' : 'Desativar', title: 'Obsidian Sync', danger: !enable }))) return;
+  try {
+    await api('/obsidian-sync', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enable }),
+    });
+    showToast(enable ? 'Obsidian Sync ativado' : 'Obsidian Sync desativado');
+  } catch (e) {
+    showError(`Obsidian Sync: ${e.message}`);
+  }
+  refreshSyncStatus();
+}
 
 // ── Sidebar ──
 async function initSidebar() {
