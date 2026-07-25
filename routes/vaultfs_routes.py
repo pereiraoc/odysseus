@@ -586,11 +586,22 @@ def setup_vaultfs_routes() -> APIRouter:
         except (OSError, ValueError):
             pass
         reg_paths = [v.get("path", "") for v in registry.values()]
+        # bind-mounts do mesmo filesystem não aparecem no os.path.ismount —
+        # lê os mountpoints reais (campo 5 do mountinfo, com \040 = espaço)
+        mounts: set = set()
+        try:
+            with open("/proc/self/mountinfo", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) > 4:
+                        mounts.add(parts[4].replace("\\040", " "))
+        except OSError:
+            pass
         out = []
         for v in _list_vaults():
             # só o mount raiz /data/vaults é visível pro container do Obsidian;
-            # vaults que são bind-mounts próprios (ismount) ficam fora do sync
-            syncable = v["exists"] and not os.path.ismount(v["path"])
+            # vaults que são bind-mounts próprios ficam fora do sync
+            syncable = v["exists"] and v["path"] not in mounts
             opath = f"/vaults/{v['name']}"
             out.append({
                 "id": v["id"], "name": v["name"], "syncable": syncable,
