@@ -153,3 +153,14 @@ def test_base_parse(client, vault):
     r = client.get("/api/vaultfs/base", params={"vault": "test-vault", "path": "Todos.base"})
     assert r.status_code == 200
     assert r.json()["base"]["views"][0]["type"] == "table"
+
+
+def test_meta_ignores_tags_inside_code_blocks(client, vault):
+    (vault / "Query.md").write_text(
+        "# Q\n\n```dataview\nLIST FROM #naoconta\n```\ntexto `#inline-code` e #valido\n",
+        encoding="utf-8")
+    r = client.get("/api/vaultfs/meta", params={"vault": "test-vault"})
+    note = next(n for n in r.json()["notes"] if n["path"] == "Query.md")
+    assert "naoconta" not in note["tags"]
+    assert "inline-code" not in note["tags"]
+    assert "valido" in note["tags"]
