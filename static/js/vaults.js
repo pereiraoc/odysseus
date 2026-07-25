@@ -204,10 +204,204 @@ function highlightTreeRow(relPath) {
   }
 }
 
-// ── Viewer/editor (Tasks 7-8) ──
-async function openFile(relPath) { void relPath; }
-async function saveFile(force = false) { void force; }
-function wireViewerClicks() {}
+// ── Wikilinks / markdown ──
+const IMG_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+
+function resolveNote(name) {
+  // Obsidian-style: match por basename; se o nome tiver '/', tenta sufixo do path.
+  const clean = name.trim().replace(/\.md$/i, '');
+  const cands = state.noteIndex.get(clean.split('/').pop().toLowerCase()) || [];
+  if (!cands.length) return null;
+  if (clean.includes('/')) {
+    const suffix = (clean + '.md').toLowerCase();
+    const hit = cands.find(p => p.toLowerCase().endsWith(suffix));
+    if (hit) return hit;
+  }
+  return cands.slice().sort((a, b) => a.length - b.length)[0];
+}
+
+function rawUrl(relPath) {
+  return `/api/vaultfs/raw?vault=${encodeURIComponent(state.currentId)}&path=${encodeURIComponent(relPath)}`;
+}
+
+function resolveRel(relDir, target) {
+  // resolve caminho relativo à pasta da nota aberta (./, ../)
+  const parts = (relDir ? relDir.split('/') : []).concat(target.split('/'));
+  const out = [];
+  for (const p of parts) {
+    if (!p || p === '.') continue;
+    if (p === '..') out.pop(); else out.push(p);
+  }
+  return out.join('/');
+}
+
+function findAsset(name) {
+  // busca por basename em toda a árvore (anexos ficam em pastas próprias)
+  let hit = null;
+  (function walk(nodes) {
+    for (const n of nodes) {
+      if (hit) return;
+      if (n.type === 'file' && n.name.toLowerCase() === name.toLowerCase()) hit = n.path;
+      else if (n.children) walk(n.children);
+    }
+  })(state.tree || []);
+  return hit;
+}
+
+function preprocessMd(src, relDir) {
+  // ![[embed]] primeiro (senão o [[...]] captura)
+  src = src.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (m, target) => {
+    const t = target.trim();
+    if (IMG_EXT.test(t)) {
+      const hit = findAsset(t.split('/').pop()) || resolveRel(relDir, t);
+      return `<img class="vaults-embed" src="${rawUrl(hit)}" alt="${esc(t)}">`;
+    }
+    const note = resolveNote(t);
+    return note
+      ? `<a class="vaults-wikilink" data-vaults-open="${esc(note)}">${esc(t)}</a>`
+      : `<a class="vaults-wikilink vaults-wikilink-missing" data-vaults-create="${esc(t)}">${esc(t)}</a>`;
+  });
+  src = src.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (m, target, alias) => {
+    const label = (alias || target).trim();
+    const note = resolveNote(target);
+    return note
+      ? `<a class="vaults-wikilink" data-vaults-open="${esc(note)}">${esc(label)}</a>`
+      : `<a class="vaults-wikilink vaults-wikilink-missing" data-vaults-create="${esc(target.trim())}">${esc(label)}</a>`;
+  });
+  // imagens markdown com src relativo → rota raw
+  src = src.replace(/!\[([^\]]*)\]\((?!https?:\/\/|\/|data:)([^)\s]+)\)/g,
+    (m, alt, rel) => `![${alt}](${rawUrl(resolveRel(relDir, decodeURIComponent(rel)))})`);
+  return src;
+}
+
+function relDirOf(p) {
+  const i = p.lastIndexOf('/');
+  return i < 0 ? '' : p.slice(0, i);
+}
+
+// ── Viewer/editor ──
+async function openFile(relPath) {
+  if (state.dirty && !(await styledConfirm('Há edição não salva. Descartar?', { danger: true }))) return;
+  state.dirty = false;
+  try {
+    const f = await api(`/file?vault=${encodeURIComponent(state.currentId)}&path=${encodeURIComponent(relPath)}`);
+    state.openPath = relPath;
+    state.openMtime = f.mtime;
+    state.mode = 'view';
+    state.content = f.content;
+    highlightTreeRow(relPath);
+    renderViewer();
+  } catch (e) {
+    if (e.status === 400 && IMG_EXT.test(relPath)) {
+      state.openPath = relPath;
+      state.mode = 'image';
+      highlightTreeRow(relPath);
+      renderViewer();
+    } else {
+      showError(`Falha ao abrir: ${e.message}`);
+    }
+  }
+}
+
+function renderViewer() {
+  if (state.mode === 'image') {
+    els.viewer.innerHTML = `<div class="vaults-viewbar"><span class="vaults-open-name">${esc(state.openPath)}</span></div>
+      <img class="vaults-embed" src="${rawUrl(state.openPath)}">`;
+    return;
+  }
+  const bar = `<div class="vaults-viewbar">
+      <span class="vaults-open-name" title="${esc(state.openPath || '')}">${esc(state.openPath || '')}</span>
+      <button class="vaults-btn" data-vaults-mode="${state.mode === 'view' ? 'edit' : 'view'}">
+        ${state.mode === 'view' ? 'Editar' : 'Visualizar'}</button>
+      ${state.mode === 'edit' ? '<button class="vaults-btn vaults-save-btn">Salvar</button>' : ''}
+      <span class="vaults-dirty" style="display:${state.dirty ? '' : 'none'}" title="Não salvo">●</span>
+    </div>`;
+  if (state.mode === 'view') {
+    els.viewer.innerHTML = bar + `<div class="vaults-md">${mdToHtml(preprocessMd(state.content, relDirOf(state.openPath || '')))}</div>`;
+  } else {
+    els.viewer.innerHTML = bar + `<textarea class="vaults-editor" spellcheck="false"></textarea>`;
+    const ta = els.viewer.querySelector('.vaults-editor');
+    ta.value = state.content;
+    ta.addEventListener('input', () => {
+      state.content = ta.value;
+      if (!state.dirty) {
+        state.dirty = true;
+        const dot = els.viewer.querySelector('.vaults-dirty');
+        if (dot) dot.style.display = '';
+      }
+    });
+    ta.focus();
+  }
+}
+
+async function saveFile(force = false) {
+  if (!state.openPath || state.mode !== 'edit') return;
+  try {
+    const r = await api('/file', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vault: state.currentId, path: state.openPath,
+        content: state.content, base_mtime: state.openMtime, force,
+      }),
+    });
+    state.openMtime = r.mtime;
+    state.dirty = false;
+    const dot = els.viewer.querySelector('.vaults-dirty');
+    if (dot) dot.style.display = 'none';
+    showToast('Salvo');
+    refreshGit();
+  } catch (e) {
+    if (e.status === 409 && e.detail?.code === 'mtime_conflict') {
+      const ok = await styledConfirm(
+        'O arquivo mudou no disco desde que você abriu (editado no Obsidian?). Sobrescrever mesmo assim?',
+        { confirmText: 'Sobrescrever', danger: true, alternateText: 'Recarregar do disco', title: 'Conflito' });
+      if (ok === true) return saveFile(true);
+      if (ok === 'alternate') {
+        state.dirty = false;
+        openFile(state.openPath);
+      }
+    } else {
+      showError(`Falha ao salvar: ${e.message}`);
+    }
+  }
+}
+
+function wireViewerClicks() {
+  els.viewer.addEventListener('click', async (e) => {
+    const open = e.target.closest('[data-vaults-open]');
+    if (open) { openFile(open.dataset.vaultsOpen); return; }
+    const create = e.target.closest('[data-vaults-create]');
+    if (create) {
+      const name = create.dataset.vaultsCreate;
+      if (await styledConfirm(`Criar a nota "${name}"?`, { confirmText: 'Criar' })) {
+        const path = name.endsWith('.md') ? name : `${name}.md`;
+        try {
+          await api('/file', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vault: state.currentId, path, kind: 'file', content: `# ${name}\n` }),
+          });
+          await refreshTree();
+          openFile(path);
+          refreshGit();
+        } catch (err) {
+          showError(`Falha ao criar: ${err.message}`);
+        }
+      }
+      return;
+    }
+    const mode = e.target.closest('[data-vaults-mode]');
+    if (mode) {
+      state.mode = mode.dataset.vaultsMode;
+      renderViewer();
+      return;
+    }
+    if (e.target.closest('.vaults-save-btn')) saveFile();
+  });
+}
+
+// ── Git (Fase 2) ──
+function refreshGit() {}
 
 // ── Sidebar ──
 async function initSidebar() {
