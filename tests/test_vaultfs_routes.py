@@ -222,35 +222,6 @@ def test_tasks_parse_e_toggle(client, vault):
     assert r.status_code == 409
 
 
-def test_obsidian_sync_sem_socket(client, monkeypatch):
-    r = client.get("/api/vaultfs/obsidian-sync")
-    assert r.status_code == 200
-    body = r.json()
-    # no host de teste o socket pode existir; só valida o shape da resposta
-    assert set(body) >= {"available", "installed", "running", "ui_url"}
-
-
-def test_obsidian_sync_vault_states(client, vault, tmp_path, monkeypatch):
-    import routes.vaultfs_routes as vr
-    cfg = tmp_path / "obs-config" / ".config" / "obsidian"
-    cfg.mkdir(parents=True)
-    (cfg / "obsidian.json").write_text(
-        '{"vaults": {"a1": {"path": "/vaults/Test Vault", "open": true},'
-        ' "b2": {"path": "/vaults/Outra/Outra", "open": false}}}')
-    # OBSIDIAN_CONFIG_DIR é lido no setup do router → re-monta com o env novo
-    monkeypatch.setenv("OBSIDIAN_CONFIG_DIR", str(tmp_path / "obs-config"))
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    app = FastAPI()
-    app.include_router(vr.setup_vaultfs_routes())
-    c = TestClient(app)
-    r = c.get("/api/vaultfs/obsidian-sync")
-    assert r.status_code == 200
-    vs = {v["name"]: v for v in r.json()["vaults"]}
-    tv = vs["Test Vault"]
-    assert tv["registered"] is True and tv["nested_warning"] is False
-
-
 def test_roots_union_e_is_vault(client, vault, tmp_path, monkeypatch):
     import routes.vaultfs_routes as vr
     extra = tmp_path / "Projetos"
@@ -288,3 +259,78 @@ def test_tree_lazy_depth_e_path(client):
     r = client.get("/api/vaultfs/tree",
                    params={"vault": "test-vault", "path": "Sistema/Heróis", "depth": 1})
     assert r.json()["tree"][0]["path"] == "Sistema/Heróis/Dante.md"
+
+
+def test_obsidian_sync_status_shape(client):
+    r = client.get("/api/vaultfs/obsidian-sync")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"available", "sessions"}
+    assert body["sessions"][0]["id"] == "test-vault"
+    assert set(body["sessions"][0]) == {"id", "name", "mounted", "exists", "running", "port", "ui_url"}
+
+
+def test_host_path_e_session_spec(monkeypatch):
+    import pytest as _pt
+    import routes.vaultfs_routes as vr
+    from fastapi import HTTPException
+    monkeypatch.setenv("VAULTFS_HOST_MAP",
+                       "/app/vaults=/data/vaults,/app/vaults/x=/data/projects/x")
+    assert vr._host_path("/app/vaults/OP Vault") == "/data/vaults/OP Vault"
+    assert vr._host_path("/app/vaults/x/sub") == "/data/projects/x/sub"  # prefixo mais longo
+    with _pt.raises(HTTPException) as ei:
+        vr._host_path("/outro/lugar")
+    assert ei.value.status_code == 501
+    spec = vr._session_spec("odysseus-obsidian-v", "Minha V", "/data/vaults/Minha V",
+                            "/data/projects/odysseus/data/obsidian-sessions/v", 3011)
+    assert spec["HostConfig"]["Binds"] == [
+        "/data/projects/odysseus/data/obsidian-sessions/v:/config",
+        "/data/vaults/Minha V:/vaults/Minha V"]
+    assert spec["HostConfig"]["PortBindings"]["3000/tcp"][0]["HostPort"] == "3011"
+    assert spec["HostConfig"]["ShmSize"] == 1 << 30
+
+
+def test_obsidian_open_cria_sessao(client, vault, tmp_path, monkeypatch):
+    import json as j
+    import routes.vaultfs_routes as vr
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.setenv("OBSIDIAN_SESSIONS_DIR", str(sessions_dir))
+    monkeypatch.setenv("VAULTFS_HOST_MAP", f"{tmp_path}=/host{tmp_path}")
+    calls = []
+    state = {"created": False}
+
+    def fake_api(method, endpoint, body=None):
+        calls.append((method, endpoint, body))
+        if endpoint.startswith("/containers/odysseus-obsidian-") and endpoint.endswith("/json"):
+            if not state["created"]:
+                return 404, ""
+            return 200, ('{"State": {"Running": false}, "HostConfig": '
+                         '{"PortBindings": {"3000/tcp": [{"HostPort": "3010"}]}}}')
+        if endpoint == "/containers/json?all=1":
+            return 200, "[]"
+        if "/containers/create" in endpoint:
+            state["created"] = True
+            return 201, "{}"
+        if endpoint.endswith("/start"):
+            return 204, ""
+        return 500, "?"
+
+    monkeypatch.setattr(vr, "_docker_api", fake_api)
+    r = client.post("/api/vaultfs/obsidian-open", json={"vault": "test-vault"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ui_url"] == "http://localhost:3010" and body["started"] is True
+    create = next(c for c in calls if "/containers/create" in c[1])
+    assert create[1] == "/containers/create?name=odysseus-obsidian-test-vault"
+    binds = create[2]["HostConfig"]["Binds"]
+    assert binds[1].endswith(":/vaults/Test Vault") and binds[1].startswith("/host")
+    cfg = j.load(open(sessions_dir / "test-vault" / ".config" / "obsidian" / "obsidian.json"))
+    entry = list(cfg["vaults"].values())[0]
+    assert entry["path"] == "/vaults/Test Vault" and entry["open"] is True
+
+
+def test_obsidian_open_vault_desconhecida(client, monkeypatch):
+    import routes.vaultfs_routes as vr
+    monkeypatch.setattr(vr, "_docker_api", lambda *a, **k: (200, "[]"))
+    assert client.post("/api/vaultfs/obsidian-open",
+                       json={"vault": "nope"}).status_code == 404
