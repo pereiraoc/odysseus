@@ -249,3 +249,28 @@ def test_obsidian_sync_vault_states(client, vault, tmp_path, monkeypatch):
     vs = {v["name"]: v for v in r.json()["vaults"]}
     tv = vs["Test Vault"]
     assert tv["registered"] is True and tv["nested_warning"] is False
+
+
+def test_roots_union_e_is_vault(client, vault, tmp_path, monkeypatch):
+    import routes.vaultfs_routes as vr
+    extra = tmp_path / "Projetos"
+    extra.mkdir()
+    monkeypatch.setattr(vr, "get_setting", lambda key: {
+        "tool_path_extra_roots": [str(vault)],
+        "file_browser_roots": [str(extra), str(vault)],  # dup da vault → dedup
+    }.get(key))
+    r = client.get("/api/vaultfs/vaults")
+    vs = r.json()["vaults"]
+    assert [v["name"] for v in vs] == ["Test Vault", "Projetos"]
+    assert vs[0]["is_vault"] is True and vs[1]["is_vault"] is False
+
+
+def test_put_roots(client, monkeypatch):
+    import routes.vaultfs_routes as vr
+    saved = {}
+    monkeypatch.setattr(vr, "load_settings", lambda: {"outra": 1})
+    monkeypatch.setattr(vr, "save_settings", lambda s: saved.update(s))
+    r = client.put("/api/vaultfs/roots", json={"roots": ["/data/projects", "  "]})
+    assert r.status_code == 200
+    assert saved["file_browser_roots"] == ["/data/projects"] and saved["outra"] == 1
+    assert client.put("/api/vaultfs/roots", json={"roots": ["relativo/x"]}).status_code == 400
