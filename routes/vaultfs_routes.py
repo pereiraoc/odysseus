@@ -316,7 +316,14 @@ def setup_vaultfs_routes() -> APIRouter:
         save_settings(s)
         return {"ok": True, "vaults": _list_vaults()}
 
-    def _build_tree(abs_dir: str, rel_prefix: str) -> list[dict]:
+    def _dir_has_visible_children(abs_dir: str) -> bool:
+        try:
+            with os.scandir(abs_dir) as it:
+                return any(not e.name.startswith(".") for e in it)
+        except OSError:
+            return False
+
+    def _build_tree(abs_dir: str, rel_prefix: str, depth: int = 0, level: int = 1) -> list[dict]:
         entries = []
         try:
             with os.scandir(abs_dir) as it:
@@ -325,10 +332,18 @@ def setup_vaultfs_routes() -> APIRouter:
                         continue
                     rel = f"{rel_prefix}/{e.name}" if rel_prefix else e.name
                     if e.is_dir(follow_symlinks=False):
-                        entries.append({
-                            "name": e.name, "path": rel, "type": "dir",
-                            "children": _build_tree(e.path, rel),
-                        })
+                        if depth and level >= depth:
+                            # lazy: filhos carregados sob demanda (?path=)
+                            entries.append({
+                                "name": e.name, "path": rel, "type": "dir",
+                                "children": None,
+                                "has_children": _dir_has_visible_children(e.path),
+                            })
+                        else:
+                            entries.append({
+                                "name": e.name, "path": rel, "type": "dir",
+                                "children": _build_tree(e.path, rel, depth, level + 1),
+                            })
                     elif e.is_file(follow_symlinks=False):
                         st = e.stat()
                         entries.append({
@@ -341,9 +356,17 @@ def setup_vaultfs_routes() -> APIRouter:
         return entries
 
     @router.get("/tree")
-    def get_tree(request: Request, vault: str = Query(...), user: str = Depends(require_user)):
+    def get_tree(request: Request, vault: str = Query(...),
+                 path: str = Query(""), depth: int = Query(0, ge=0, le=10),
+                 user: str = Depends(require_user)):
         root = _vault_root(vault)
-        return {"tree": _build_tree(root, "")}
+        if path:
+            _reject_git(path)
+        start = _resolve(root, path, allow_root=True)
+        if not os.path.isdir(start):
+            raise HTTPException(404, "directory not found")
+        rel_prefix = path.strip().strip("/") if path else ""
+        return {"tree": _build_tree(start, rel_prefix, depth)}
 
     @router.get("/file")
     def read_file(request: Request, vault: str = Query(...), path: str = Query(...),
