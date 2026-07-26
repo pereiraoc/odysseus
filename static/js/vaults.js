@@ -5,6 +5,7 @@
 // é o File Browser: raízes configuráveis, árvore lazy, favoritos, preview
 // universal (md c/ Dataview, código, imagem, PDF, mídia) e git estilo VS Code.
 import { applyEdgeDock } from './modalSnap.js';
+import { snapModalToZone } from './tileManager.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js';
@@ -37,6 +38,7 @@ const ICONS = {
   folder: FI('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>', 11),
   cloud: FI('<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>', 13),
   gem: FI('<polygon points="6 3 18 3 22 9 12 22 2 9"/><path d="M2 9h20"/><path d="M12 22 8 9l4-6 4 6-4 13"/>', 13),
+  layout: FI('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/>', 13),
 };
 
 const state = {
@@ -76,6 +78,7 @@ function buildPanel() {
       <div class="modal-content vaults-content">
         <div class="modal-header vaults-header">
           <span class="vaults-title">Files</span>
+          <button class="vaults-snapbtn" title="Posicionar na tela">${ICONS.layout}</button>
           <button class="close-btn" aria-label="Close files">✖</button>
         </div>
         <div class="vaults-body">
@@ -125,6 +128,7 @@ function buildPanel() {
     setTab(savedTab);
     panel.querySelector('.close-btn').addEventListener('click', () => Modals.close(PANEL_ID));
     makeWindowDraggable(panel, { content: els.content, header: els.header });
+    wireSnapControls(panel);
     panel.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
@@ -337,6 +341,136 @@ function buildTreeNodes(nodes) {
   }
   return ul;
 }
+
+// ── Snap layouts (reusa o tileManager do app; padrão Windows 11) ──
+function _safeRect() {
+  const sidebar = document.getElementById('sidebar');
+  const rail = document.getElementById('icon-rail');
+  let left = 0;
+  const sb = sidebar?.getBoundingClientRect();
+  if (sb && sb.right > 0 && !sidebar.classList.contains('hidden')) left = Math.max(left, sb.right);
+  if (rail && getComputedStyle(rail).display !== 'none') {
+    const rr = rail.getBoundingClientRect();
+    if (rr.right > 0) left = Math.max(left, rr.right);
+  }
+  return { left: left + 4, top: 4, right: window.innerWidth - 4, bottom: window.innerHeight - 4 };
+}
+
+function zoneRect(name) {
+  const sr = _safeRect();
+  const W = sr.right - sr.left;
+  const H = sr.bottom - sr.top;
+  switch (name) {
+    case 'fullscreen': return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    case 'maximize': return { left: sr.left, top: sr.top, width: W, height: H };
+    case 'left-half': return { left: sr.left, top: sr.top, width: W / 2, height: H };
+    case 'right-half': return { left: sr.left + W / 2, top: sr.top, width: W / 2, height: H };
+    case 'top-half': return { left: sr.left, top: sr.top, width: W, height: H / 2 };
+    case 'bottom-half': return { left: sr.left, top: sr.top + H / 2, width: W, height: H / 2 };
+    case 'top-left': return { left: sr.left, top: sr.top, width: W / 2, height: H / 2 };
+    case 'top-right': return { left: sr.left + W / 2, top: sr.top, width: W / 2, height: H / 2 };
+    case 'bottom-left': return { left: sr.left, top: sr.top + H / 2, width: W / 2, height: H / 2 };
+    case 'bottom-right': return { left: sr.left + W / 2, top: sr.top + H / 2, width: W / 2, height: H / 2 };
+    default: return null;
+  }
+}
+
+function unsnapContent(content) {
+  const pre = content.dataset._tilePreSnap;
+  ['position', 'left', 'top', 'width', 'height', 'max-height', 'margin', 'transform']
+    .forEach(prop => content.style.removeProperty(prop));
+  if (pre) {
+    try { Object.assign(content.style, JSON.parse(pre)); } catch (_) {}
+  }
+  if (!content.style.position) content.style.position = 'fixed';
+  delete content.dataset._tilePreSnap;
+  delete content.dataset._tileZone;
+}
+
+function snapTo(modal, name) {
+  const content = modal.querySelector('.modal-content');
+  if (!content) return;
+  if (name === 'restore') { unsnapContent(content); return; }
+  const rect = zoneRect(name);
+  if (rect) snapModalToZone(modal, { name, rect });
+}
+
+const SNAP_GRID = [
+  ['top-left', 'top-half', 'top-right'],
+  ['left-half', 'maximize', 'right-half'],
+  ['bottom-left', 'bottom-half', 'bottom-right'],
+];
+
+function _snapFillStyle(z) {
+  const map = {
+    'maximize': 'inset:2px;',
+    'left-half': 'top:2px;bottom:2px;left:2px;width:calc(50% - 2px);',
+    'right-half': 'top:2px;bottom:2px;right:2px;width:calc(50% - 2px);',
+    'top-half': 'left:2px;right:2px;top:2px;height:calc(50% - 2px);',
+    'bottom-half': 'left:2px;right:2px;bottom:2px;height:calc(50% - 2px);',
+    'top-left': 'top:2px;left:2px;width:calc(50% - 2px);height:calc(50% - 2px);',
+    'top-right': 'top:2px;right:2px;width:calc(50% - 2px);height:calc(50% - 2px);',
+    'bottom-left': 'bottom:2px;left:2px;width:calc(50% - 2px);height:calc(50% - 2px);',
+    'bottom-right': 'bottom:2px;right:2px;width:calc(50% - 2px);height:calc(50% - 2px);',
+  };
+  return map[z] || '';
+}
+
+function openSnapMenu(anchorBtn, modal) {
+  document.querySelector('.vaults-snap-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.className = 'vaults-snap-menu';
+  menu.innerHTML = SNAP_GRID.map(rowZ =>
+    `<div class="vaults-snap-row">${rowZ.map(z =>
+      `<button class="vaults-snap-cell" data-zone="${z}" title="${z}">
+         <span class="vaults-snap-fill" style="${_snapFillStyle(z)}"></span>
+       </button>`).join('')}</div>`).join('')
+    + `<div class="vaults-snap-row">
+        <button class="vaults-snap-wide" data-zone="fullscreen">tela cheia</button>
+        <button class="vaults-snap-wide" data-zone="restore">restaurar</button>
+      </div>`;
+  const r = anchorBtn.getBoundingClientRect();
+  menu.style.cssText = `position:fixed; top:${r.bottom + 6}px; left:${Math.max(8, r.right - 140)}px; z-index:500;`;
+  document.body.appendChild(menu);
+  let unreg = () => {};
+  const close = () => {
+    menu.remove();
+    unreg();
+    document.removeEventListener('click', close, true);
+  };
+  menu._dismiss = close;
+  unreg = registerMenuDismiss(close);
+  setTimeout(() => document.addEventListener('click', close, true), 0);
+  menu.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-zone]');
+    if (!b) return;
+    e.stopPropagation();
+    close();
+    snapTo(modal, b.dataset.zone);
+  });
+}
+
+// header: botão de snap + duplo-clique maximiza/restaura
+function wireSnapControls(modal) {
+  const header = modal.querySelector('.modal-header');
+  const content = modal.querySelector('.modal-content');
+  const btn = modal.querySelector('.vaults-snapbtn');
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); openSnapMenu(btn, modal); });
+  if (header) {
+    header.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button')) return;
+      snapTo(modal, content?.dataset._tileZone === 'maximize' ? 'restore' : 'maximize');
+    });
+  }
+}
+
+// Fix clássico: iframes engolem o ponteiro durante drags de janela — trava
+// pointer-events dos iframes enquanto qualquer header estiver sendo arrastado.
+document.addEventListener('pointerdown', (e) => {
+  if (e.target?.closest?.('.modal-header')) document.body.classList.add('vaults-iframe-lock');
+}, true);
+['pointerup', 'pointercancel'].forEach(ev =>
+  document.addEventListener(ev, () => document.body.classList.remove('vaults-iframe-lock'), true));
 
 // ── Favoritos ──
 const FAVS_KEY = 'odysseus-files-favs';
@@ -1229,6 +1363,7 @@ function ensureObsidianModal(v, url, started) {
       <div class="modal-content vaults-obsidian-content">
         <div class="modal-header vaults-header">
           <span class="vaults-title">${ICONS.gem} ${esc(v.name)}</span>
+          <button class="vaults-snapbtn" title="Posicionar na tela">${ICONS.layout}</button>
           <button class="vaults-sync-btn" title="Ligar/desligar esta sessão">${ICONS.cloud}</button>
           <button class="vaults-reload-btn" title="Recarregar a tela">${ICONS.refresh}</button>
           <button class="close-btn" aria-label="Close">✖</button>
@@ -1249,6 +1384,7 @@ function ensureObsidianModal(v, url, started) {
       content: m.querySelector('.modal-content'),
       header: m.querySelector('.modal-header'),
     });
+    wireSnapControls(m);
   }
   if (!Modals.isRegistered(id)) {
     Modals.register(id, {

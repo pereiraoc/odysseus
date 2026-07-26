@@ -41330,3 +41330,15 @@ body.theme-frosted .modal {
 .vaults-video { max-height: 75vh; }
 .vaults-codeview { font-size: 12.5px; line-height: 1.5; overflow: auto; margin: 0; border-radius: 8px; }
 .vaults-codeview code { font-family: ui-monospace, 'Cascadia Code', Menlo, monospace; }
+/* ── Snap layouts (menu de posicionamento) + iframe lock ── */
+body.vaults-iframe-lock iframe { pointer-events: none !important; }
+.vaults-snapbtn { background: none; border: none; cursor: pointer; color: inherit; opacity: 0.45; display: inline-flex; padding: 4px; flex-shrink: 0; }
+.vaults-snapbtn:hover { opacity: 0.9; }
+.vaults-snap-menu { background: var(--panel, #1e1e28); border: 1px solid var(--border, rgba(128,128,128,0.3)); border-radius: 10px; padding: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 5px; }
+.vaults-snap-row { display: flex; gap: 5px; }
+.vaults-snap-cell { position: relative; width: 42px; height: 28px; border: 1px solid var(--border, rgba(128,128,128,0.35)); border-radius: 5px; background: transparent; cursor: pointer; padding: 0; }
+.vaults-snap-cell:hover { border-color: var(--accent-primary, #60a5fa); }
+.vaults-snap-fill { position: absolute; background: color-mix(in srgb, var(--accent-primary, #60a5fa) 45%, transparent); border-radius: 3px; }
+.vaults-snap-cell:hover .vaults-snap-fill { background: var(--accent-primary, #60a5fa); }
+.vaults-snap-wide { flex: 1; font-size: 10.5px; padding: 4px; border-radius: 5px; border: 1px solid var(--border, rgba(128,128,128,0.35)); background: transparent; color: inherit; cursor: pointer; opacity: 0.85; }
+.vaults-snap-wide:hover { border-color: var(--accent-primary, #60a5fa); opacity: 1; }
