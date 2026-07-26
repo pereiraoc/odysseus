@@ -6,6 +6,7 @@
 // universal (md c/ Dataview, código, imagem, PDF, mídia) e git estilo VS Code.
 import { applyEdgeDock } from './modalSnap.js';
 import { snapModalToZone } from './tileManager.js';
+import { nextToolWindowZ } from './toolWindowZOrder.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js';
@@ -450,11 +451,23 @@ function openSnapMenu(anchorBtn, modal) {
   });
 }
 
-// header: botão de snap + duplo-clique maximiza/restaura
+function raiseModal(modal) {
+  try {
+    const z = nextToolWindowZ({
+      exclude: modal,
+      current: getComputedStyle(modal).zIndex,
+      floor: 300,
+    });
+    modal.style.setProperty('z-index', String(z), 'important');
+  } catch (_) {}
+}
+
+// header: botão de snap + duplo-clique maximiza/restaura + click-to-raise
 function wireSnapControls(modal) {
   const header = modal.querySelector('.modal-header');
   const content = modal.querySelector('.modal-content');
   const btn = modal.querySelector('.vaults-snapbtn');
+  modal.addEventListener('pointerdown', () => raiseModal(modal), true);
   if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); openSnapMenu(btn, modal); });
   if (header) {
     header.addEventListener('dblclick', (e) => {
