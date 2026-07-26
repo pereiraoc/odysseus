@@ -601,11 +601,28 @@ def setup_vaultfs_routes() -> APIRouter:
                         mounts.add(parts[4].replace("\\040", " "))
         except OSError:
             pass
+        # o que o container do Obsidian REALMENTE monta (fonte da verdade;
+        # None quando o container/socket não existe → cai na heurística)
+        obs_dests = None
+        try:
+            import json as _json
+            st, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
+            if st == 200:
+                obs_dests = {m.get("Destination", "")
+                             for m in _json.loads(body_txt).get("Mounts", [])}
+        except HTTPException:
+            pass
         out = []
         for v in _list_vaults():
-            # só o mount raiz /data/vaults é visível pro container do Obsidian;
-            # vaults que são bind-mounts próprios ficam fora do sync
-            syncable = v["exists"] and v["path"] not in mounts
+            # visível pro Obsidian se: está fisicamente sob o mount raiz
+            # /data/vaults, OU tem bind espelhado /vaults/<nome> no container
+            under_root = v["path"] not in mounts
+            if obs_dests is not None:
+                syncable = v["exists"] and (
+                    (under_root and "/vaults" in obs_dests)
+                    or f"/vaults/{v['name']}" in obs_dests)
+            else:
+                syncable = v["exists"] and under_root
             opath = f"/vaults/{v['name']}"
             out.append({
                 "id": v["id"], "name": v["name"], "syncable": syncable,
