@@ -200,6 +200,224 @@ _CRED_HELPER = (
 )
 
 
+
+# ── Obsidian: uma sessão (container oficial) por vault ──
+# Containers `odysseus-obsidian-<vault-id>` criados dinamicamente via docker
+# API (socket montado pelo overlay). Binds usam caminhos do HOST traduzidos
+# de caminhos do container pela env VAULTFS_HOST_MAP (longest-prefix).
+
+DOCKER_SOCK = "/var/run/docker.sock"
+SESSION_PREFIX = "odysseus-obsidian-"
+SESSION_BASE_PORT = 3010
+SESSION_MAX_PORT = 3019
+
+
+class _UnixHTTP(http.client.HTTPConnection):
+    def __init__(self, sock_path):
+        super().__init__("localhost")
+        self._sock_path = sock_path
+
+    def connect(self):
+        s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        s.settimeout(15)
+        s.connect(self._sock_path)
+        self.sock = s
+
+
+def _docker_api(method: str, endpoint: str, body: Optional[dict] = None):
+    if not os.path.exists(DOCKER_SOCK):
+        raise HTTPException(501, {"code": "no_docker_socket",
+                                  "message": "socket do docker não montado no container "
+                                             "(ver LOCAL_CHANGES.md, Obsidian por sessão)"})
+    try:
+        import json as _json
+        conn = _UnixHTTP(DOCKER_SOCK)
+        payload = _json.dumps(body) if body is not None else None
+        headers = {"Content-Type": "application/json"} if payload else {}
+        conn.request(method, endpoint, body=payload, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.read().decode("utf-8", errors="replace")
+    except OSError as e:
+        raise HTTPException(502, f"docker socket: {e}")
+
+
+def _host_map() -> list:
+    pairs = []
+    for part in os.getenv("VAULTFS_HOST_MAP", "").split(","):
+        if "=" in part:
+            c, h = part.split("=", 1)
+            if c.strip() and h.strip():
+                pairs.append((c.strip().rstrip("/"), h.strip().rstrip("/")))
+    pairs.sort(key=lambda pr: -len(pr[0]))
+    return pairs
+
+
+def _host_path(container_path: str) -> str:
+    cp = str(container_path).rstrip("/")
+    for c, h in _host_map():
+        if cp == c or cp.startswith(c + "/"):
+            return h + cp[len(c):]
+    raise HTTPException(501, {"code": "no_host_map",
+                              "message": f"sem tradução host p/ {container_path} — "
+                                         "configure VAULTFS_HOST_MAP no overlay"})
+
+
+def _session_name(vault_id: str) -> str:
+    return f"{SESSION_PREFIX}{vault_id}"
+
+
+def _session_spec(name: str, vault_name: str, host_vault_dir: str,
+                  host_config_dir: str, port: int) -> dict:
+    return {
+        "Image": os.getenv("OBSIDIAN_IMAGE", "lscr.io/linuxserver/obsidian:latest"),
+        "Env": ["PUID=1000", "PGID=1000", "TZ=America/Sao_Paulo"],
+        "ExposedPorts": {"3000/tcp": {}},
+        "Labels": {"odysseus.vault-session": "1"},
+        "HostConfig": {
+            "Binds": [f"{host_config_dir}:/config",
+                      f"{host_vault_dir}:/vaults/{vault_name}"],
+            "PortBindings": {"3000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]},
+            "SecurityOpt": ["seccomp:unconfined"],
+            "ShmSize": 1 << 30,
+            "RestartPolicy": {"Name": "unless-stopped"},
+        },
+    }
+
+
+def _session_inspect(vault_id: str):
+    import json as _json
+    st, body = _docker_api("GET", f"/containers/{_session_name(vault_id)}/json")
+    if st != 200:
+        return st, None
+    try:
+        return st, _json.loads(body)
+    except ValueError:
+        return 500, None
+
+
+def _port_from_inspect(info: dict):
+    try:
+        return int(info["HostConfig"]["PortBindings"]["3000/tcp"][0]["HostPort"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _used_session_ports() -> set:
+    import json as _json
+    st, body = _docker_api("GET", "/containers/json?all=1")
+    used = set()
+    if st != 200:
+        return used
+    try:
+        for c in _json.loads(body):
+            names = c.get("Names") or []
+            if not any(n.lstrip("/").startswith(SESSION_PREFIX) for n in names):
+                continue
+            vid = names[0].lstrip("/")[len(SESSION_PREFIX):]
+            st2, info = _session_inspect(vid)
+            port = _port_from_inspect(info) if info else None
+            if port:
+                used.add(port)
+    except ValueError:
+        pass
+    return used
+
+
+def _next_free_port() -> int:
+    used = _used_session_ports()
+    port = SESSION_BASE_PORT
+    while port in used:
+        port += 1
+    if port > SESSION_MAX_PORT:
+        raise HTTPException(507, f"sem porta livre na faixa {SESSION_BASE_PORT}-{SESSION_MAX_PORT} "
+                                 "(pare alguma sessão ou amplie CSP_EXTRA_FRAME_SRC)")
+    return port
+
+
+def _sessions_dir() -> str:
+    return os.getenv("OBSIDIAN_SESSIONS_DIR", "/app/data/obsidian-sessions")
+
+
+def _seed_session_config(vault_id: str, vault_name: str):
+    """Garante o obsidian.json da sessão apontando pra vault (open:true)."""
+    import json as _json
+    import secrets as _secrets
+    import time as _time
+    cfg = os.path.join(_sessions_dir(), vault_id, ".config", "obsidian", "obsidian.json")
+    data = {}
+    try:
+        with open(cfg, encoding="utf-8") as f:
+            data = _json.load(f)
+    except (OSError, ValueError):
+        pass
+    vaults = data.setdefault("vaults", {})
+    opath = f"/vaults/{vault_name}"
+    entry = next((v for v in vaults.values() if v.get("path") == opath), None)
+    if entry is None:
+        vaults[_secrets.token_hex(8)] = {"path": opath, "ts": int(_time.time() * 1000), "open": True}
+    elif not entry.get("open"):
+        entry["open"] = True
+    else:
+        return
+    os.makedirs(os.path.dirname(cfg), exist_ok=True)
+    with open(cfg, "w", encoding="utf-8") as f:
+        _json.dump(data, f, indent=1)
+
+
+def _vault_entry(vault_id: str) -> dict:
+    v = next((x for x in _list_vaults() if x["id"] == vault_id), None)
+    if not v:
+        raise HTTPException(404, f"Unknown vault: {vault_id}")
+    return v
+
+
+def _session_state(v: dict) -> dict:
+    try:
+        _host_path(v["path"])
+        mounted = v["exists"]
+    except HTTPException:
+        mounted = False
+    exists = running = False
+    port = None
+    if os.path.exists(DOCKER_SOCK):
+        st, info = _session_inspect(v["id"])
+        if st == 200 and info:
+            exists = True
+            running = bool(info.get("State", {}).get("Running"))
+            port = _port_from_inspect(info)
+    return {"id": v["id"], "name": v["name"], "mounted": mounted,
+            "exists": exists, "running": running, "port": port,
+            "ui_url": f"http://localhost:{port}" if port else None}
+
+
+def _ensure_session(vault_id: str) -> dict:
+    v = _vault_entry(vault_id)
+    if not v["exists"]:
+        raise HTTPException(404, f"Vault path not found on disk: {v['path']}")
+    host_vault = _host_path(v["path"])
+    name = _session_name(vault_id)
+    st, info = _session_inspect(vault_id)
+    started = False
+    if st == 404:
+        port = _next_free_port()
+        _seed_session_config(vault_id, v["name"])
+        host_cfg = _host_path(os.path.join(_sessions_dir(), vault_id))
+        spec = _session_spec(name, v["name"], host_vault, host_cfg, port)
+        s2, out = _docker_api("POST", f"/containers/create?name={name}", spec)
+        if s2 != 201:
+            raise HTTPException(502, f"docker create: HTTP {s2} {out[:300]}")
+        st, info = _session_inspect(vault_id)
+    if not info:
+        raise HTTPException(502, "sessão não inspecionável após criação")
+    port = _port_from_inspect(info)
+    if not info.get("State", {}).get("Running"):
+        s3, out = _docker_api("POST", f"/containers/{name}/start")
+        if s3 not in (204, 304):
+            raise HTTPException(502, f"docker start: HTTP {s3} {out[:200]}")
+        started = True
+    return {"ok": True, "ui_url": f"http://localhost:{port}", "port": port, "started": started}
+
+
 class WriteBody(BaseModel):
     vault: str
     path: str
@@ -250,6 +468,7 @@ class TaskToggleBody(BaseModel):
 
 
 class SyncToggleBody(BaseModel):
+    vault: str
     enable: bool
 
 
@@ -595,192 +814,27 @@ def setup_vaultfs_routes() -> APIRouter:
         os.replace(tmp, target)
         return {"ok": True, "task": {**_parse_task_line(line), "path": body.path, "line": body.line}}
 
-    # ── Obsidian Sync (container oficial controlado via socket docker) ──
-
-    class _UnixHTTP(http.client.HTTPConnection):
-        def __init__(self, sock_path):
-            super().__init__("localhost")
-            self._sock_path = sock_path
-
-        def connect(self):
-            s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-            s.settimeout(10)
-            s.connect(self._sock_path)
-            self.sock = s
-
-    DOCKER_SOCK = "/var/run/docker.sock"
-    SYNC_CONTAINER = os.getenv("OBSIDIAN_SYNC_CONTAINER", "odysseus-obsidian")
-    SYNC_UI_URL = os.getenv("OBSIDIAN_SYNC_UI_URL", "http://localhost:3010")
-
-    def _docker_api(method: str, endpoint: str):
-        if not os.path.exists(DOCKER_SOCK):
-            raise HTTPException(501, {"code": "no_docker_socket",
-                                      "message": "socket do docker não montado no container "
-                                                 "(ver LOCAL_CHANGES.md, item do Obsidian Sync)"})
-        try:
-            conn = _UnixHTTP(DOCKER_SOCK)
-            conn.request(method, endpoint)
-            resp = conn.getresponse()
-            return resp.status, resp.read().decode("utf-8", errors="replace")
-        except OSError as e:
-            raise HTTPException(502, f"docker socket: {e}")
-
-    OBSIDIAN_CONFIG_DIR = os.getenv("OBSIDIAN_CONFIG_DIR", "/app/data/obsidian-config")
-
-    def _sync_vault_states() -> list:
-        """Por vault do painel: está registrada no Obsidian do container?
-        Detecta também o erro clássico de conectar criando pasta ANINHADA
-        (path /vaults/X/X) que baixa o remoto pra dentro da vault."""
-        registry = {}
-        try:
-            import json as _json
-            with open(os.path.join(OBSIDIAN_CONFIG_DIR, ".config", "obsidian", "obsidian.json"),
-                      encoding="utf-8") as f:
-                registry = _json.load(f).get("vaults", {})
-        except (OSError, ValueError):
-            pass
-        reg_paths = [v.get("path", "") for v in registry.values()]
-        # bind-mounts do mesmo filesystem não aparecem no os.path.ismount —
-        # lê os mountpoints reais (campo 5 do mountinfo, com \040 = espaço)
-        mounts: set = set()
-        try:
-            with open("/proc/self/mountinfo", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) > 4:
-                        mounts.add(parts[4].replace("\\040", " "))
-        except OSError:
-            pass
-        # o que o container do Obsidian REALMENTE monta (fonte da verdade;
-        # None quando o container/socket não existe → cai na heurística)
-        obs_dests = None
-        try:
-            import json as _json
-            st, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
-            if st == 200:
-                obs_dests = {m.get("Destination", "")
-                             for m in _json.loads(body_txt).get("Mounts", [])}
-        except HTTPException:
-            pass
-        out = []
-        for v in _list_vaults():
-            # visível pro Obsidian se: está fisicamente sob o mount raiz
-            # /data/vaults, OU tem bind espelhado /vaults/<nome> no container
-            under_root = v["path"] not in mounts
-            if obs_dests is not None:
-                syncable = v["exists"] and (
-                    (under_root and "/vaults" in obs_dests)
-                    or f"/vaults/{v['name']}" in obs_dests)
-            else:
-                syncable = v["exists"] and under_root
-            opath = f"/vaults/{v['name']}"
-            out.append({
-                "id": v["id"], "name": v["name"], "syncable": syncable,
-                "registered": opath in reg_paths,
-                "nested_warning": any(p.startswith(opath + "/") for p in reg_paths),
-            })
-        return out
+    # ── Obsidian: sessões por vault (helpers no nível do módulo) ──
 
     @router.get("/obsidian-sync")
     def sync_status(request: Request, user: str = Depends(require_user)):
-        vault_states = _sync_vault_states()
-        try:
-            status, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
-        except HTTPException as e:
-            if getattr(e, "status_code", None) == 501:
-                return {"available": False, "installed": False, "running": False,
-                        "reason": "no_docker_socket", "ui_url": SYNC_UI_URL, "vaults": vault_states}
-            raise
-        if status == 404:
-            return {"available": True, "installed": False, "running": False,
-                    "reason": "container_missing", "ui_url": SYNC_UI_URL, "vaults": vault_states,
-                    "hint": "docker compose --profile obsidian-sync up -d obsidian"}
-        import json as _json
-        running = False
-        try:
-            running = bool(_json.loads(body_txt).get("State", {}).get("Running"))
-        except Exception:
-            pass
-        return {"available": True, "installed": True, "running": running,
-                "ui_url": SYNC_UI_URL, "vaults": vault_states}
-
-    def _register_vault_open(vault_name: str) -> bool:
-        """Garante a vault registrada no obsidian.json com open=true (janela
-        abre no launch). Retorna True se o arquivo mudou."""
-        import json as _json
-        import secrets as _secrets
-        import time as _time
-        cfg = os.path.join(OBSIDIAN_CONFIG_DIR, ".config", "obsidian", "obsidian.json")
-        data = {}
-        try:
-            with open(cfg, encoding="utf-8") as f:
-                data = _json.load(f)
-        except (OSError, ValueError):
-            pass
-        vaults = data.setdefault("vaults", {})
-        opath = f"/vaults/{vault_name}"
-        entry = next((v for v in vaults.values() if v.get("path") == opath), None)
-        changed = False
-        if entry is None:
-            vaults[_secrets.token_hex(8)] = {"path": opath, "ts": int(_time.time() * 1000), "open": True}
-            changed = True
-        elif not entry.get("open"):
-            entry["open"] = True
-            changed = True
-        if changed:
-            os.makedirs(os.path.dirname(cfg), exist_ok=True)
-            with open(cfg, "w", encoding="utf-8") as f:
-                _json.dump(data, f, indent=1)
-        return changed
+        sessions = [_session_state(v) for v in _list_vaults() if v.get("is_vault")]
+        return {"available": os.path.exists(DOCKER_SOCK), "sessions": sessions}
 
     @router.post("/obsidian-open")
     def obsidian_open(body: ObsidianOpenBody, request: Request, user: str = Depends(require_user)):
-        """Abre a vault no Obsidian do container: registra a janela e (re)inicia
-        o container quando preciso. A conexão do Sync fica por conta do usuário
-        dentro do próprio Obsidian."""
-        states = {v["id"]: v for v in _sync_vault_states()}
-        st = states.get(body.vault)
-        if not st:
-            raise HTTPException(404, f"Unknown vault: {body.vault}")
-        if not st["syncable"]:
-            raise HTTPException(400, {"code": "not_mounted",
-                                      "message": "esta vault não está montada no container do Obsidian "
-                                                 "(só /data/vaults é visível — ver LOCAL_CHANGES.md)"})
-        status, body_txt = _docker_api("GET", f"/containers/{SYNC_CONTAINER}/json")
-        if status == 404:
-            raise HTTPException(404, {"code": "container_missing",
-                                      "message": "container do Obsidian ainda não foi criado — rode: "
-                                                 "docker compose --profile obsidian-sync up -d obsidian"})
-        import json as _json
-        running = False
-        try:
-            running = bool(_json.loads(body_txt).get("State", {}).get("Running"))
-        except Exception:
-            pass
-        # já registrada + aberta + rodando → nada a fazer (sem restart disruptivo)
-        if st["registered"] and running:
-            changed = _register_vault_open(st["name"])
-            if not changed:
-                return {"ok": True, "restarted": False, "ui_url": SYNC_UI_URL}
-        if running:
-            _docker_api("POST", f"/containers/{SYNC_CONTAINER}/stop")
-        _register_vault_open(st["name"])
-        s2, out = _docker_api("POST", f"/containers/{SYNC_CONTAINER}/start")
-        if s2 not in (204, 304):
-            raise HTTPException(502, f"docker start: HTTP {s2} {out[:200]}")
-        return {"ok": True, "restarted": True, "ui_url": SYNC_UI_URL}
+        return _ensure_session(body.vault)
 
     @router.post("/obsidian-sync")
     def sync_toggle(body: SyncToggleBody, request: Request, user: str = Depends(require_user)):
-        action = "start" if body.enable else "stop"
-        status, out = _docker_api("POST", f"/containers/{SYNC_CONTAINER}/{action}")
-        if status == 404:
-            raise HTTPException(404, {"code": "container_missing",
-                                      "message": "container do Obsidian ainda não foi criado — rode: "
-                                                 "docker compose --profile obsidian-sync up -d obsidian"})
-        if status not in (204, 304):
-            raise HTTPException(502, f"docker {action}: HTTP {status} {out[:200]}")
-        return {"ok": True, "running": body.enable}
+        if body.enable:
+            r = _ensure_session(body.vault)
+            return {"ok": True, "running": True, "port": r["port"]}
+        name = _session_name(_vault_entry(body.vault)["id"])
+        st, out = _docker_api("POST", f"/containers/{name}/stop")
+        if st not in (204, 304, 404):
+            raise HTTPException(502, f"docker stop: HTTP {st} {out[:200]}")
+        return {"ok": True, "running": False}
 
     # ── Git ──
 
