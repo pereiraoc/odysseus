@@ -274,3 +274,17 @@ def test_put_roots(client, monkeypatch):
     assert r.status_code == 200
     assert saved["file_browser_roots"] == ["/data/projects"] and saved["outra"] == 1
     assert client.put("/api/vaultfs/roots", json={"roots": ["relativo/x"]}).status_code == 400
+
+
+def test_tree_lazy_depth_e_path(client):
+    r = client.get("/api/vaultfs/tree", params={"vault": "test-vault", "depth": 1})
+    tree = r.json()["tree"]
+    sistema = next(n for n in tree if n["name"] == "Sistema")
+    assert sistema["children"] is None and sistema["has_children"] is True
+    r = client.get("/api/vaultfs/tree",
+                   params={"vault": "test-vault", "path": "Sistema", "depth": 1})
+    sub = r.json()["tree"]
+    assert sub[0]["name"] == "Heróis" and sub[0]["children"] is None
+    r = client.get("/api/vaultfs/tree",
+                   params={"vault": "test-vault", "path": "Sistema/Heróis", "depth": 1})
+    assert r.json()["tree"][0]["path"] == "Sistema/Heróis/Dante.md"
