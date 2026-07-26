@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from src.auth_helpers import require_user
-from src.settings import get_setting
+from src.settings import get_setting, load_settings, save_settings
 
 try:
     import yaml as _yaml
@@ -36,12 +36,19 @@ def _slug(name: str) -> str:
 
 
 def _list_vaults() -> list[dict]:
-    roots = get_setting("tool_path_extra_roots") or []
-    out, seen = [], {}
-    for raw in roots:
+    """Raízes do painel: vaults (tool_path_extra_roots) ∪ raízes do File
+    Browser (file_browser_roots), dedup por realpath — vault vence."""
+    vault_roots = get_setting("tool_path_extra_roots") or []
+    extra_roots = get_setting("file_browser_roots") or []
+    out, seen, seen_paths = [], {}, set()
+    for raw, is_vault in ([(r, True) for r in vault_roots]
+                          + [(r, False) for r in extra_roots]):
         if not raw:
             continue
         path = os.path.realpath(str(raw))
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         name = os.path.basename(path.rstrip(os.sep)) or path
         vid = _slug(name)
         if vid in seen:
@@ -55,6 +62,7 @@ def _list_vaults() -> list[dict]:
             "path": path,
             "exists": os.path.isdir(path),
             "has_git": os.path.isdir(os.path.join(path, ".git")),
+            "is_vault": is_vault,
         })
     return out
 
@@ -249,6 +257,10 @@ class ObsidianOpenBody(BaseModel):
     vault: str
 
 
+class RootsBody(BaseModel):
+    roots: list[str]
+
+
 # ── Obsidian Tasks (formato do plugin: emojis de data/prioridade) ──
 TASK_RE = re.compile(r"^(\s*)[-*] \[(.)\] (.*)$")
 TASK_DATE_MARKS = {
@@ -288,6 +300,21 @@ def setup_vaultfs_routes() -> APIRouter:
     @router.get("/vaults")
     def list_vaults(request: Request, user: str = Depends(require_user)):
         return {"vaults": _list_vaults()}
+
+    @router.put("/roots")
+    def set_roots(body: RootsBody, request: Request, user: str = Depends(require_user)):
+        cleaned = []
+        for r in body.roots:
+            r = str(r).strip()
+            if not r:
+                continue
+            if not os.path.isabs(r):
+                raise HTTPException(400, f"caminho não absoluto: {r}")
+            cleaned.append(r)
+        s = load_settings()
+        s["file_browser_roots"] = cleaned
+        save_settings(s)
+        return {"ok": True, "vaults": _list_vaults()}
 
     def _build_tree(abs_dir: str, rel_prefix: str) -> list[dict]:
         entries = []
