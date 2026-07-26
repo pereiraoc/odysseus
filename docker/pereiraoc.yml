@@ -17,12 +17,11 @@ services:
       # Vaults extras do painel de Vaults que vivem fora de /data/vaults:
       - /data/projects/pleitost-app:/app/vaults/pleitost-app
       - /data/projects/caelestia-arch-setup:/app/vaults/caelestia-arch-setup
-      # Toggle do Obsidian Sync pelo painel de Vaults: o backend fala com o
-      # socket pra dar start/stop APENAS no container `odysseus-obsidian`
-      # (nome fixo no código; rotas com auth). TRADEOFF consciente: montar o
-      # socket dá poder de docker ao container do app — aceitável neste
-      # deploy single-user local; remova esta linha pra desligar o recurso
-      # (o painel passa a mostrar o toggle como indisponível).
+      # Sessões do Obsidian pelo painel de Vaults: o backend usa o socket pra
+      # criar/ligar/desligar SÓ containers `odysseus-obsidian-<vault-id>`
+      # (prefixo fixo no código; rotas com auth). TRADEOFF consciente: montar
+      # o socket dá poder de docker ao container do app — aceitável neste
+      # deploy single-user local; remova esta linha pra desligar o recurso.
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # CUDA loader path para a wheel llama-cpp-python (cu132): libcudart/libcublas
@@ -42,44 +41,12 @@ services:
       - GIT_COMMITTER_EMAIL=pereiraoc@gmail.com
       - VAULTFS_GIT_USER=sfynz
       - VAULTFS_GIT_TOKEN=${VAULTFS_GIT_TOKEN:-}
-      # Obsidian Sync: nome do container controlado pelo toggle + URL da UI
-      # (KasmVNC) usada só na primeira configuração/login da conta.
-      - OBSIDIAN_SYNC_CONTAINER=odysseus-obsidian
-      - OBSIDIAN_SYNC_UI_URL=http://localhost:3010
       # Mecanismo UPSTREAM do entrypoint: com o socket montado, adiciona o
       # usuário do app ao grupo do socket e preserva grupos no gosu.
       - ODYSSEUS_ENABLE_HOST_DOCKER=true
-      # Permite iframar o KasmVNC do Obsidian dentro do Odysseus (patch
-      # fork-local no CSP do core/middleware.py; vazio = upstream intacto).
-      - CSP_EXTRA_FRAME_SRC=http://localhost:3010
-
-  # Obsidian OFICIAL em background (linuxserver/obsidian, KasmVNC) pro
-  # Obsidian Sync rodar sem abrir o app no desktop. Perfil opt-in:
-  #   docker compose --profile obsidian-sync up -d obsidian   (primeira vez)
-  # Depois: abra http://localhost:3010, logue na conta do Obsidian Sync e
-  # abra a vault /vaults/OP Vault UMA vez — dali em diante o toggle do
-  # painel de Vaults liga/desliga este container.
-  obsidian:
-    image: lscr.io/linuxserver/obsidian:latest
-    container_name: odysseus-obsidian
-    profiles: ["obsidian-sync"]
-    security_opt:
-      - seccomp:unconfined  # requerido pelo Chromium/Electron do Obsidian
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Sao_Paulo
-    volumes:
-      # Absoluto de propósito: caminho relativo em overlay resolve contra o
-      # diretório do PROJETO (raiz do repo), não contra docker/ — o config
-      # foi parar em /data/projects/data até este fix.
-      - /data/projects/odysseus/data/obsidian-config:/config
-      - /data/vaults:/vaults
-      # Espelha os binds extras do serviço odysseus — todas as vaults do
-      # painel ficam abríveis/sincronizáveis também dentro do Obsidian:
-      - /data/projects/pleitost-app:/vaults/pleitost-app
-      - /data/projects/caelestia-arch-setup:/vaults/caelestia-arch-setup
-    ports:
-      - "127.0.0.1:3010:3000"
-    shm_size: "1gb"
-    restart: unless-stopped
+      # Sessões do Obsidian por vault (containers dinâmicos, sem serviço
+      # fixo): tradução container→host pros binds das sessões e faixa de
+      # portas liberada no CSP pra iframar o KasmVNC de cada sessão.
+      - VAULTFS_HOST_MAP=/app/vaults/pleitost-app=/data/projects/pleitost-app,/app/vaults/caelestia-arch-setup=/data/projects/caelestia-arch-setup,/app/vaults=/data/vaults,/app/data=/data/projects/odysseus/data
+      - OBSIDIAN_SESSIONS_DIR=/app/data/obsidian-sessions
+      - CSP_EXTRA_FRAME_SRC=http://localhost:3010 http://localhost:3011 http://localhost:3012 http://localhost:3013 http://localhost:3014 http://localhost:3015 http://localhost:3016 http://localhost:3017 http://localhost:3018 http://localhost:3019
