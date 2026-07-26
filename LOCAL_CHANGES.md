@@ -70,11 +70,26 @@ branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
   `CSP_EXTRA_FRAME_SRC` (vazio = upstream intacto) — permite iframar o
   KasmVNC do Obsidian (localhost:3010) no modal embutido do painel.
 
-**Obsidian embutido:** o app OFICIAL do container abre dentro do Odysseus
-(modal iframe). O 💎 em cada vault do sidebar (e no header do painel) abre a
-vault direto no Obsidian: `POST /api/vaultfs/obsidian-open` registra a janela
-no `obsidian.json` e reinicia o container quando preciso — sync, plugins e
-tudo mais controlados dentro do próprio Obsidian.
+**Obsidian por sessão (modelo atual):** cada vault tem SEU container do
+Obsidian oficial (`odysseus-obsidian-<vault-id>`, lscr.io/linuxserver/obsidian),
+criado dinamicamente pelo backend via docker API na primeira abertura — clique
+na vault do sidebar abre a sessão daquela vault num modal iframe (KasmVNC,
+portas 3010-3019, liberadas no CSP). Multi-vault lado a lado; sync/plugins são
+configurados DENTRO do Obsidian de cada sessão (login 1x por vault; config
+persiste em `data/obsidian-sessions/<id>/` — a sessão da OP Vault herdou o
+config antigo de `data/obsidian-config/`, migrado em 2026-07-26). Dot verde no
+item = sessão rodando; nuvem liga/desliga (container parado não gasta RAM).
+Binds traduzidos container→host pela env `VAULTFS_HOST_MAP`. Rotas:
+`GET/POST /api/vaultfs/obsidian-sync` (status/toggle por vault) e
+`POST /api/vaultfs/obsidian-open`.
+
+**Tool "Files" (File Browser, em Tools):** o painel custom (Browser|Git) migrou
+pra `#tool-files-btn`, generalizado pra raízes configuráveis
+(`file_browser_roots` ∪ vaults; `PUT /api/vaultfs/roots` pela UI). Árvore lazy
+(`/tree?path=&depth=`), favoritos (localStorage), preview universal: md
+(wikilinks+Dataview/bases), código com highlight.js, imagem, PDF embed,
+áudio/vídeo, binário com download. Aba Tasks removida da UI (rotas `/tasks*`
+continuam pro agente); tarefas vivem no Obsidian.
 
 **Envs no overlay (item 2):** `GIT_AUTHOR_*`/`GIT_COMMITTER_*` (identidade dos
 commits feitos pela UI dentro do container) e `VAULTFS_GIT_USER` +
