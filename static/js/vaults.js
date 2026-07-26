@@ -1,9 +1,9 @@
-// static/js/vaults.js — Painel de Vaults (fork-local; ver LOCAL_CHANGES.md)
+// static/js/vaults.js — Vaults (sessões do Obsidian) + tool Files (fork-local)
 //
-// Seção "Vaults" no sidebar lista as vaults de tool_path_extra_roots
-// (via /api/vaultfs/vaults). Clicar numa vault abre um painel dockado à
-// borda direita com árvore de navegação + viewer/editor de markdown
-// (wikilinks Obsidian) + strip de git estilo VS Code.
+// Seção "Vaults" no sidebar: cada vault abre a SUA sessão do Obsidian
+// oficial (container por vault, iframe KasmVNC). O tool "Files" (em Tools)
+// é o File Browser: raízes configuráveis, árvore lazy, favoritos, preview
+// universal (md c/ Dataview, código, imagem, PDF, mídia) e git estilo VS Code.
 import { applyEdgeDock } from './modalSnap.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
@@ -13,7 +13,7 @@ import { renderCommitGraph } from './vaultsGraph.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { runQuery, runBase, evalInline } from './vaultsDataview.js';
 
-const PANEL_ID = 'vaults-panel';
+const PANEL_ID = 'files-panel';
 const VAULT_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><rect x="3" y="7" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="2"/><path d="M12 15v3"/></svg>';
 
 // Ícones feather-style no mesmo padrão visual do resto do Odysseus (issue #3).
@@ -75,10 +75,8 @@ function buildPanel() {
     panel.innerHTML = `
       <div class="modal-content vaults-content">
         <div class="modal-header vaults-header">
-          <span class="vaults-title"></span>
-          <button class="vaults-obsidian-btn" title="Abrir o Obsidian aqui dentro (app oficial do container)">${ICONS.gem}</button>
-          <button class="vaults-sync-btn" title="Obsidian Sync">${ICONS.cloud}</button>
-          <button class="close-btn" aria-label="Close vaults">✖</button>
+          <span class="vaults-title">Files</span>
+          <button class="close-btn" aria-label="Close files">✖</button>
         </div>
         <div class="vaults-body">
           <div class="vaults-viewer"></div>
@@ -86,17 +84,14 @@ function buildPanel() {
             <div class="vaults-tabs">
               <button class="vaults-tab" data-vaults-tab="browser">Browser</button>
               <button class="vaults-tab" data-vaults-tab="git">Git<span class="vaults-tab-badge vaults-git-badge" style="display:none"></span></button>
-              <button class="vaults-tab" data-vaults-tab="tasks">Tasks<span class="vaults-tab-badge vaults-tasks-badge" style="display:none"></span></button>
             </div>
             <div class="vaults-tabpane vaults-pane-browser">
               <div class="vaults-toolbar"></div>
+              <div class="vaults-favs"></div>
               <div class="vaults-tree"></div>
             </div>
             <div class="vaults-tabpane vaults-pane-git">
               <div class="vaults-git"></div>
-            </div>
-            <div class="vaults-tabpane vaults-pane-tasks">
-              <div class="vaults-tasks"></div>
             </div>
           </div>
         </div>
@@ -111,19 +106,14 @@ function buildPanel() {
     els.tree = panel.querySelector('.vaults-tree');
     els.viewer = panel.querySelector('.vaults-viewer');
     els.git = panel.querySelector('.vaults-git');
-    els.tasks = panel.querySelector('.vaults-tasks');
-    els.syncBtn = panel.querySelector('.vaults-sync-btn');
-    els.syncBtn.addEventListener('click', onSyncClick);
-    panel.querySelector('.vaults-obsidian-btn').addEventListener('click', () =>
-      state.currentId ? openVaultInObsidian(state.currentId) : openObsidianApp());
-    // Abas Browser | Git | Tasks (feedback: layout estilo VS Code)
+    els.favs = panel.querySelector('.vaults-favs');
+    // Abas Browser | Git (estilo VS Code)
     const setTab = (t) => {
       els.nav.dataset.tab = t;
       els.nav.querySelectorAll('.vaults-tab').forEach(b =>
         b.classList.toggle('active', b.dataset.vaultsTab === t));
       try { localStorage.setItem('odysseus-vaults-tab', t); } catch (_) {}
       if (t === 'git') maybeLoadGraph();
-      if (t === 'tasks') loadTasks();
     };
     els.setTab = setTab;
     els.nav.querySelector('.vaults-tabs').addEventListener('click', (e) => {
@@ -143,7 +133,10 @@ function buildPanel() {
     });
     wireViewerClicks();
     wireGitClicks();
-    wireTasksClicks();
+    els.favs.addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-fav]');
+      if (chip) openFav(getFavs()[parseInt(chip.dataset.fav, 10)]);
+    });
     els.git.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'
           && e.target.classList.contains('vaults-commit-msg')) {
@@ -155,7 +148,28 @@ function buildPanel() {
       const btn = e.target.closest('button');
       if (!btn) return;
       try {
-        if (btn.dataset.vaultsNew) {
+        if ('vaultsAddroot' in btn.dataset) {
+          const p = await styledPrompt('Caminho ABSOLUTO da pasta (no container — ex: /app/vaults/x ou /app/data):',
+            { title: 'Nova raiz', maxLength: 300 });
+          if (!p) return;
+          const extras = state.vaults.filter(v => !v.is_vault).map(v => v.path).concat([p]);
+          await saveRoots(extras);
+          renderToolbar();
+          const added = state.vaults.find(v => v.path === p || v.path === p.replace(/\/$/, ''));
+          if (added) openRoot(added.id);
+        } else if ('vaultsDelroot' in btn.dataset) {
+          const cur = state.vaults.find(v => v.id === state.currentId);
+          if (!cur || cur.is_vault) {
+            showError('Só raízes adicionadas (não-vault) podem ser removidas.');
+            return;
+          }
+          if (!(await styledConfirm(`Remover a raiz "${cur.name}" do Files? (a pasta não é apagada)`,
+            { confirmText: 'Remover', danger: true }))) return;
+          const extras = state.vaults.filter(v => !v.is_vault && v.id !== cur.id).map(v => v.path);
+          await saveRoots(extras);
+          const next = state.vaults.find(v => v.exists);
+          if (next) openRoot(next.id);
+        } else if (btn.dataset.vaultsNew) {
           const kind = btn.dataset.vaultsNew;
           const p = await styledPrompt(
             kind === 'file' ? 'Caminho da nova nota (ex: Pasta/Nome.md):' : 'Caminho da nova pasta:',
@@ -181,8 +195,8 @@ function buildPanel() {
   }
   if (!Modals.isRegistered(PANEL_ID)) {
     Modals.register(PANEL_ID, {
-      label: 'Vaults',
-      icon: VAULT_ICON_SVG,
+      label: 'Files',
+      icon: FI('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>', 14),
       restoreFn: () => {},
       closeFn: () => {
         const p = document.getElementById(PANEL_ID);
@@ -194,7 +208,7 @@ function buildPanel() {
   return panel;
 }
 
-async function openVault(id) {
+async function openRoot(id) {
   const panel = buildPanel();
   if (state.dirty && state.currentId && state.currentId !== id) {
     if (!(await styledConfirm('Há edição não salva. Descartar?', { danger: true }))) return;
@@ -202,13 +216,11 @@ async function openVault(id) {
   }
   const switching = state.currentId !== id;
   state.currentId = id;
+  try { localStorage.setItem('odysseus-files-root', id); } catch (_) {}
   const v = state.vaults.find(x => x.id === id);
-  els.title.textContent = v ? v.name : id;
+  els.title.textContent = v ? `Files — ${v.name}` : 'Files';
   panel.classList.remove('hidden', 'modal-minimized');
   if (!panel.classList.contains('modal-right-docked')) {
-    // Issue #1: largura default estilo Obsidian (~700px de viewer + coluna de
-    // nav), só enquanto o usuário nunca redimensionou este painel — depois a
-    // largura salva pelo modalSnap (localStorage) manda.
     try {
       if (!localStorage.getItem(`odysseus-edge-dock-width:right:${PANEL_ID}`) && !els.content._userDockWidth) {
         els.content._userDockWidth = Math.min(1000, Math.round(window.innerWidth * 0.55));
@@ -217,17 +229,17 @@ async function openVault(id) {
     applyEdgeDock(panel, 'right');
   }
   renderToolbar();
+  renderFavs();
   if (switching) {
     state.openPath = null;
     state.git = null;
     state.meta = null;
-    state.tasks = null;
+    state.assets = null;
+    state.noteIndex = new Map();
     renderViewerEmpty();
   }
-  refreshSyncStatus();
   await refreshTree();
   await refreshGit();
-  if (els.nav.dataset.tab === 'tasks') loadTasks(true);
 }
 
 function renderViewerEmpty() {
@@ -235,30 +247,39 @@ function renderViewerEmpty() {
 }
 
 function renderToolbar() {
+  const opts = state.vaults.filter(v => v.exists).map(v =>
+    `<option value="${esc(v.id)}"${v.id === state.currentId ? ' selected' : ''}>${esc(v.name)}${v.is_vault ? ' ⛨' : ''}</option>`).join('');
   els.toolbar.innerHTML = `
-    <button class="vaults-btn" data-vaults-new="file" title="Nova nota">${ICONS.notePlus}<span>nota</span></button>
-    <button class="vaults-btn" data-vaults-new="dir" title="Nova pasta">${ICONS.folderPlus}<span>pasta</span></button>
+    <select class="vaults-root-sel" title="Raiz atual">${opts}</select>
+    <button class="vaults-btn vaults-btn-icon" data-vaults-addroot title="Adicionar pasta como raiz">${ICONS.plus}</button>
+    <button class="vaults-btn vaults-btn-icon" data-vaults-delroot title="Remover esta raiz (só não-vault)">${ICONS.minus}</button>
+    <span class="vaults-toolbar-sep"></span>
+    <button class="vaults-btn" data-vaults-new="file" title="Novo arquivo">${ICONS.notePlus}<span>novo</span></button>
+    <button class="vaults-btn vaults-btn-icon" data-vaults-new="dir" title="Nova pasta">${ICONS.folderPlus}</button>
     <button class="vaults-btn vaults-btn-icon" data-vaults-refresh title="Recarregar">${ICONS.refresh}</button>`;
+  els.toolbar.querySelector('.vaults-root-sel').addEventListener('change', (e) => openRoot(e.target.value));
+}
+
+async function saveRoots(extraPaths) {
+  const r = await api('/roots', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roots: extraPaths }),
+  });
+  state.vaults = r.vaults;
+  return r.vaults;
 }
 
 // ── Árvore ──
+async function fetchTreeLevel(relPath) {
+  const q = new URLSearchParams({ vault: state.currentId, depth: '1' });
+  if (relPath) q.set('path', relPath);
+  return (await api(`/tree?${q}`)).tree;
+}
+
 async function refreshTree() {
   els.tree.innerHTML = '<div class="vaults-empty">Carregando…</div>';
   try {
-    const { tree } = await api(`/tree?vault=${encodeURIComponent(state.currentId)}`);
-    state.tree = tree;
-    state.noteIndex = new Map();
-    (function index(nodes) {
-      for (const n of nodes) {
-        if (n.type === 'file') {
-          const base = n.name.replace(/\.md$/i, '').toLowerCase();
-          if (!state.noteIndex.has(base)) state.noteIndex.set(base, []);
-          state.noteIndex.get(base).push(n.path);
-        } else if (n.children) {
-          index(n.children);
-        }
-      }
-    })(tree);
+    state.tree = await fetchTreeLevel('');
     renderTree();
   } catch (e) {
     els.tree.innerHTML = `<div class="vaults-empty">Falha ao carregar: ${esc(e.message)}</div>`;
@@ -285,10 +306,27 @@ function buildTreeNodes(nodes) {
     attachRowActions(row, n);
     li.appendChild(row);
     if (n.type === 'dir') {
-      const kids = buildTreeNodes(n.children || []);
+      let kids = buildTreeNodes(n.children || []);
       kids.classList.add('vaults-collapsed');
       li.appendChild(kids);
-      row.addEventListener('click', () => {
+      if (n.has_children === false) row.querySelector('.vaults-caret').style.visibility = 'hidden';
+      let loaded = Array.isArray(n.children);
+      row.addEventListener('click', async () => {
+        if (!loaded) {
+          loaded = true;
+          try {
+            n.children = await fetchTreeLevel(n.path);
+          } catch (e) {
+            loaded = false;
+            showError(`files: ${e.message}`);
+            return;
+          }
+          const fresh = buildTreeNodes(n.children);
+          fresh.classList.add('vaults-collapsed');
+          kids.replaceWith(fresh);
+          kids = fresh;
+          applyTreeBadges();
+        }
         kids.classList.toggle('vaults-collapsed');
         row.classList.toggle('vaults-open', !kids.classList.contains('vaults-collapsed'));
       });
@@ -300,17 +338,80 @@ function buildTreeNodes(nodes) {
   return ul;
 }
 
+// ── Favoritos ──
+const FAVS_KEY = 'odysseus-files-favs';
+
+function getFavs() {
+  try { return JSON.parse(localStorage.getItem(FAVS_KEY) || '[]'); } catch (_) { return []; }
+}
+
+function isFav(root, path) {
+  return getFavs().some(f => f.root === root && f.path === path);
+}
+
+function toggleFav(n) {
+  const favs = getFavs();
+  const i = favs.findIndex(f => f.root === state.currentId && f.path === n.path);
+  if (i >= 0) favs.splice(i, 1);
+  else favs.push({ root: state.currentId, path: n.path, type: n.type, name: n.name });
+  try { localStorage.setItem(FAVS_KEY, JSON.stringify(favs)); } catch (_) {}
+  renderFavs();
+}
+
+function renderFavs() {
+  if (!els.favs) return;
+  const favs = getFavs();
+  if (!favs.length) { els.favs.innerHTML = ''; return; }
+  els.favs.innerHTML = favs.map((f, i) => `
+    <span class="vaults-fav" data-fav="${i}" title="${esc(f.root)} · ${esc(f.path)}">
+      ${f.type === 'dir' ? ICONS.folder : ICONS.file}<span>${esc(f.name)}</span>
+    </span>`).join('');
+}
+
+async function openFav(f) {
+  if (f.root !== state.currentId) {
+    if (!state.vaults.some(v => v.id === f.root && v.exists)) {
+      showError(`Raiz do favorito não existe mais: ${f.root}`);
+      return;
+    }
+    await openRoot(f.root);
+  }
+  if (f.type === 'dir') await revealPath(f.path);
+  else openFile(f.path);
+}
+
+// expande a árvore lazy até o caminho (best-effort)
+async function revealPath(relPath) {
+  const segs = relPath.split('/');
+  let acc = '';
+  for (const seg of segs) {
+    acc = acc ? `${acc}/${seg}` : seg;
+    const row = els.tree.querySelector(`.vaults-tree-row.vaults-dir[data-path="${CSS.escape(acc)}"]`);
+    if (!row) break;
+    const kids = row.parentElement.querySelector(':scope > ul');
+    if (kids && kids.classList.contains('vaults-collapsed')) {
+      row.click();
+      await new Promise(r => setTimeout(r, 120));
+    }
+  }
+  highlightTreeRow(relPath);
+}
+
 function attachRowActions(row, n) {
   const acts = document.createElement('span');
   acts.className = 'vaults-row-acts';
-  acts.innerHTML = `<button class="vaults-row-btn" data-act="rename" title="Renomear/mover">${ICONS.pencil}</button>
+  acts.innerHTML = `<button class="vaults-row-btn" data-act="fav" title="Favoritar">${isFav(state.currentId, n.path) ? '★' : '☆'}</button>
+    <button class="vaults-row-btn" data-act="rename" title="Renomear/mover">${ICONS.pencil}</button>
     <button class="vaults-row-btn" data-act="delete" title="Apagar">${ICONS.trash}</button>`;
   row.appendChild(acts);
   acts.addEventListener('click', async (e) => {
     e.stopPropagation();
     const act = e.target.closest('[data-act]')?.dataset.act;
     try {
-      if (act === 'rename') {
+      if (act === 'fav') {
+        toggleFav(n);
+        e.target.closest('[data-act]').textContent = isFav(state.currentId, n.path) ? '★' : '☆';
+      } else if (act === 'rename') {
         const np = await styledPrompt('Novo caminho (relativo à vault):',
           { title: 'Renomear/mover', defaultValue: n.path, maxLength: 300 });
         if (!np || np === n.path) return;
@@ -386,16 +487,10 @@ function resolveRel(relDir, target) {
 }
 
 function findAsset(name) {
-  // busca por basename em toda a árvore (anexos ficam em pastas próprias)
-  let hit = null;
-  (function walk(nodes) {
-    for (const n of nodes) {
-      if (hit) return;
-      if (n.type === 'file' && n.name.toLowerCase() === name.toLowerCase()) hit = n.path;
-      else if (n.children) walk(n.children);
-    }
-  })(state.tree || []);
-  return hit;
+  // busca por basename nos assets do meta (árvore agora é lazy)
+  const low = String(name || '').toLowerCase();
+  const hit = (state.assets || []).find(a => a.name.toLowerCase() === low);
+  return hit ? hit.path : null;
 }
 
 function preprocessMd(src, relDir) {
@@ -441,9 +536,16 @@ function dvLinkHtml(path, label) {
 
 async function ensureMeta() {
   if (state.meta) return state.meta;
-  const { notes } = await api(`/meta?vault=${encodeURIComponent(state.currentId)}`);
-  state.meta = notes;
-  return notes;
+  const r = await api(`/meta?vault=${encodeURIComponent(state.currentId)}`);
+  state.meta = r.notes;
+  state.assets = r.assets || [];
+  state.noteIndex = new Map();
+  for (const n of r.notes) {
+    const base = n.name.toLowerCase();
+    if (!state.noteIndex.has(base)) state.noteIndex.set(base, []);
+    state.noteIndex.get(base).push(n.path);
+  }
+  return state.meta;
 }
 
 function renderDataviewBlocks() {
@@ -561,22 +663,44 @@ function propsBarHtml(propsText) {
 }
 
 // ── Viewer/editor ──
+const PDF_EXT = /\.pdf$/i;
+const AUDIO_EXT = /\.(mp3|ogg|wav|m4a|flac|opus)$/i;
+const VIDEO_EXT = /\.(mp4|webm|mov|mkv)$/i;
+const MD_EXT = /\.(md|markdown)$/i;
+
 async function openFile(relPath) {
   if (state.dirty && !(await styledConfirm('Há edição não salva. Descartar?', { danger: true }))) return;
   state.dirty = false;
-  if (relPath.toLowerCase().endsWith('.base')) return openBase(relPath);
+  const low = relPath.toLowerCase();
+  if (low.endsWith('.base')) return openBase(relPath);
+  const mediaMode = IMG_EXT.test(low) ? 'image'
+    : PDF_EXT.test(low) ? 'pdf'
+    : AUDIO_EXT.test(low) ? 'audio'
+    : VIDEO_EXT.test(low) ? 'video' : null;
+  if (mediaMode) {
+    state.openPath = relPath;
+    state.mode = mediaMode;
+    highlightTreeRow(relPath);
+    renderViewer();
+    return;
+  }
   try {
     const f = await api(`/file?vault=${encodeURIComponent(state.currentId)}&path=${encodeURIComponent(relPath)}`);
     state.openPath = relPath;
     state.openMtime = f.mtime;
     state.mode = 'view';
+    state.kind = MD_EXT.test(low) ? 'md' : 'code';
     state.content = f.content;
     highlightTreeRow(relPath);
+    if (state.kind === 'md') {
+      // wikilinks/embeds resolvem via meta (árvore é lazy)
+      try { await ensureMeta(); } catch (_) {}
+    }
     renderViewer();
   } catch (e) {
-    if (e.status === 400 && IMG_EXT.test(relPath)) {
+    if (e.status === 400 || e.status === 413) {
       state.openPath = relPath;
-      state.mode = 'image';
+      state.mode = 'binary';
       highlightTreeRow(relPath);
       renderViewer();
     } else {
@@ -586,9 +710,28 @@ async function openFile(relPath) {
 }
 
 function renderViewer() {
+  const nameBar = `<div class="vaults-viewbar"><span class="vaults-open-name">${esc(state.openPath || '')}</span></div>`;
   if (state.mode === 'image') {
-    els.viewer.innerHTML = `<div class="vaults-viewbar"><span class="vaults-open-name">${esc(state.openPath)}</span></div>
-      <img class="vaults-embed" src="${rawUrl(state.openPath)}">`;
+    els.viewer.innerHTML = `${nameBar}<img class="vaults-embed" src="${rawUrl(state.openPath)}">`;
+    return;
+  }
+  if (state.mode === 'pdf') {
+    els.viewer.innerHTML = `${nameBar}<embed class="vaults-pdf" src="${rawUrl(state.openPath)}" type="application/pdf">`;
+    return;
+  }
+  if (state.mode === 'audio') {
+    els.viewer.innerHTML = `${nameBar}<audio class="vaults-media" controls src="${rawUrl(state.openPath)}"></audio>`;
+    return;
+  }
+  if (state.mode === 'video') {
+    els.viewer.innerHTML = `${nameBar}<video class="vaults-media vaults-video" controls src="${rawUrl(state.openPath)}"></video>`;
+    return;
+  }
+  if (state.mode === 'binary') {
+    els.viewer.innerHTML = `${nameBar}
+      <div class="vaults-empty">Arquivo binário/grande — sem preview de texto.<br><br>
+        <a class="vaults-btn" href="${rawUrl(state.openPath)}" download>${ICONS.down} baixar ${esc(state.openPath.split('/').pop())}</a>
+      </div>`;
     return;
   }
   const bar = `<div class="vaults-viewbar">
@@ -598,7 +741,11 @@ function renderViewer() {
       ${state.mode === 'edit' ? '<button class="vaults-btn vaults-save-btn">Salvar</button>' : ''}
       <span class="vaults-dirty" style="display:${state.dirty ? '' : 'none'}" title="Não salvo">●</span>
     </div>`;
-  if (state.mode === 'view') {
+  if (state.mode === 'view' && state.kind === 'code') {
+    els.viewer.innerHTML = bar + `<pre class="vaults-codeview"><code>${esc(state.content)}</code></pre>`;
+    const codeEl = els.viewer.querySelector('.vaults-codeview code');
+    try { window.hljs?.highlightElement?.(codeEl); } catch (_) {}
+  } else if (state.mode === 'view') {
     const { props, body } = splitFrontmatter(state.content);
     els.viewer.innerHTML = bar
       + (props ? svgifyEmoji(propsBarHtml(props)) : '')
@@ -1009,330 +1156,201 @@ async function openBranchMenu(anchor) {
 }
 
 
-// ── My Tasks (Obsidian Tasks) ──
-const TODAY = () => new Date().toISOString().slice(0, 10);
+// ── Sessões do Obsidian (uma por vault) ──
+const sessionsState = { available: false, list: [], byId: new Map() };
 
-async function loadTasks(force = false) {
-  if (!state.currentId || !els.tasks) return;
-  if (state.tasks && !force) { renderTasks(); return; }
-  els.tasks.innerHTML = '<div class="vaults-empty">Carregando…</div>';
+async function refreshSessions() {
   try {
-    const { tasks } = await api(`/tasks?vault=${encodeURIComponent(state.currentId)}`);
-    state.tasks = tasks;
-  } catch (e) {
-    els.tasks.innerHTML = `<div class="vaults-git-err">tasks: ${esc(e.message)}</div>`;
-    return;
+    const r = await api('/obsidian-sync');
+    sessionsState.available = r.available;
+    sessionsState.list = r.sessions || [];
+  } catch (_) {
+    sessionsState.available = false;
+    sessionsState.list = [];
   }
-  renderTasks();
+  sessionsState.byId = new Map(sessionsState.list.map(s => [s.id, s]));
+  updateSidebarDots();
 }
 
-function taskRow(t) {
-  const done = t.status === 'x' || t.status === 'X';
-  const cancelled = t.status === '-';
-  const chips = [
-    t.due ? `<span class="vaults-task-chip vaults-task-due${t.due < TODAY() && !done && !cancelled ? ' vaults-task-late' : ''}">📅 ${t.due}</span>` : '',
-    t.scheduled ? `<span class="vaults-task-chip">⏳ ${t.scheduled}</span>` : '',
-    t.priority ? `<span class="vaults-task-chip vaults-task-pri-${t.priority}">${
-      { highest: '🔺', high: '⏫', medium: '🔼', low: '🔽', lowest: '⏬' }[t.priority]}</span>` : '',
-    t.recurrence ? `<span class="vaults-task-chip">🔁</span>` : '',
-  ].join('');
-  const noteName = t.path.split('/').pop().replace(/\.md$/i, '');
-  return svgifyEmoji(`<div class="vaults-task${done ? ' vaults-task-done' : ''}${cancelled ? ' vaults-task-cancelled' : ''}"
-      data-path="${esc(t.path)}" data-line="${t.line}">
-      <input type="checkbox" class="vaults-task-cb" ${done ? 'checked' : ''} ${cancelled ? 'disabled' : ''}>
-      <span class="vaults-task-text" title="${esc(t.text)}">${esc(t.text)}</span>
-      ${chips}
-      <a class="vaults-task-note" data-vaults-tasknote="${esc(t.path)}" title="${esc(t.path)}">${esc(noteName)}</a>
-    </div>`);
-}
-
-function tasksSection(key, title, items, defOpen = true) {
-  if (!items.length) return '';
-  return gitSection(key, title, items.length, items.map(taskRow).join(''), defOpen);
-}
-
-function renderTasks() {
-  const all = state.tasks || [];
-  const today = TODAY();
-  // acionáveis = a fazer / em progresso; x|X = feitas, - = canceladas;
-  // demais status custom do Tasks (i = informação, * etc.) não são "faltando"
-  const actionable = all.filter(t => t.status === ' ' || t.status === '/');
-  const done = all.filter(t => t.status === 'x' || t.status === 'X' || t.status === '-');
-  const other = all.filter(t => !actionable.includes(t) && !done.includes(t));
-  const badge = els.panel?.querySelector('.vaults-tasks-badge');
-  if (badge) {
-    badge.textContent = String(actionable.length);
-    badge.style.display = actionable.length ? '' : 'none';
-  }
-  const byDue = f => actionable.filter(f).sort((a, b) =>
-    (a.due || '9999').localeCompare(b.due || '9999') || a.path.localeCompare(b.path));
-  els.tasks.innerHTML = `
-    <div class="vaults-tasks-bar">
-      <span class="vaults-tasks-title">My Tasks</span>
-      <label class="vaults-amend"><input type="checkbox" class="vaults-tasks-showdone"
-        ${state.showDoneTasks ? 'checked' : ''}> concluídas</label>
-      <button class="vaults-row-btn" data-tasks-refresh title="Recarregar">${ICONS.refresh}</button>
-    </div>`
-    + tasksSection('tasks-late', 'Atrasadas', byDue(t => t.due && t.due < today))
-    + tasksSection('tasks-today', 'Hoje', byDue(t => t.due === today))
-    + tasksSection('tasks-next', 'Próximas', byDue(t => t.due && t.due > today))
-    + tasksSection('tasks-nodate', 'Sem data', byDue(t => !t.due))
-    + tasksSection('tasks-other', 'Outros estados', other, false)
-    + (state.showDoneTasks ? tasksSection('tasks-done', 'Concluídas / canceladas',
-        done.sort((a, b) => (b.done_at || '').localeCompare(a.done_at || ''))) : '')
-    + (!actionable.length && !state.showDoneTasks && !other.length
-        ? '<div class="vaults-empty">Nenhuma tarefa pendente 🎉</div>' : '');
-}
-
-function wireTasksClicks() {
-  els.tasks.addEventListener('click', async (e) => {
-    const secT = e.target.closest('[data-sec-toggle]');
-    if (secT) {
-      const open = secT.closest('.vaults-sec').classList.toggle('vaults-sec-open');
-      try { localStorage.setItem(SEC_KEY(secT.dataset.secToggle), open ? '1' : '0'); } catch (_) {}
-      return;
-    }
-    if (e.target.closest('[data-tasks-refresh]')) { loadTasks(true); return; }
-    if (e.target.classList.contains('vaults-tasks-showdone')) {
-      state.showDoneTasks = e.target.checked;
-      renderTasks();
-      return;
-    }
-    const note = e.target.closest('[data-vaults-tasknote]');
-    if (note) { openFile(note.dataset.vaultsTasknote); return; }
-    if (e.target.classList.contains('vaults-task-cb')) {
-      const row = e.target.closest('.vaults-task');
-      const path = row.dataset.path;
-      const line = parseInt(row.dataset.line, 10);
-      const doneNow = e.target.checked;
-      try {
-        const r = await api('/tasks/toggle', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vault: state.currentId, path, line, done: doneNow }),
-        });
-        const i = (state.tasks || []).findIndex(t => t.path === path && t.line === line);
-        if (i >= 0) state.tasks[i] = r.task;
-        state.meta = null;
-        renderTasks();
-        refreshGit();
-        showToast(doneNow ? 'Tarefa concluída ✅' : 'Tarefa reaberta');
-      } catch (err) {
-        if (err.detail?.code === 'task_moved') {
-          showError('A nota mudou no disco — recarregando as tarefas.');
-          loadTasks(true);
-        } else {
-          showError(`tasks: ${err.message}`);
-          e.target.checked = !doneNow;
-        }
-      }
+function updateSidebarDots() {
+  document.querySelectorAll('#vaults-list .vaults-side-item').forEach(item => {
+    const s = sessionsState.byId.get(item.dataset.vaultId);
+    const dot = item.querySelector('.vaults-dot');
+    if (dot) dot.className = 'vaults-dot' + (s?.running ? ' vaults-dot-on' : '');
+    const cloud = item.querySelector('.vaults-side-cloud');
+    if (cloud) {
+      cloud.classList.toggle('vaults-sync-on', !!s?.running);
+      cloud.title = s?.running
+        ? 'Sessão do Obsidian ATIVA (sync rodando) — clique pra desligar'
+        : 'Ligar a sessão do Obsidian desta vault';
     }
   });
 }
 
-// ── Obsidian Sync (container oficial, toggle liga/desliga) ──
-async function refreshSyncStatus() {
-  if (!els.syncBtn) return;
-  try {
-    state.sync = await api('/obsidian-sync');
-  } catch (_) {
-    state.sync = { available: false };
-  }
-  const s = state.sync;
-  const nested = (s.vaults || []).some(v => v.nested_warning);
-  const conn = (s.vaults || []).filter(v => v.registered).length;
-  const syncable = (s.vaults || []).filter(v => v.syncable).length;
-  els.syncBtn.classList.toggle('vaults-sync-on', !!s.running && !nested);
-  els.syncBtn.classList.toggle('vaults-sync-warn', nested);
-  els.syncBtn.classList.toggle('vaults-sync-unavailable', !s.available);
-  els.syncBtn.title = !s.available
-    ? 'Obsidian Sync: indisponível (socket docker não montado — ver LOCAL_CHANGES.md)'
-    : !s.installed
-      ? 'Obsidian Sync: container ainda não criado — clique pra ver como ativar'
-      : nested
-        ? '⚠ Obsidian Sync: vault registrada com pasta ANINHADA — clique pra detalhes'
-        : s.running
-          ? `Obsidian Sync: ATIVO — ${conn}/${syncable} vaults conectadas. Clique pra detalhes/desativar.`
-          : 'Obsidian Sync: desativado — clique pra ativar';
-}
-
-function syncVaultLines(s) {
-  return (s.vaults || []).map(v => {
-    if (!v.syncable) return `○ ${v.name}: fora do sync (pasta não montada no container do Obsidian)`;
-    if (v.nested_warning) return `⚠ ${v.name}: registro ANINHADO (/vaults/${v.name}/${v.name}) — o download foi pra uma subpasta; corrija antes de sincronizar`;
-    if (v.registered) return `✓ ${v.name}: conectada — sincroniza enquanto o container roda`;
-    return `— ${v.name}: não conectada. Em ${s.ui_url}: "Open folder as vault" → /vaults/${v.name}, depois Settings → Sync → conectar à vault remota EXISTENTE (nunca "criar nova" — isso baixa tudo pra uma subpasta). O merge preserva os arquivos locais.`;
-  }).join('\n');
-}
-
-async function onSyncClick() {
-  const s = state.sync || {};
-  if (!s.available) {
-    showError('Socket do docker não está montado no container — veja o item do Obsidian Sync no LOCAL_CHANGES.md.');
-    return;
-  }
-  if (!s.installed) {
-    await styledConfirm(
-      'O container do Obsidian ainda não foi criado. Rode no host:\n\n'
-      + 'docker compose --profile obsidian-sync up -d obsidian\n\n'
-      + `Depois abra ${s.ui_url} uma vez pra logar na sua conta do Obsidian Sync.`,
-      { confirmText: 'Entendi', cancelText: 'Fechar', title: 'Obsidian Sync' });
-    return;
-  }
-  const enable = !s.running;
-  if (!(await styledConfirm(
-    (enable
-      ? 'Ativar o Obsidian Sync? O cliente oficial roda em background e sincroniza as vaults conectadas.'
-      : 'Desativar o Obsidian Sync? O container é parado e a sincronização pausa.')
-    + '\n\n' + syncVaultLines(s),
-    { confirmText: enable ? 'Ativar' : 'Desativar', title: 'Obsidian Sync', danger: !enable }))) return;
+async function toggleSession(vaultId) {
+  const s = sessionsState.byId.get(vaultId);
+  const enable = !(s && s.running);
+  if (!enable && !(await styledConfirm(
+    'Desligar a sessão do Obsidian desta vault? A sincronização dela pausa.',
+    { confirmText: 'Desligar', danger: true, title: 'Obsidian' }))) return;
   try {
     await api('/obsidian-sync', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enable }),
+      body: JSON.stringify({ vault: vaultId, enable }),
     });
-    showToast(enable ? 'Obsidian Sync ativado' : 'Obsidian Sync desativado');
+    showToast(enable ? 'Sessão do Obsidian ligada' : 'Sessão desligada');
   } catch (e) {
-    showError(`Obsidian Sync: ${e.message}`);
+    showError(`Obsidian: ${e.message}`);
   }
-  refreshSyncStatus();
+  refreshSessions();
 }
 
-// ── Obsidian embutido (KasmVNC do container oficial num modal) ──
-const OBSIDIAN_MODAL_ID = 'vaults-obsidian-modal';
-
-async function openObsidianApp() {
-  const s = state.sync || {};
-  if (!s.available || !s.installed) {
-    onSyncClick();
-    return;
+async function openVaultObsidian(v) {
+  try {
+    const r = await api('/obsidian-open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vault: v.id }),
+    });
+    ensureObsidianModal(v, r.ui_url, r.started);
+    refreshSessions();
+  } catch (e) {
+    showError(`Obsidian (${v.name}): ${e.message}`);
   }
-  if (!s.running) {
-    if (!(await styledConfirm('O container do Obsidian está parado. Ativar agora pra abrir o app?',
-      { confirmText: 'Ativar e abrir', title: 'Obsidian' }))) return;
-    try {
-      await api('/obsidian-sync', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enable: true }),
-      });
-    } catch (e) {
-      showError(`Obsidian: ${e.message}`);
-      return;
-    }
-    refreshSyncStatus();
-  }
-  buildObsidianModal(s.ui_url || 'http://localhost:3010');
 }
 
-function buildObsidianModal(url) {
-  let m = document.getElementById(OBSIDIAN_MODAL_ID);
+function ensureObsidianModal(v, url, started) {
+  const id = `vaults-obsidian-${v.id}`;
+  let m = document.getElementById(id);
   if (!m) {
     m = document.createElement('div');
-    m.id = OBSIDIAN_MODAL_ID;
+    m.id = id;
     m.className = 'modal hidden';
     m.innerHTML = `
       <div class="modal-content vaults-obsidian-content">
         <div class="modal-header vaults-header">
-          <span class="vaults-title">${ICONS.gem} Obsidian</span>
-          <button class="close-btn" aria-label="Close obsidian">✖</button>
+          <span class="vaults-title">${ICONS.gem} ${esc(v.name)}</span>
+          <button class="vaults-sync-btn" title="Ligar/desligar esta sessão">${ICONS.cloud}</button>
+          <button class="vaults-reload-btn" title="Recarregar a tela">${ICONS.refresh}</button>
+          <button class="close-btn" aria-label="Close">✖</button>
         </div>
         <iframe class="vaults-obsidian-frame" src="about:blank"
           allow="clipboard-read; clipboard-write"></iframe>
       </div>`;
     document.body.appendChild(m);
-    m.querySelector('.close-btn').addEventListener('click', () => Modals.close(OBSIDIAN_MODAL_ID));
+    m.querySelector('.close-btn').addEventListener('click', () => Modals.close(id));
+    m.querySelector('.vaults-reload-btn').addEventListener('click', () => {
+      const fr = m.querySelector('iframe');
+      const src = fr.src;
+      fr.src = 'about:blank';
+      setTimeout(() => { fr.src = src; }, 100);
+    });
+    m.querySelector('.vaults-sync-btn').addEventListener('click', () => toggleSession(v.id));
     makeWindowDraggable(m, {
       content: m.querySelector('.modal-content'),
       header: m.querySelector('.modal-header'),
     });
   }
-  if (!Modals.isRegistered(OBSIDIAN_MODAL_ID)) {
-    Modals.register(OBSIDIAN_MODAL_ID, {
-      label: 'Obsidian',
+  if (!Modals.isRegistered(id)) {
+    Modals.register(id, {
+      label: v.name,
       icon: ICONS.gem,
       restoreFn: () => {},
-      // fechar solta a sessão VNC (iframe em branco) mas NÃO para o container —
-      // o sync continua em background; o toggle da nuvem é quem liga/desliga.
+      // fechar solta a tela (iframe em branco) mas NÃO para a sessão — o
+      // Obsidian continua sincronizando; a nuvem é quem liga/desliga.
       closeFn: () => {
-        const el = document.getElementById(OBSIDIAN_MODAL_ID);
+        const el = document.getElementById(id);
         if (el) {
           el.querySelector('iframe').src = 'about:blank';
           el.classList.add('hidden');
         }
       },
     });
-    Modals.injectMinimizeButton(m, OBSIDIAN_MODAL_ID);
+    Modals.injectMinimizeButton(m, id);
   }
   const fr = m.querySelector('iframe');
-  if (fr.getAttribute('src') !== url) fr.src = url;
   m.classList.remove('hidden', 'modal-minimized');
-  return m;
-}
-
-// Abre a vault específica DENTRO do Obsidian: registra a janela dela no
-// container (restart quando preciso) e mostra o app embutido.
-async function openVaultInObsidian(vaultId) {
-  const s = state.sync || {};
-  if (!s.available || !s.installed) {
-    onSyncClick();
-    return;
-  }
-  const vs = (s.vaults || []).find(v => v.id === vaultId);
-  if (vs && !vs.syncable) {
-    showError(`${vs.name} não está montada no container do Obsidian (só /data/vaults) — ver LOCAL_CHANGES.md.`);
-    return;
-  }
-  try {
-    const r = await api('/obsidian-open', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vault: vaultId }),
-    });
-    refreshSyncStatus();
-    const m = buildObsidianModal(r.ui_url);
-    if (r.restarted) {
-      // container reiniciando: dá uns segundos pro KasmVNC voltar e recarrega
-      const fr = m.querySelector('iframe');
-      fr.src = 'about:blank';
-      showToast('Abrindo a vault no Obsidian… (reiniciando o app)');
-      setTimeout(() => { fr.src = r.ui_url; }, 4000);
-    }
-  } catch (e) {
-    showError(`Obsidian: ${e.message}`);
+  if (started) {
+    fr.src = 'about:blank';
+    showToast(`Abrindo ${v.name} no Obsidian… (iniciando a sessão)`);
+    setTimeout(() => { fr.src = url; }, 4000);
+  } else if (fr.getAttribute('src') !== url) {
+    fr.src = url;
   }
 }
 
-// ── Sidebar ──
+// ── Sidebar (Vaults = launcher de sessões do Obsidian) ──
+async function loadRoots() {
+  const { vaults } = await api('/vaults');
+  state.vaults = vaults;
+  return vaults;
+}
+
 async function initSidebar() {
   const list = document.getElementById('vaults-list');
   if (!list) return;
   try {
-    const { vaults } = await api('/vaults');
-    state.vaults = vaults;
+    const vaults = await loadRoots();
     list.innerHTML = '';
-    for (const v of vaults) {
+    for (const v of vaults.filter(x => x.is_vault)) {
       const item = document.createElement('div');
       item.className = 'list-item vaults-side-item' + (v.exists ? '' : ' vaults-missing');
-      item.title = v.exists ? v.path : `Pasta não encontrada: ${v.path}`;
-      item.innerHTML = `${VAULT_ICON_SVG.replace('<svg ', '<svg style="flex-shrink:0;opacity:0.5;" ')}<span class="grow">${esc(v.name)}</span>
-        <button class="vaults-side-obsidian" title="Abrir no Obsidian (app oficial embutido)">${ICONS.gem}</button>`;
+      item.dataset.vaultId = v.id;
+      item.title = v.exists ? `${v.path} — abre no Obsidian` : `Pasta não encontrada: ${v.path}`;
+      item.innerHTML = `<span class="vaults-dot"></span>${VAULT_ICON_SVG.replace('<svg ', '<svg style="flex-shrink:0;opacity:0.5;" ')}<span class="grow">${esc(v.name)}</span>
+        <button class="vaults-side-cloud" title="Ligar/desligar sessão">${ICONS.cloud}</button>`;
       if (v.exists) {
-        item.addEventListener('click', () => openVault(v.id));
-        item.querySelector('.vaults-side-obsidian').addEventListener('click', async (e) => {
+        item.addEventListener('click', () => openVaultObsidian(v));
+        item.querySelector('.vaults-side-cloud').addEventListener('click', (e) => {
           e.stopPropagation();
-          if (!state.sync) {
-            buildPanel();
-            await refreshSyncStatus();
-          }
-          openVaultInObsidian(v.id);
+          toggleSession(v.id);
         });
       }
       list.appendChild(item);
     }
     const section = document.getElementById('vaults-section');
-    if (section && !vaults.length) section.style.display = 'none';
+    if (section && !vaults.some(v => v.is_vault)) section.style.display = 'none';
+    refreshSessions();
   } catch (e) {
     console.warn('vaults: falha ao listar', e);
   }
 }
 
-if (document.readyState !== 'loading') initSidebar();
-else document.addEventListener('DOMContentLoaded', initSidebar);
+// ── Tool "Files" (File Browser) ──
+async function openFiles() {
+  buildPanel();
+  if (!state.vaults.length) {
+    try { await loadRoots(); } catch (e) { showError(`files: ${e.message}`); return; }
+  }
+  let rootId = null;
+  try { rootId = localStorage.getItem('odysseus-files-root'); } catch (_) {}
+  if (!state.vaults.some(v => v.id === rootId && v.exists)) {
+    rootId = (state.vaults.find(v => v.exists) || {}).id || null;
+  }
+  if (!rootId) {
+    showError('Nenhuma raiz configurada — adicione uma pasta em ＋.');
+    return;
+  }
+  await openRoot(rootId);
+}
+
+function wireFilesButton() {
+  const btn = document.getElementById('tool-files-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (Modals.toggle(PANEL_ID)) return;
+    const panel = document.getElementById(PANEL_ID);
+    if (panel && !panel.classList.contains('hidden') && !panel.classList.contains('modal-minimized')) {
+      Modals.minimize(PANEL_ID);
+      return;
+    }
+    openFiles();
+  });
+}
+
+function boot() {
+  initSidebar();
+  wireFilesButton();
+}
+
+if (document.readyState !== 'loading') boot();
+else document.addEventListener('DOMContentLoaded', boot);
