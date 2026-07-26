@@ -95,28 +95,6 @@ continuam pro agente); tarefas vivem no Obsidian.
 commits feitos pela UI dentro do container) e `VAULTFS_GIT_USER` +
 `VAULTFS_GIT_TOKEN` (push/pull https; token preenchido via `.env`, nunca comitado).
 
-**My Tasks (Obsidian Tasks):** aba TASKS no painel lê `- [ ]` de todas as notas
-(formato do plugin: 📅⏳🛫✅❌, prioridades, 🔁), agrupa por Atrasadas/Hoje/
-Próximas/Sem data e o checkbox conclui a tarefa reescrevendo a linha (`[x]` +
-`✅ data`, como o plugin). Rotas `/api/vaultfs/tasks` e `/tasks/toggle`.
-
-**Obsidian Sync:** serviço opcional `obsidian` no overlay (perfil
-`obsidian-sync`, imagem lscr.io/linuxserver/obsidian) roda o cliente OFICIAL em
-background com a vault montada; primeira config via http://localhost:3010
-(login na conta + abrir a vault uma vez). O toggle no header do painel liga/
-desliga o container via socket do docker montado no serviço odysseus —
-tradeoff de segurança documentado no próprio overlay; backend só aceita
-start/stop do container de nome fixo `odysseus-obsidian` (rotas autenticadas
-`GET/POST /api/vaultfs/obsidian-sync`). Config do Obsidian persiste em
-`data/obsidian-config/` (gitignored; volume declarado com caminho ABSOLUTO —
-relativo em overlay resolve contra a raiz do projeto, não contra docker/).
-
-**Multi-vault:** o status do sync lista cada vault do painel: conectada /
-não conectada (com o passo-a-passo certo: "Open folder as vault" →
-`/vaults/<nome>` + Sync → vault remota EXISTENTE) / fora do sync (bind-mounts
-próprios como pleitost-app não são visíveis pro container do Obsidian).
-Detecta e alerta o erro de conexão ANINHADA (`/vaults/X/X`) — aconteceu na
-primeira config da OP Vault (o fluxo "create new" baixou o remoto pra uma
-subpasta): corrigido reapontando o `obsidian.json` pra pasta real; a cópia
-parcial foi movida (NÃO deletada) pra `/data/vaults-backups/`, junto com
-tarballs pré-sync das duas vaults (2026-07-25).
+**Backups de segurança (2026-07-25):** tarballs pré-sync das duas vaults e a
+cópia parcial do episódio da conexão aninhada (`/vaults/X/X`) vivem em
+`/data/vaults-backups/` — nada foi deletado.
