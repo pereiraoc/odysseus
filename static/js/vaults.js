@@ -430,7 +430,7 @@ function openSnapMenu(anchorBtn, modal) {
         <button class="vaults-snap-wide" data-zone="restore">restaurar</button>
       </div>`;
   const r = anchorBtn.getBoundingClientRect();
-  menu.style.cssText = `position:fixed; top:${r.bottom + 6}px; left:${Math.max(8, r.right - 140)}px; z-index:500;`;
+  menu.style.cssText = `position:fixed; top:${r.bottom + 6}px; left:${Math.max(8, r.right - 140)}px; z-index:10050;`;
   document.body.appendChild(menu);
   let unreg = () => {};
   const close = () => {
@@ -1264,7 +1264,7 @@ async function openBranchMenu(anchor) {
     + `<div class="dropdown-item vaults-branch-item vaults-branch-new">＋ nova branch…</div>`;
   const r = anchor.getBoundingClientRect();
   menu.style.cssText = `position:fixed; left:${Math.max(8, r.right - 200)}px; top:${r.bottom + 4}px;`
-    + 'display:block; z-index:400; min-width:180px; max-height:50vh; overflow-y:auto;';
+    + 'display:block; z-index:10050; min-width:180px; max-height:50vh; overflow-y:auto;';
   document.body.appendChild(menu);
   // Escape fecha SÓ o menu (LIFO do escMenuStack), não o painel inteiro.
   let unregister = () => {};
