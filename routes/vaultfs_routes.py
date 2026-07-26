@@ -681,16 +681,26 @@ def setup_vaultfs_routes() -> APIRouter:
             raise HTTPException(404, "not found")
         return {"ok": True}
 
+    # dirs pesados fora do índice do Dataview/assets (raízes de código no Files)
+    META_IGNORE_DIRS = {"node_modules", "__pycache__", "venv", ".venv",
+                        "dist", "build", "target"}
+
     @router.get("/meta")
     def vault_meta(request: Request, vault: str = Query(...), user: str = Depends(require_user)):
-        """Metadados de todas as notas .md (frontmatter + tags) — base do
-        Dataview/bases no frontend (issue #2)."""
+        """Metadados das notas .md (frontmatter + tags) + lista de assets —
+        base do Dataview/bases e da resolução de embeds no frontend."""
         root = _vault_root(vault)
         notes = []
+        assets = []
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames
+                           if not d.startswith(".") and d not in META_IGNORE_DIRS]
             for fn in filenames:
-                if fn.startswith(".") or not fn.lower().endswith(".md"):
+                if fn.startswith("."):
+                    continue
+                if not fn.lower().endswith(".md"):
+                    rel_a = os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
+                    assets.append({"name": fn, "path": rel_a})
                     continue
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, root).replace(os.sep, "/")
@@ -736,7 +746,7 @@ def setup_vaultfs_routes() -> APIRouter:
                     "tags": sorted(tags), "aliases": aliases,
                     "outlinks": outlinks, "props": props,
                 })
-        return {"notes": notes}
+        return {"notes": notes, "assets": assets}
 
     @router.get("/base")
     def read_base(request: Request, vault: str = Query(...), path: str = Query(...),

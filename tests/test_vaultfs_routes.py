@@ -334,3 +334,16 @@ def test_obsidian_open_vault_desconhecida(client, monkeypatch):
     monkeypatch.setattr(vr, "_docker_api", lambda *a, **k: (200, "[]"))
     assert client.post("/api/vaultfs/obsidian-open",
                        json={"vault": "nope"}).status_code == 404
+
+
+def test_meta_assets_e_ignore_dirs(client, vault):
+    (vault / "anexo.png").write_bytes(b"x")
+    nm = vault / "node_modules" / "pacote"
+    nm.mkdir(parents=True)
+    (nm / "lib.md").write_text("# não conta")
+    (nm / "lib.js").write_text("x")
+    r = client.get("/api/vaultfs/meta", params={"vault": "test-vault"})
+    body = r.json()
+    assert {"name": "anexo.png", "path": "anexo.png"} in body["assets"]
+    assert not any("node_modules" in n["path"] for n in body["notes"])
+    assert not any("node_modules" in a["path"] for a in body["assets"])
