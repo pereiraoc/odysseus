@@ -75,6 +75,10 @@ services:
       # foi parar em /data/projects/data até este fix.
       - /data/projects/odysseus/data/obsidian-config:/config
       - /data/vaults:/vaults
+      # Espelha os binds extras do serviço odysseus — todas as vaults do
+      # painel ficam abríveis/sincronizáveis também dentro do Obsidian:
+      - /data/projects/pleitost-app:/vaults/pleitost-app
+      - /data/projects/caelestia-arch-setup:/vaults/caelestia-arch-setup
     ports:
       - "127.0.0.1:3010:3000"
     shm_size: "1gb"
