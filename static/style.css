@@ -41342,3 +41342,9 @@ body.vaults-iframe-lock iframe { pointer-events: none !important; }
 .vaults-snap-cell:hover .vaults-snap-fill { background: var(--accent-primary, #60a5fa); }
 .vaults-snap-wide { flex: 1; font-size: 10.5px; padding: 4px; border-radius: 5px; border: 1px solid var(--border, rgba(128,128,128,0.35)); background: transparent; color: inherit; cursor: pointer; opacity: 0.85; }
 .vaults-snap-wide:hover { border-color: var(--accent-primary, #60a5fa); opacity: 1; }
+/* Selos de política de sync por vault */
+.vaults-sync-chip { font-size: 8.5px; font-weight: 800; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 8px; cursor: pointer; flex-shrink: 0; border: 1px solid transparent; }
+.vaults-sync-chip.vaults-chip-on { color: #5fbf77; border-color: color-mix(in srgb, #5fbf77 55%, transparent); display: inline-block !important; }
+.vaults-sync-chip.vaults-chip-idle { color: color-mix(in srgb, currentColor 45%, transparent); border-color: var(--border, rgba(128,128,128,0.3)); display: inline-block !important; }
+.vaults-sync-chip.vaults-chip-blocked { color: color-mix(in srgb, currentColor 35%, transparent); border-color: var(--border, rgba(128,128,128,0.25)); text-decoration: line-through; display: inline-block !important; }
+.vaults-sync-chip.vaults-chip-warn { color: #e5a54b; border-color: color-mix(in srgb, #e5a54b 55%, transparent); display: inline-block !important; }

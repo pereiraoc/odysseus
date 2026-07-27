@@ -1328,10 +1328,55 @@ function updateSidebarDots() {
     if (cloud) {
       cloud.classList.toggle('vaults-sync-on', !!s?.running);
       cloud.title = s?.running
-        ? 'Sessão do Obsidian ATIVA (sync rodando) — clique pra desligar'
+        ? 'Sessão do Obsidian ATIVA — clique pra desligar'
         : 'Ligar a sessão do Obsidian desta vault';
     }
+    const chip = item.querySelector('.vaults-sync-chip');
+    if (chip && s) {
+      const warn = s.sync_allowed && (s.foreign_refs || []).length > 0;
+      chip.className = 'vaults-sync-chip '
+        + (!s.sync_allowed ? 'vaults-chip-blocked'
+          : s.sync_plugin ? (warn ? 'vaults-chip-warn' : 'vaults-chip-on')
+            : 'vaults-chip-idle');
+      chip.textContent = 'SYNC';
+      chip.title = !s.sync_allowed
+        ? 'Obsidian Sync BLOQUEADO por política nesta vault (proteção anti cross-sync) — clique pra permitir'
+        : s.sync_plugin
+          ? (warn
+            ? `Sync permitido e plugin ativo — ATENÇÃO: storage da sessão referencia outra(s) vault(s): ${s.foreign_refs.join(', ')} (histórico antigo ou vínculo errado)`
+            : 'Obsidian Sync permitido e plugin ativo nesta vault — clique pra bloquear')
+          : 'Sync permitido, mas o plugin está desligado no Obsidian — clique pra bloquear por política';
+    }
   });
+}
+
+async function toggleSyncAllow(v) {
+  const s = sessionsState.byId.get(v.id);
+  const allowing = !(s && s.sync_allowed);
+  const msg = allowing
+    ? `PERMITIR Obsidian Sync na vault "${v.name}"?\n\n`
+      + `Regras pra não misturar vaults (cross-sync é destrutivo):\n`
+      + `• dentro do Obsidian, conecte SOMENTE à remota chamada "${v.name}";\n`
+      + `• se não existir, crie uma remota nova com esse nome;\n`
+      + `• o plano Standard tem UMA remota só — pra segunda vault é preciso `
+      + `plano com múltiplas remotas (ou sync via git).`
+    : `BLOQUEAR o Obsidian Sync na vault "${v.name}"? A sessão é parada e o `
+      + `plugin de sync é desligado (proteção padrão).`;
+  if (!(await styledConfirm(msg, {
+    confirmText: allowing ? 'Permitir' : 'Bloquear',
+    danger: allowing,
+    title: 'Política de Sync',
+  }))) return;
+  try {
+    await api('/obsidian-sync-allow', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vault: v.id, allow: allowing }),
+    });
+    showToast(allowing ? `Sync permitido em ${v.name}` : `Sync bloqueado em ${v.name}`);
+  } catch (e) {
+    showError(`política de sync: ${e.message}`);
+  }
+  refreshSessions();
 }
 
 async function toggleSession(vaultId) {
@@ -1364,9 +1409,10 @@ async function syncGuard(v) {
     + `• conecte SOMENTE à vault remota chamada "${v.name}";\n`
     + `• se ela não existir na sua conta, crie uma remota NOVA com esse nome;\n`
     + `• NUNCA conecte à remota de outra vault — isso mescla uma na outra.\n\n`
-    + `Obs.: o plano Sync Standard permite UMA vault remota só — pra sincronizar `
-    + `mais de uma vault é preciso o plano com múltiplas remotas (ou usar git, `
-    + `como a pleitost já faz).`,
+    + `Obs.: por PADRÃO o Sync está bloqueado por política fora da OP Vault `
+    + `(selo SYNC no item da vault gerencia isso). O plano Standard permite `
+    + `UMA remota só — pra outra vault, use git (como a pleitost) ou plano `
+    + `com múltiplas remotas.`,
     { confirmText: 'Entendi', cancelText: 'Cancelar', title: 'Obsidian Sync — atenção' });
   if (ok) { try { localStorage.setItem(key, '1'); } catch (_) {} }
   return !!ok;
@@ -1467,12 +1513,17 @@ async function initSidebar() {
       item.dataset.vaultId = v.id;
       item.title = v.exists ? `${v.path} — abre no Obsidian` : `Pasta não encontrada: ${v.path}`;
       item.innerHTML = `<span class="vaults-dot"></span>${VAULT_ICON_SVG.replace('<svg ', '<svg style="flex-shrink:0;opacity:0.5;" ')}<span class="grow">${esc(v.name)}</span>
+        <span class="vaults-sync-chip" style="display:none"></span>
         <button class="vaults-side-cloud" title="Ligar/desligar sessão">${ICONS.cloud}</button>`;
       if (v.exists) {
         item.addEventListener('click', () => openVaultObsidian(v));
         item.querySelector('.vaults-side-cloud').addEventListener('click', (e) => {
           e.stopPropagation();
           toggleSession(v.id);
+        });
+        item.querySelector('.vaults-sync-chip').addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleSyncAllow(v);
         });
       }
       list.appendChild(item);

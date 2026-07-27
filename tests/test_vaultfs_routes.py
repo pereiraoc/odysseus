@@ -267,7 +267,7 @@ def test_obsidian_sync_status_shape(client):
     body = r.json()
     assert set(body) == {"available", "sessions"}
     assert body["sessions"][0]["id"] == "test-vault"
-    assert set(body["sessions"][0]) == {"id", "name", "mounted", "exists", "running", "port", "ui_url"}
+    assert set(body["sessions"][0]) == {"id", "name", "mounted", "exists", "running", "port", "ui_url", "sync_allowed", "sync_plugin", "foreign_refs"}
 
 
 def test_host_path_e_session_spec(monkeypatch):
@@ -347,3 +347,60 @@ def test_meta_assets_e_ignore_dirs(client, vault):
     assert {"name": "anexo.png", "path": "anexo.png"} in body["assets"]
     assert not any("node_modules" in n["path"] for n in body["notes"])
     assert not any("node_modules" in a["path"] for a in body["assets"])
+
+
+def test_sync_policy_default_e_strip(client, vault, monkeypatch):
+    import json as j
+    import routes.vaultfs_routes as vr
+    # default: allowlist = ["op-vault"] → test-vault NÃO pode sync
+    (vault / ".obsidian" / "core-plugins.json").write_text('{"sync": true, "graph": true}')
+    assert vr._enforce_sync_policy("test-vault", str(vault)) is True
+    assert j.load(open(vault / ".obsidian" / "core-plugins.json"))["sync"] is False
+    # formato lista (versões antigas)
+    (vault / ".obsidian" / "core-plugins.json").write_text('["sync", "graph"]')
+    assert vr._enforce_sync_policy("test-vault", str(vault)) is True
+    assert j.load(open(vault / ".obsidian" / "core-plugins.json")) == ["graph"]
+    # na allowlist → intocada
+    monkeypatch.setattr(vr, "get_setting", lambda k: {
+        "obsidian_sync_allowed": ["test-vault"],
+        "tool_path_extra_roots": [str(vault)],
+    }.get(k))
+    (vault / ".obsidian" / "core-plugins.json").write_text('{"sync": true}')
+    assert vr._enforce_sync_policy("test-vault", str(vault)) is False
+    assert j.load(open(vault / ".obsidian" / "core-plugins.json"))["sync"] is True
+
+
+def test_sync_status_policy_fields(client, vault):
+    (vault / ".obsidian" / "core-plugins.json").write_text('{"sync": true}')
+    r = client.get("/api/vaultfs/obsidian-sync").json()
+    s0 = r["sessions"][0]
+    assert s0["sync_allowed"] is False and s0["sync_plugin"] is True
+    assert s0["foreign_refs"] == []
+
+
+def test_foreign_refs_scan(client, vault, tmp_path, monkeypatch):
+    import routes.vaultfs_routes as vr
+    outra = tmp_path / "Outra"
+    outra.mkdir()
+    monkeypatch.setattr(vr, "get_setting", lambda k: {
+        "tool_path_extra_roots": [str(vault), str(outra)],
+    }.get(k))
+    sess = tmp_path / "sessions" / "test-vault" / ".config" / "obsidian" / "IndexedDB"
+    sess.mkdir(parents=True)
+    (sess / "000001.ldb").write_bytes(b"xx Outra xx")
+    monkeypatch.setenv("OBSIDIAN_SESSIONS_DIR", str(tmp_path / "sessions"))
+    assert vr._foreign_refs("test-vault") == ["Outra"]
+
+
+def test_sync_allow_endpoint(client, monkeypatch):
+    import routes.vaultfs_routes as vr
+    saved = {}
+    monkeypatch.setattr(vr, "load_settings", lambda: {})
+    monkeypatch.setattr(vr, "save_settings", lambda s: saved.update(s))
+    monkeypatch.setattr(vr, "_docker_api", lambda *a, **k: (204, ""))
+    r = client.post("/api/vaultfs/obsidian-sync-allow",
+                    json={"vault": "test-vault", "allow": True})
+    assert r.status_code == 200 and "test-vault" in saved["obsidian_sync_allowed"]
+    r = client.post("/api/vaultfs/obsidian-sync-allow",
+                    json={"vault": "test-vault", "allow": False})
+    assert saved["obsidian_sync_allowed"] == ["op-vault"]
