@@ -364,6 +364,92 @@ def _seed_session_config(vault_id: str, vault_name: str):
         _json.dump(data, f, indent=1)
 
 
+# ── Política anti cross-sync ──
+# O Obsidian Sync conecta a vault local a QUALQUER remota da conta; conectar
+# na remota errada mescla uma vault na outra. Enforcement determinístico:
+# vaults fora da allowlist têm o core plugin "sync" DESABILITADO a cada start
+# de sessão (sem plugin, não há como sincronizar). Default: só op-vault.
+
+def _core_plugins_path(root: str) -> str:
+    return os.path.join(root, ".obsidian", "core-plugins.json")
+
+
+def _sync_allowlist() -> list:
+    allowed = get_setting("obsidian_sync_allowed")
+    return allowed if isinstance(allowed, list) else ["op-vault"]
+
+
+def _vault_sync_plugin(root: str):
+    import json as _json
+    try:
+        with open(_core_plugins_path(root), encoding="utf-8") as f:
+            data = _json.load(f)
+    except (OSError, ValueError):
+        return None
+    if isinstance(data, dict):
+        return bool(data.get("sync"))
+    if isinstance(data, list):
+        return "sync" in data
+    return None
+
+
+def _enforce_sync_policy(vault_id: str, root: str) -> bool:
+    """Desabilita o plugin sync de vaults fora da allowlist. True se mudou."""
+    import json as _json
+    if vault_id in _sync_allowlist():
+        return False
+    path = _core_plugins_path(root)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = _json.load(f)
+    except (OSError, ValueError):
+        return False
+    changed = False
+    if isinstance(data, dict) and data.get("sync"):
+        data["sync"] = False
+        changed = True
+    elif isinstance(data, list) and "sync" in data:
+        data = [x for x in data if x != "sync"]
+        changed = True
+    if changed:
+        tmp = path + ".vaultfs-tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+        logger.warning("vaultfs: plugin sync DESABILITADO por política na vault %s", vault_id)
+    return changed
+
+
+_FOREIGN_SCAN_DIRS = ("IndexedDB", "Local Storage")
+
+
+def _foreign_refs(vault_id: str) -> list:
+    """Nomes de OUTRAS vaults presentes no storage da sessão — vínculo de
+    sync suspeito (alerta, não bloqueio: históricos antigos geram falso
+    positivo, ex. sessão migrada do container compartilhado)."""
+    others = [v["name"] for v in _list_vaults() if v.get("is_vault") and v["id"] != vault_id]
+    base = os.path.join(_sessions_dir(), vault_id, ".config", "obsidian")
+    if not others or not os.path.isdir(base):
+        return []
+    pats = [(o, o.encode("utf-8")) for o in others]
+    hits: set = set()
+    for sub in _FOREIGN_SCAN_DIRS:
+        for dirpath, _dns, filenames in os.walk(os.path.join(base, sub)):
+            for fn in filenames:
+                fp = os.path.join(dirpath, fn)
+                try:
+                    if os.path.getsize(fp) > 8 * 1024 * 1024:
+                        continue
+                    with open(fp, "rb") as f:
+                        blob = f.read()
+                except OSError:
+                    continue
+                for name, pat in pats:
+                    if name not in hits and pat in blob:
+                        hits.add(name)
+    return sorted(hits)
+
+
 def _vault_entry(vault_id: str) -> dict:
     v = next((x for x in _list_vaults() if x["id"] == vault_id), None)
     if not v:
@@ -387,7 +473,10 @@ def _session_state(v: dict) -> dict:
             port = _port_from_inspect(info)
     return {"id": v["id"], "name": v["name"], "mounted": mounted,
             "exists": exists, "running": running, "port": port,
-            "ui_url": f"http://localhost:{port}" if port else None}
+            "ui_url": f"http://localhost:{port}" if port else None,
+            "sync_allowed": v["id"] in _sync_allowlist(),
+            "sync_plugin": _vault_sync_plugin(v["path"]) if v["exists"] else None,
+            "foreign_refs": _foreign_refs(v["id"])}
 
 
 def _ensure_session(vault_id: str) -> dict:
@@ -396,6 +485,8 @@ def _ensure_session(vault_id: str) -> dict:
         raise HTTPException(404, f"Vault path not found on disk: {v['path']}")
     host_vault = _host_path(v["path"])
     name = _session_name(vault_id)
+    # política anti cross-sync aplicada a CADA start (não só na criação)
+    _enforce_sync_policy(vault_id, v["path"])
     st, info = _session_inspect(vault_id)
     started = False
     if st == 404:
@@ -470,6 +561,11 @@ class TaskToggleBody(BaseModel):
 class SyncToggleBody(BaseModel):
     vault: str
     enable: bool
+
+
+class SyncAllowBody(BaseModel):
+    vault: str
+    allow: bool
 
 
 class ObsidianOpenBody(BaseModel):
@@ -834,6 +930,27 @@ def setup_vaultfs_routes() -> APIRouter:
     @router.post("/obsidian-open")
     def obsidian_open(body: ObsidianOpenBody, request: Request, user: str = Depends(require_user)):
         return _ensure_session(body.vault)
+
+    @router.post("/obsidian-sync-allow")
+    def sync_allow(body: SyncAllowBody, request: Request, user: str = Depends(require_user)):
+        v = _vault_entry(body.vault)
+        allowed = list(_sync_allowlist())
+        if body.allow:
+            if v["id"] not in allowed:
+                allowed.append(v["id"])
+        else:
+            allowed = [a for a in allowed if a != v["id"]]
+        settings = load_settings()
+        settings["obsidian_sync_allowed"] = allowed
+        save_settings(settings)
+        if not body.allow:
+            # revoga na hora: para a sessão e desliga o plugin da vault
+            try:
+                _docker_api("POST", f"/containers/{_session_name(v['id'])}/stop")
+            except HTTPException:
+                pass
+            _enforce_sync_policy(v["id"], v["path"])
+        return {"ok": True, "allowed": allowed}
 
     @router.post("/obsidian-sync")
     def sync_toggle(body: SyncToggleBody, request: Request, user: str = Depends(require_user)):
