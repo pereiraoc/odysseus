@@ -1352,7 +1352,28 @@ async function toggleSession(vaultId) {
   refreshSessions();
 }
 
+// Guarda anti cross-sync: o Obsidian Sync deixa conectar a vault local em
+// QUALQUER remota da conta — conectar na remota errada mescla uma vault na
+// outra. Antes da primeira abertura de cada sessão, instrui explicitamente.
+async function syncGuard(v) {
+  const key = `odysseus-obsidian-guard-${v.id}`;
+  try { if (localStorage.getItem(key)) return true; } catch (_) {}
+  const ok = await styledConfirm(
+    `Primeira abertura da sessão "${v.name}".\n\n`
+    + `Se for ativar o Obsidian Sync NESTA sessão:\n`
+    + `• conecte SOMENTE à vault remota chamada "${v.name}";\n`
+    + `• se ela não existir na sua conta, crie uma remota NOVA com esse nome;\n`
+    + `• NUNCA conecte à remota de outra vault — isso mescla uma na outra.\n\n`
+    + `Obs.: o plano Sync Standard permite UMA vault remota só — pra sincronizar `
+    + `mais de uma vault é preciso o plano com múltiplas remotas (ou usar git, `
+    + `como a pleitost já faz).`,
+    { confirmText: 'Entendi', cancelText: 'Cancelar', title: 'Obsidian Sync — atenção' });
+  if (ok) { try { localStorage.setItem(key, '1'); } catch (_) {} }
+  return !!ok;
+}
+
 async function openVaultObsidian(v) {
+  if (!(await syncGuard(v))) return;
   try {
     const r = await api('/obsidian-open', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
