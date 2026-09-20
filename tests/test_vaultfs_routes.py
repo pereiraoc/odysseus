@@ -404,3 +404,92 @@ def test_sync_allow_endpoint(client, monkeypatch):
     r = client.post("/api/vaultfs/obsidian-sync-allow",
                     json={"vault": "test-vault", "allow": False})
     assert saved["obsidian_sync_allowed"] == ["op-vault"]
+
+
+def test_session_spec_relanca_app_e_versiona(monkeypatch):
+    """Sessão nova: watchdog da imagem relança o Obsidian + label de spec."""
+    import routes.vaultfs_routes as vr
+    spec = vr._session_spec("odysseus-obsidian-v", "Minha V", "/data/vaults/Minha V",
+                            "/sessions/v", 3011)
+    assert "RESTART_APP=true" in spec["Env"]
+    assert spec["Labels"]["odysseus.session-spec"] == vr.SESSION_SPEC_VERSION
+
+
+def test_seed_session_config_forca_frame_nativo(tmp_path, monkeypatch):
+    """O X/minimizar/maximizar DENTRO da janela é o frame próprio do
+    Obsidian; frame=native desliga (a imagem roda com NO_DECOR)."""
+    import json as j
+    import routes.vaultfs_routes as vr
+    monkeypatch.setenv("OBSIDIAN_SESSIONS_DIR", str(tmp_path))
+    cfg = tmp_path / "v" / ".config" / "obsidian" / "obsidian.json"
+    cfg.parent.mkdir(parents=True)
+    # sessão já existente, vault já aberta (caminho do early-return antigo)
+    cfg.write_text(j.dumps({"vaults": {"abc": {"path": "/vaults/V", "open": True}}}))
+    vr._seed_session_config("v", "V")
+    data = j.loads(cfg.read_text())
+    assert data["frame"] == "native"
+    assert data["vaults"]["abc"]["open"] is True
+
+
+def test_obsidian_open_recria_container_de_spec_antigo(client, vault, tmp_path, monkeypatch):
+    """Container criado antes do fix não tem RESTART_APP: recria na mesma porta."""
+    import routes.vaultfs_routes as vr
+    monkeypatch.setenv("OBSIDIAN_SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("VAULTFS_HOST_MAP", f"{tmp_path}=/host{tmp_path}")
+    calls = []
+    state = {"legacy": True}
+
+    def fake_api(method, endpoint, body=None):
+        calls.append((method, endpoint, body))
+        if endpoint.endswith("/json") and "/containers/" in endpoint:
+            if state["legacy"]:
+                return 200, ('{"State": {"Running": true}, "Config": {"Labels": '
+                             '{"odysseus.vault-session": "1"}}, "HostConfig": '
+                             '{"PortBindings": {"3000/tcp": [{"HostPort": "3017"}]}}}')
+            return 200, ('{"State": {"Running": false}, "Config": {"Labels": '
+                         '{"odysseus.session-spec": "' + vr.SESSION_SPEC_VERSION + '"}},'
+                         ' "HostConfig": {"PortBindings": {"3000/tcp": '
+                         '[{"HostPort": "3017"}]}}}')
+        if endpoint == "/containers/json?all=1":
+            return 200, "[]"
+        if method == "DELETE":
+            state["legacy"] = False
+            return 204, ""
+        if "/containers/create" in endpoint:
+            return 201, "{}"
+        if endpoint.endswith("/start"):
+            return 204, ""
+        return 500, "?"
+
+    monkeypatch.setattr(vr, "_docker_api", fake_api)
+    r = client.post("/api/vaultfs/obsidian-open", json={"vault": "test-vault"})
+    assert r.status_code == 200, r.text
+    assert [c[0] for c in calls].count("DELETE") == 1
+    create = next(c for c in calls if "/containers/create" in c[1])
+    # porta preservada na recriação
+    assert create[2]["HostConfig"]["PortBindings"]["3000/tcp"][0]["HostPort"] == "3017"
+    assert r.json() == {"ok": True, "ui_url": "http://localhost:3017",
+                        "port": 3017, "started": True}
+
+
+def test_obsidian_open_nao_recria_spec_atual(client, vault, tmp_path, monkeypatch):
+    """Container já no spec corrente e rodando: nada de DELETE nem restart."""
+    import routes.vaultfs_routes as vr
+    monkeypatch.setenv("OBSIDIAN_SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("VAULTFS_HOST_MAP", f"{tmp_path}=/host{tmp_path}")
+    calls = []
+
+    def fake_api(method, endpoint, body=None):
+        calls.append((method, endpoint, body))
+        if endpoint.endswith("/json") and "/containers/" in endpoint:
+            return 200, ('{"State": {"Running": true}, "Config": {"Labels": '
+                         '{"odysseus.session-spec": "' + vr.SESSION_SPEC_VERSION + '"}},'
+                         ' "HostConfig": {"PortBindings": {"3000/tcp": '
+                         '[{"HostPort": "3010"}]}}}')
+        return 500, "?"
+
+    monkeypatch.setattr(vr, "_docker_api", fake_api)
+    r = client.post("/api/vaultfs/obsidian-open", json={"vault": "test-vault"})
+    assert r.status_code == 200, r.text
+    assert r.json()["started"] is False
+    assert not [c for c in calls if c[0] == "DELETE" or "/create" in c[1]]

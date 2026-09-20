@@ -210,6 +210,9 @@ DOCKER_SOCK = "/var/run/docker.sock"
 SESSION_PREFIX = "odysseus-obsidian-"
 SESSION_BASE_PORT = 3010
 SESSION_MAX_PORT = 3019
+# Bump quando o spec do container mudar: sessões antigas são recriadas
+# no próximo open (todo o estado vive nos binds /config e /vaults).
+SESSION_SPEC_VERSION = "2"
 
 
 class _UnixHTTP(http.client.HTTPConnection):
@@ -270,9 +273,14 @@ def _session_spec(name: str, vault_name: str, host_vault_dir: str,
                   host_config_dir: str, port: int) -> dict:
     return {
         "Image": os.getenv("OBSIDIAN_IMAGE", "lscr.io/linuxserver/obsidian:latest"),
-        "Env": ["PUID=1000", "PGID=1000", "TZ=America/Sao_Paulo"],
+        # RESTART_APP liga o svc-watchdog da imagem: se o Obsidian sair
+        # (X da janela, Alt+F4, crash) ele relança o autostart do labwc. Sem
+        # isso o container segue "running" com um desktop vazio pra sempre —
+        # a sessão só voltava com docker restart.
+        "Env": ["PUID=1000", "PGID=1000", "TZ=America/Sao_Paulo", "RESTART_APP=true"],
         "ExposedPorts": {"3000/tcp": {}},
-        "Labels": {"odysseus.vault-session": "1"},
+        "Labels": {"odysseus.vault-session": "1",
+                   "odysseus.session-spec": SESSION_SPEC_VERSION},
         "HostConfig": {
             "Binds": [f"{host_config_dir}:/config",
                       f"{host_vault_dir}:/vaults/{vault_name}"],
@@ -339,7 +347,16 @@ def _sessions_dir() -> str:
 
 
 def _seed_session_config(vault_id: str, vault_name: str):
-    """Garante o obsidian.json da sessão apontando pra vault (open:true)."""
+    """obsidian.json da sessão: vault apontada (open:true) + frame nativo.
+
+    `frame` é a "Window frame style" do Obsidian. No default ("hidden") o
+    app desenha a PRÓPRIA barra de título — é dali o X/minimizar/maximizar
+    que aparecia DENTRO do iframe, e o X ali derruba o processo. Com
+    "native" o Obsidian não desenha frame nenhum e delega ao compositor;
+    como a imagem roda com NO_DECOR (labwc com serverDecoration="no"), a
+    janela fica sem barra e sem botões: quem fecha é só o X do Odysseus.
+    Só vale num start novo ("Requires a full restart to take effect").
+    """
     import json as _json
     import secrets as _secrets
     import time as _time
@@ -350,14 +367,20 @@ def _seed_session_config(vault_id: str, vault_name: str):
             data = _json.load(f)
     except (OSError, ValueError):
         pass
+    if not isinstance(data, dict):
+        data = {}
+    changed = data.get("frame") != "native"
+    data["frame"] = "native"
     vaults = data.setdefault("vaults", {})
     opath = f"/vaults/{vault_name}"
     entry = next((v for v in vaults.values() if v.get("path") == opath), None)
     if entry is None:
         vaults[_secrets.token_hex(8)] = {"path": opath, "ts": int(_time.time() * 1000), "open": True}
+        changed = True
     elif not entry.get("open"):
         entry["open"] = True
-    else:
+        changed = True
+    if not changed:
         return
     os.makedirs(os.path.dirname(cfg), exist_ok=True)
     with open(cfg, "w", encoding="utf-8") as f:
@@ -479,6 +502,10 @@ def _session_state(v: dict) -> dict:
             "foreign_refs": _foreign_refs(v["id"])}
 
 
+def _spec_version(info: Optional[dict]) -> Optional[str]:
+    return ((info or {}).get("Config", {}).get("Labels") or {}).get("odysseus.session-spec")
+
+
 def _ensure_session(vault_id: str) -> dict:
     v = _vault_entry(vault_id)
     if not v["exists"]:
@@ -489,8 +516,18 @@ def _ensure_session(vault_id: str) -> dict:
     _enforce_sync_policy(vault_id, v["path"])
     st, info = _session_inspect(vault_id)
     started = False
+    keep_port = None
+    if st == 200 and _spec_version(info) != SESSION_SPEC_VERSION:
+        # spec antigo (sem RESTART_APP): recria na MESMA porta. Descartar o
+        # container é seguro — estado vive nos binds /config e /vaults.
+        keep_port = _port_from_inspect(info)
+        s0, out = _docker_api("DELETE", f"/containers/{name}?force=1")
+        if s0 not in (204, 404):
+            raise HTTPException(502, f"docker rm: HTTP {s0} {out[:200]}")
+        logger.info("vaultfs: sessão %s recriada no spec %s", vault_id, SESSION_SPEC_VERSION)
+        st, info = 404, None
     if st == 404:
-        port = _next_free_port()
+        port = keep_port or _next_free_port()
         _seed_session_config(vault_id, v["name"])
         host_cfg = _host_path(os.path.join(_sessions_dir(), vault_id))
         spec = _session_spec(name, v["name"], host_vault, host_cfg, port)
@@ -502,6 +539,8 @@ def _ensure_session(vault_id: str) -> dict:
         raise HTTPException(502, "sessão não inspecionável após criação")
     port = _port_from_inspect(info)
     if not info.get("State", {}).get("Running"):
+        # frame nativo só pega em start novo — reseeda antes de subir
+        _seed_session_config(vault_id, v["name"])
         s3, out = _docker_api("POST", f"/containers/{name}/start")
         if s3 not in (204, 304):
             raise HTTPException(502, f"docker start: HTTP {s3} {out[:200]}")
