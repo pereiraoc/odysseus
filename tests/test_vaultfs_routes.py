@@ -493,3 +493,30 @@ def test_obsidian_open_nao_recria_spec_atual(client, vault, tmp_path, monkeypatc
     assert r.status_code == 200, r.text
     assert r.json()["started"] is False
     assert not [c for c in calls if c[0] == "DELETE" or "/create" in c[1]]
+
+
+def test_session_spec_passa_dri_node(monkeypatch):
+    """Sem GPU no container o wrapper da imagem roda o Obsidian no X11
+    (Xwayland) e o selkies perde acentuado digitado rápido — o `wtype` troca
+    o keymap do compositor e o cliente X11 não aplica a tempo. Com um render
+    node o wrapper liga --ozone-platform=wayland e a perda some."""
+    import routes.vaultfs_routes as vr
+    monkeypatch.delenv("OBSIDIAN_DRI_NODE", raising=False)
+    spec = vr._session_spec("odysseus-obsidian-v", "Minha V", "/data/vaults/Minha V",
+                            "/sessions/v", 3011)
+    assert not spec["HostConfig"].get("Devices")
+
+    monkeypatch.setenv("OBSIDIAN_DRI_NODE", "/dev/dri/renderD129")
+    spec = vr._session_spec("odysseus-obsidian-v", "Minha V", "/data/vaults/Minha V",
+                            "/sessions/v", 3011)
+    assert spec["HostConfig"]["Devices"] == [
+        {"PathOnHost": "/dev/dri/renderD129",
+         "PathInContainer": "/dev/dri/renderD129",
+         "CgroupPermissions": "rwm"}]
+
+    # lista: mais de um node, com espaço e entrada vazia
+    monkeypatch.setenv("OBSIDIAN_DRI_NODE", " /dev/dri/renderD129 , ,/dev/dri/card2 ")
+    spec = vr._session_spec("odysseus-obsidian-v", "Minha V", "/data/vaults/Minha V",
+                            "/sessions/v", 3011)
+    assert [d["PathOnHost"] for d in spec["HostConfig"]["Devices"]] == [
+        "/dev/dri/renderD129", "/dev/dri/card2"]

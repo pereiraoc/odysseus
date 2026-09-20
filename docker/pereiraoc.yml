@@ -46,7 +46,18 @@ services:
       - ODYSSEUS_ENABLE_HOST_DOCKER=true
       # Sessões do Obsidian por vault (containers dinâmicos, sem serviço
       # fixo): tradução container→host pros binds das sessões e faixa de
-      # portas liberada no CSP pra iframar o KasmVNC de cada sessão.
+      # portas liberada no CSP pra iframar o desktop remoto (Selkies) de
+      # cada sessão.
       - VAULTFS_HOST_MAP=/app/vaults/pleitost-app=/data/projects/pleitost-app,/app/vaults/caelestia-arch-setup=/data/projects/caelestia-arch-setup,/app/vaults=/data/vaults,/app/data=/data/projects/odysseus/data
       - OBSIDIAN_SESSIONS_DIR=/app/data/obsidian-sessions
+      # Render node passado pras sessões do Obsidian. SEM isso o wrapper da
+      # imagem não liga --ozone-platform=wayland, o Obsidian sobe no X11
+      # (Xwayland) e o selkies PERDE todo caractere acentuado digitado
+      # rápido (<~100ms/tecla): acentuado é injetado por `wtype`, que troca o
+      # keymap do compositor e digita na hora — o cliente X11 não aplica o
+      # keymap a tempo. ASCII nunca cai (vai por scancode/uinput).
+      # Aqui é a iGPU Intel (pci 00:02.0). NÃO passe /dev/dri inteiro: o card
+      # node da nvidia põe a sessão em crash-loop. Confira o seu com
+      # `ls -l /dev/dri/by-path/` — o alvo é o *-render da integrada.
+      - OBSIDIAN_DRI_NODE=/dev/dri/renderD129
       - CSP_EXTRA_FRAME_SRC=http://localhost:3010 http://localhost:3011 http://localhost:3012 http://localhost:3013 http://localhost:3014 http://localhost:3015 http://localhost:3016 http://localhost:3017 http://localhost:3018 http://localhost:3019

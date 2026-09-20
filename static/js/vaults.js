@@ -1,7 +1,7 @@
 // static/js/vaults.js — Vaults (sessões do Obsidian) + tool Files (fork-local)
 //
 // Seção "Vaults" no sidebar: cada vault abre a SUA sessão do Obsidian
-// oficial (container por vault, iframe KasmVNC). O tool "Files" (em Tools)
+// oficial (container por vault, iframe do desktop remoto). O tool "Files" (em Tools)
 // é o File Browser: raízes configuráveis, árvore lazy, favoritos, preview
 // universal (md c/ Dataview, código, imagem, PDF, mídia) e git estilo VS Code.
 import { applyEdgeDock } from './modalSnap.js';
