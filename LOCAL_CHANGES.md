@@ -83,6 +83,21 @@ Binds traduzidos container→host pela env `VAULTFS_HOST_MAP`. Rotas:
 `GET/POST /api/vaultfs/obsidian-sync` (status/toggle por vault) e
 `POST /api/vaultfs/obsidian-open`.
 
+**Janela da sessão sem controles próprios (2026-09-19):** o X/minimizar/
+maximizar que apareciam DENTRO do iframe eram do frame que o Obsidian desenha
+sozinho (setting "Window frame style", default `hidden`) — clicar naquele X
+matava o app e a sessão virava um desktop vazio pra sempre: o container seguia
+`running`, o Odysseus só reapontava o iframe e a vault não abria mais (foi o
+que aconteceu com a OP Vault). Dois lados do fix, ambos em `_ensure_session`:
+`frame: "native"` no `obsidian.json` da sessão (a imagem roda com `NO_DECOR`,
+labwc com `serverDecoration="no"` — sem frame próprio a janela não tem botão
+nenhum; quem fecha é só o X do Odysseus) e `RESTART_APP=true` no container,
+que liga o `svc-watchdog` da imagem pra relançar o Obsidian se ele sair
+(crash/Alt+F4). Sessões antigas são recriadas na MESMA porta no próximo open:
+label `odysseus.session-spec` != `SESSION_SPEC_VERSION` dispara `docker rm -f`
++ create (o estado vive nos binds `/config` e `/vaults`, o container é
+descartável).
+
 **Tool "Files" (File Browser, em Tools):** o painel custom (Browser|Git) migrou
 pra `#tool-files-btn`, generalizado pra raízes configuráveis
 (`file_browser_roots` ∪ vaults; `PUT /api/vaultfs/roots` pela UI). Árvore lazy
