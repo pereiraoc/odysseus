@@ -68,12 +68,12 @@ branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
 - `static/style.css`: bloco `.vaults-*` append-only no final.
 - `core/middleware.py`: `frame-src 'self'` ganha extensão opcional via env
   `CSP_EXTRA_FRAME_SRC` (vazio = upstream intacto) — permite iframar o
-  KasmVNC do Obsidian (localhost:3010) no modal embutido do painel.
+  desktop remoto do Obsidian (localhost:3010) no modal embutido do painel.
 
 **Obsidian por sessão (modelo atual):** cada vault tem SEU container do
 Obsidian oficial (`odysseus-obsidian-<vault-id>`, lscr.io/linuxserver/obsidian),
 criado dinamicamente pelo backend via docker API na primeira abertura — clique
-na vault do sidebar abre a sessão daquela vault num modal iframe (KasmVNC,
+na vault do sidebar abre a sessão daquela vault num modal iframe (Selkies,
 portas 3010-3019, liberadas no CSP). Multi-vault lado a lado; sync/plugins são
 configurados DENTRO do Obsidian de cada sessão (login 1x por vault; config
 persiste em `data/obsidian-sessions/<id>/` — a sessão da OP Vault herdou o
@@ -97,6 +97,21 @@ que liga o `svc-watchdog` da imagem pra relançar o Obsidian se ele sair
 label `odysseus.session-spec` != `SESSION_SPEC_VERSION` dispara `docker rm -f`
 + create (o estado vive nos binds `/config` e `/vaults`, o container é
 descartável).
+
+**Acentos perdidos ao digitar na sessão (2026-09-20):** digitando rápido
+(<~100ms/tecla) TODO caractere acentuado sumia dentro do Obsidian; ASCII nunca
+caía. A imagem migrou de KasmVNC pra **Selkies** (labwc + Xwayland): ASCII entra
+por scancode/uinput, mas acentuado não existe no keymap US do container e é
+injetado via `wtype`, que sobe um keymap temporário no compositor e digita na
+hora — cliente X11 não aplica o keymap a tempo e o caractere some (ou sai o
+anterior). O wrapper `/usr/bin/obsidian` da imagem só liga
+`--ozone-platform=wayland` se houver `/dev/dri` no container, e a spec não
+passava device nenhum. Fix: env `OBSIDIAN_DRI_NODE` (lista por vírgula) vira
+`Devices` no `_session_spec`; no overlay aponta pro render node da iGPU
+(`/dev/dri/renderD129`, pci 00:02.0). Com isso o Obsidian vira cliente Wayland
+nativo: medido 0 perda até 10ms/tecla (antes, perda total a 60ms). NÃO passar
+`/dev/dri` inteiro — o card node da nvidia põe a sessão em crash-loop.
+`SESSION_SPEC_VERSION` foi pra "3" (sessões recriadas no próximo open).
 
 **Tool "Files" (File Browser, em Tools):** o painel custom (Browser|Git) migrou
 pra `#tool-files-btn`, generalizado pra raízes configuráveis

@@ -147,7 +147,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 # Fork-local (ver LOCAL_CHANGES.md): CSP_EXTRA_FRAME_SRC permite
-                # iframar origens extras (ex.: KasmVNC do Obsidian no painel de
+                # iframar origens extras (ex.: o desktop remoto do Obsidian no painel de
                 # Vaults). Vazio por padrão → comportamento upstream intacto.
                 f"frame-src 'self'{(' ' + os.getenv('CSP_EXTRA_FRAME_SRC')) if os.getenv('CSP_EXTRA_FRAME_SRC') else ''}; "
                 "frame-ancestors 'none'"

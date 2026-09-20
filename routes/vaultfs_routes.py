@@ -212,7 +212,7 @@ SESSION_BASE_PORT = 3010
 SESSION_MAX_PORT = 3019
 # Bump quando o spec do container mudar: sessões antigas são recriadas
 # no próximo open (todo o estado vive nos binds /config e /vaults).
-SESSION_SPEC_VERSION = "2"
+SESSION_SPEC_VERSION = "3"
 
 
 class _UnixHTTP(http.client.HTTPConnection):
@@ -269,8 +269,33 @@ def _session_name(vault_id: str) -> str:
     return f"{SESSION_PREFIX}{vault_id}"
 
 
+def _dri_devices() -> list:
+    """Render node(s) do host pra sessão (env OBSIDIAN_DRI_NODE, lista por vírgula).
+
+    Sem nenhum /dev/dri dentro do container, o wrapper /usr/bin/obsidian da
+    imagem NÃO passa --ozone-platform=wayland e o Obsidian sobe como cliente
+    X11 (Xwayland). Aí o selkies (a imagem migrou de KasmVNC pra Selkies)
+    injeta acentuado via `wtype`, que sobe um keymap temporário no compositor
+    e digita na hora: o cliente X11 não aplica o keymap a tempo e o caractere
+    some (digitando rápido, ~<100ms/tecla, cai TODO acentuado; ASCII nunca
+    cai, porque vai por scancode/uinput). Com um render node o Obsidian vira
+    cliente Wayland nativo e a perda some.
+
+    Passar /dev/dri INTEIRO derruba a sessão em crash-loop (card node da
+    nvidia) — aponte só o render node da GPU integrada.
+    """
+    devs = []
+    for part in os.getenv("OBSIDIAN_DRI_NODE", "").split(","):
+        path = part.strip()
+        if path:
+            devs.append({"PathOnHost": path, "PathInContainer": path,
+                         "CgroupPermissions": "rwm"})
+    return devs
+
+
 def _session_spec(name: str, vault_name: str, host_vault_dir: str,
                   host_config_dir: str, port: int) -> dict:
+    devices = _dri_devices()
     return {
         "Image": os.getenv("OBSIDIAN_IMAGE", "lscr.io/linuxserver/obsidian:latest"),
         # RESTART_APP liga o svc-watchdog da imagem: se o Obsidian sair
@@ -288,6 +313,7 @@ def _session_spec(name: str, vault_name: str, host_vault_dir: str,
             "SecurityOpt": ["seccomp:unconfined"],
             "ShmSize": 1 << 30,
             "RestartPolicy": {"Name": "unless-stopped"},
+            **({"Devices": devices} if devices else {}),
         },
     }
 
