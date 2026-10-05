@@ -8,6 +8,12 @@
 # Ver LOCAL_CHANGES.md (raiz do repo) pro inventário completo de deltas do fork.
 services:
   odysseus:
+    # O docker-compose.yml do upstream passou a apontar pra imagem do GHCR
+    # (ghcr.io/odysseus-dev/odysseus:latest, build só como fallback). Essa
+    # imagem NÃO tem os deltas do fork (painel de Vaults, CSP etc.): fixa o
+    # nome local e força o build a partir deste checkout em todo `up`.
+    image: odysseus-odysseus:latest
+    pull_policy: build
     # Bind-mount dos vaults do Obsidian em /app/vaults (read-write). Sem ':z'
     # (não relabelar SELinux dos vaults reais). O entrypoint só faz chown de
     # /app/data e /app/logs → /app/vaults preserva o dono (uid 1000), editável

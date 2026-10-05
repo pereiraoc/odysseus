@@ -19,7 +19,7 @@ auth_manager` é criado incondicionalmente (`app.py:249-250`) e o middleware de 
 só sobe com `AUTH_ENABLED=true` (`app.py:256`), então `current_user` fica `None`
 (o `if not auth_manager` do upstream nunca dispara). DROPAR este commit se o
 upstream passar a tratar `AUTH_ENABLED=false` aqui (confirmado ainda necessário
-em d8a2059, sync de 2026-07-25).
+em d8a2059, sync de 2026-07-25; segue necessário no sync de 2026-10-05).
 
 ## 2. `docker/pereiraoc.yml` — overlay de deploy local  [arquivo novo, aditivo]
 Não toca nenhum arquivo do upstream. Adiciona ao serviço `odysseus`:
@@ -27,6 +27,12 @@ Não toca nenhum arquivo do upstream. Adiciona ao serviço `odysseus`:
   escreve os vaults.
 - **`LD_LIBRARY_PATH`** das libs CUDA das wheels nvidia em `~/.local` (movido pra cá
   do `docker/gpu.nvidia.yml`, que voltou a ser pristine).
+
+- **Imagem local, nunca a do GHCR**: `image: odysseus-odysseus:latest` +
+  `pull_policy: build`. Desde o sync de 2026-10-05 o `docker-compose.yml` do
+  upstream declara `image: ghcr.io/odysseus-dev/odysseus:latest` (build só como
+  fallback de pull) — sem este override o `up` rodaria a imagem oficial, SEM os
+  deltas deste fork.
 
 Ativar no `.env` (gitignored, NÃO comitado):
 `COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml:docker/pereiraoc.yml`
