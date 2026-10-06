@@ -520,3 +520,22 @@ def test_session_spec_passa_dri_node(monkeypatch):
                             "/sessions/v", 3011)
     assert [d["PathOnHost"] for d in spec["HostConfig"]["Devices"]] == [
         "/dev/dri/renderD129", "/dev/dri/card2"]
+
+
+def test_session_spec_dri_node_estavel_por_pci(monkeypatch):
+    """A numeração renderD12x troca entre boots (2026-10-06: a iGPU virou
+    renderD128 e o renderD129 configurado passou a ser a nvidia → crash-loop
+    do desktop da sessão). O symlink /dev/dri/by-path/pci-…-render é estável:
+    vai como PathOnHost (o daemon resolve no host a cada start do container) e
+    dentro do container vira um nome renderD* — o Mesa só enumera esse padrão."""
+    import routes.vaultfs_routes as vr
+    monkeypatch.setenv("OBSIDIAN_DRI_NODE", "/dev/dri/by-path/pci-0000:00:02.0-render")
+    spec = vr._session_spec("odysseus-obsidian-v", "Minha V", "/data/vaults/Minha V",
+                            "/sessions/v", 3011)
+    assert spec["HostConfig"]["Devices"] == [
+        {"PathOnHost": "/dev/dri/by-path/pci-0000:00:02.0-render",
+         "PathInContainer": "/dev/dri/renderD128",
+         "CgroupPermissions": "rwm"}]
+
+    # sessões criadas com o node antigo precisam ser recriadas no próximo open
+    assert vr.SESSION_SPEC_VERSION == "4"

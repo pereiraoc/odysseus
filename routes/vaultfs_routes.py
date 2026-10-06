@@ -212,7 +212,7 @@ SESSION_BASE_PORT = 3010
 SESSION_MAX_PORT = 3019
 # Bump quando o spec do container mudar: sessões antigas são recriadas
 # no próximo open (todo o estado vive nos binds /config e /vaults).
-SESSION_SPEC_VERSION = "3"
+SESSION_SPEC_VERSION = "4"
 
 
 class _UnixHTTP(http.client.HTTPConnection):
@@ -283,12 +283,20 @@ def _dri_devices() -> list:
 
     Passar /dev/dri INTEIRO derruba a sessão em crash-loop (card node da
     nvidia) — aponte só o render node da GPU integrada.
+
+    A numeração renderD12x NÃO é estável entre boots: prefira o symlink
+    /dev/dri/by-path/pci-<slot>-render. O daemon resolve o PathOnHost no host
+    a cada start; dentro do container o node ganha um nome renderD* (o Mesa
+    só enumera esse padrão).
     """
     devs = []
     for part in os.getenv("OBSIDIAN_DRI_NODE", "").split(","):
         path = part.strip()
         if path:
-            devs.append({"PathOnHost": path, "PathInContainer": path,
+            inside = path
+            if not os.path.basename(path).startswith(("renderD", "card")):
+                inside = f"/dev/dri/renderD{128 + len(devs)}"
+            devs.append({"PathOnHost": path, "PathInContainer": inside,
                          "CgroupPermissions": "rwm"})
     return devs
 

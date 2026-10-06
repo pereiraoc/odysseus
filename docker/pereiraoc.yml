@@ -62,8 +62,10 @@ services:
       # rápido (<~100ms/tecla): acentuado é injetado por `wtype`, que troca o
       # keymap do compositor e digita na hora — o cliente X11 não aplica o
       # keymap a tempo. ASCII nunca cai (vai por scancode/uinput).
-      # Aqui é a iGPU Intel (pci 00:02.0). NÃO passe /dev/dri inteiro: o card
-      # node da nvidia põe a sessão em crash-loop. Confira o seu com
+      # Aqui é a iGPU Intel (pci 00:02.0). NÃO passe /dev/dri inteiro nem o
+      # node da nvidia: a sessão entra em crash-loop. Use o symlink by-path —
+      # a numeração renderD12x troca entre boots (2026-10-06 a iGPU virou
+      # renderD128 e o renderD129 antigo passou a ser a nvidia). Confira com
       # `ls -l /dev/dri/by-path/` — o alvo é o *-render da integrada.
-      - OBSIDIAN_DRI_NODE=/dev/dri/renderD129
+      - OBSIDIAN_DRI_NODE=/dev/dri/by-path/pci-0000:00:02.0-render
       - CSP_EXTRA_FRAME_SRC=http://localhost:3010 http://localhost:3011 http://localhost:3012 http://localhost:3013 http://localhost:3014 http://localhost:3015 http://localhost:3016 http://localhost:3017 http://localhost:3018 http://localhost:3019
