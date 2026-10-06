@@ -10,6 +10,12 @@ Mantidos **segregados** pra facilitar integrar updates do Odysseus depois.
   dry-run (`git worktree add --detach /tmp/ody-dryrun upstream/dev` + cherry-pick dos
   deltas) e só então apontar `pereiraoc` pro resultado. Push com `--force-with-lease`.
   (Conflito esperado nos itens 1 e 4, que são inline; os demais são aditivos.)
+- **Sync de 2026-10-05 — lição:** o conflito append-only do `static/style.css`
+  (upstream e fork anexando no fim) perdeu o `}` que fechava o último `@media`
+  do upstream; o bloco `.vaults-*` inteiro virou regra aninhada e o navegador
+  descartou o CSS do fork em silêncio (modal do Obsidian minúsculo, painéis
+  sem estilo). `tests/test_static_css_balanced.py` pega isso agora — rodar
+  depois de todo sync.
 
 ## 1. `routes/shell_routes.py` — admin com `AUTH_ENABLED=false`  [inline patch]
 `_require_admin` retorna cedo quando `AUTH_ENABLED=false`, espelhando
@@ -118,6 +124,14 @@ passava device nenhum. Fix: env `OBSIDIAN_DRI_NODE` (lista por vírgula) vira
 nativo: medido 0 perda até 10ms/tecla (antes, perda total a 60ms). NÃO passar
 `/dev/dri` inteiro — o card node da nvidia põe a sessão em crash-loop.
 `SESSION_SPEC_VERSION` foi pra "3" (sessões recriadas no próximo open).
+
+**Render node estável (2026-10-06):** depois de um reboot a numeração dos
+render nodes inverteu (iGPU → `renderD128`, nvidia → `renderD129`) e as
+sessões configuradas com `renderD129` entraram em crash-loop do desktop
+(`svc-de` relançando sem parar; Obsidian nunca subia). `OBSIDIAN_DRI_NODE`
+agora aponta o symlink estável `/dev/dri/by-path/pci-0000:00:02.0-render`
+(o daemon resolve no host a cada start); dentro do container o node vira
+`/dev/dri/renderD128+i`. `SESSION_SPEC_VERSION` → "4".
 
 **Tool "Files" (File Browser, em Tools):** o painel custom (Browser|Git) migrou
 pra `#tool-files-btn`, generalizado pra raízes configuráveis
