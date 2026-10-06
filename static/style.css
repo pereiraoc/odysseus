@@ -41398,6 +41398,8 @@ body.settings-sidebar-resize-active {
   .settings-sidebar-toggle {
     display: none;
   }
+}
+
 /* ══ Vaults panel (fork-local; ver LOCAL_CHANGES.md) ══════════════════ */
 .vaults-content { width: min(880px, 94vw); height: 85vh; display: flex; flex-direction: column; padding: 0; }
 .vaults-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: move; border-bottom: 1px solid var(--border, rgba(128,128,128,0.25)); }
