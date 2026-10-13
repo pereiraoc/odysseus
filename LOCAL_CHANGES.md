@@ -45,8 +45,8 @@ Ativar no `.env` (gitignored, NÃO comitado):
 
 ## 3. `data/settings.json` — `tool_path_extra_roots`  [runtime, gitignored]
 `"tool_path_extra_roots"` lista as vaults acessíveis às file-tools do agente **e ao
-painel de Vaults** (item 5): `OP Vault`, `pleitost`, `pleitost-app` e
-`caelestia-arch-setup` (os dois últimos montados pelo overlay do item 2, de
+painel de Vaults** (item 5): `OP Vault`, `pleitost`, `pleitost-app`,
+`caelestia-arch-setup` e `POA 1987` (adicionada em 2026-10-13) (os dois últimos montados pelo overlay do item 2, de
 `/data/projects/*`). Setável pelo chat (`manage_settings`) ou editando o arquivo.
 
 ## 4. `Dockerfile` — pin Python em 3.12  [inline patch]
