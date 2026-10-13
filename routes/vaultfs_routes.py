@@ -212,7 +212,7 @@ SESSION_BASE_PORT = 3010
 SESSION_MAX_PORT = 3019
 # Bump quando o spec do container mudar: sessões antigas são recriadas
 # no próximo open (todo o estado vive nos binds /config e /vaults).
-SESSION_SPEC_VERSION = "4"
+SESSION_SPEC_VERSION = "5"
 
 
 class _UnixHTTP(http.client.HTTPConnection):
@@ -421,6 +421,40 @@ def _seed_session_config(vault_id: str, vault_name: str):
         _json.dump(data, f, indent=1)
 
 
+# Autostart do labwc da sessão = o default da imagem (/defaults/autostart_
+# wayland) com flags no Obsidian. Com o render node (_dri_devices) o Chromium
+# rasteriza na GPU (iris/Mesa) e deixa tiles sem pintar — o DOM do explorador
+# tinha todas as notas de uma pasta, a tela só as primeiras. Rasterizar na
+# CPU resolve e mantém o Wayland nativo (o que importa pros acentos).
+SESSION_AUTOSTART = (
+    'if [ "$(whoami)" != "abc" ]; then\n'
+    "  sudo lsiown -R $(id -u):$(id -u) \\\n"
+    "    /opt/obsidian\n"
+    "fi\n"
+    "obsidian --disable-gpu-rasterization\n"
+)
+
+
+def _seed_session_autostart(vault_id: str):
+    """Grava o autostart da sessão se diferente. A imagem só copia o default
+    quando o arquivo falta e, com RESTART_APP, o deixa read-only → troca
+    atômica (rename no diretório) em vez de reescrever o arquivo. Só vale num
+    start novo do Obsidian."""
+    path = os.path.join(_sessions_dir(), vault_id, ".config", "labwc", "autostart")
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == SESSION_AUTOSTART:
+                return
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(SESSION_AUTOSTART)
+    os.chmod(tmp, 0o555)
+    os.replace(tmp, path)
+
+
 # ── Política anti cross-sync ──
 # O Obsidian Sync conecta a vault local a QUALQUER remota da conta; conectar
 # na remota errada mescla uma vault na outra. Enforcement determinístico:
@@ -563,6 +597,7 @@ def _ensure_session(vault_id: str) -> dict:
     if st == 404:
         port = keep_port or _next_free_port()
         _seed_session_config(vault_id, v["name"])
+        _seed_session_autostart(vault_id)
         host_cfg = _host_path(os.path.join(_sessions_dir(), vault_id))
         spec = _session_spec(name, v["name"], host_vault, host_cfg, port)
         s2, out = _docker_api("POST", f"/containers/create?name={name}", spec)
@@ -575,6 +610,7 @@ def _ensure_session(vault_id: str) -> dict:
     if not info.get("State", {}).get("Running"):
         # frame nativo só pega em start novo — reseeda antes de subir
         _seed_session_config(vault_id, v["name"])
+        _seed_session_autostart(vault_id)
         s3, out = _docker_api("POST", f"/containers/{name}/start")
         if s3 not in (204, 304):
             raise HTTPException(502, f"docker start: HTTP {s3} {out[:200]}")

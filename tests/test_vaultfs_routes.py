@@ -431,6 +431,35 @@ def test_seed_session_config_forca_frame_nativo(tmp_path, monkeypatch):
     assert data["vaults"]["abc"]["open"] is True
 
 
+def test_seed_session_autostart_desliga_gpu_rasterization(tmp_path, monkeypatch):
+    """Com render node a sessão rasteriza na GPU (iris/Mesa) e o Chromium
+    deixa tiles sem pintar: o DOM do explorador tinha todas as notas de
+    Rascunhos, mas a tela só mostrava as primeiras. --disable-gpu-rasterization
+    resolve sem perder o Wayland nativo (fix dos acentos). O autostart vive no
+    bind /config e a imagem o deixa read-only (RESTART_APP) → troca atômica."""
+    import os as _os
+    import routes.vaultfs_routes as vr
+    monkeypatch.setenv("OBSIDIAN_SESSIONS_DIR", str(tmp_path))
+    auto = tmp_path / "v" / ".config" / "labwc" / "autostart"
+    auto.parent.mkdir(parents=True)
+    auto.write_text('if [ "$(whoami)" != "abc" ]; then\n  true\nfi\nobsidian\n')
+    auto.chmod(0o550)
+    vr._seed_session_autostart("v")
+    text = auto.read_text()
+    assert text.splitlines()[-1] == "obsidian --disable-gpu-rasterization"
+    assert "lsiown" in text  # preâmbulo da imagem preservado
+    assert _os.access(auto, _os.X_OK)
+    # idempotente: nada muda se já está certo
+    before = auto.stat().st_mtime_ns
+    vr._seed_session_autostart("v")
+    assert auto.stat().st_mtime_ns == before
+    # sessão nova (sem autostart ainda): cria
+    vr._seed_session_autostart("nova")
+    assert (tmp_path / "nova" / ".config" / "labwc" / "autostart").read_text() == text
+    # sessões antigas são recriadas no próximo open
+    assert vr.SESSION_SPEC_VERSION == "5"
+
+
 def test_obsidian_open_recria_container_de_spec_antigo(client, vault, tmp_path, monkeypatch):
     """Container criado antes do fix não tem RESTART_APP: recria na mesma porta."""
     import routes.vaultfs_routes as vr
@@ -537,5 +566,3 @@ def test_session_spec_dri_node_estavel_por_pci(monkeypatch):
          "PathInContainer": "/dev/dri/renderD128",
          "CgroupPermissions": "rwm"}]
 
-    # sessões criadas com o node antigo precisam ser recriadas no próximo open
-    assert vr.SESSION_SPEC_VERSION == "4"

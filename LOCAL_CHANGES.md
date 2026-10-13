@@ -133,6 +133,16 @@ agora aponta o symlink estável `/dev/dri/by-path/pci-0000:00:02.0-render`
 (o daemon resolve no host a cada start); dentro do container o node vira
 `/dev/dri/renderD128+i`. `SESSION_SPEC_VERSION` → "4".
 
+**Itens sumindo no explorador do Obsidian (2026-10-13):** com o render node
+o Chromium do Obsidian rasteriza na GPU (iris/Mesa 25.0.7, Iris Xe) e deixa
+tiles sem pintar — ex.: pasta Rascunhos mostrava 1–2 das 11 notas. Provado
+via CDP: o DOM do explorador tinha os 12 itens com altura/posição corretas;
+o print do próprio compositor (grim) não — logo não era stream nem lógica do
+Obsidian. Fix: `_seed_session_autostart` grava o autostart do labwc da sessão
+com `obsidian --disable-gpu-rasterization` (composição GPU e Wayland nativo
+mantidos; acentos seguem ok). A imagem deixa o autostart read-only com
+RESTART_APP → troca atômica. `SESSION_SPEC_VERSION` → "5".
+
 **Tool "Files" (File Browser, em Tools):** o painel custom (Browser|Git) migrou
 pra `#tool-files-btn`, generalizado pra raízes configuráveis
 (`file_browser_roots` ∪ vaults; `PUT /api/vaultfs/roots` pela UI). Árvore lazy
