@@ -212,7 +212,7 @@ SESSION_BASE_PORT = 3010
 SESSION_MAX_PORT = 3019
 # Bump quando o spec do container mudar: sessões antigas são recriadas
 # no próximo open (todo o estado vive nos binds /config e /vaults).
-SESSION_SPEC_VERSION = "5"
+SESSION_SPEC_VERSION = "6"
 
 
 class _UnixHTTP(http.client.HTTPConnection):
@@ -426,12 +426,16 @@ def _seed_session_config(vault_id: str, vault_name: str):
 # rasteriza na GPU (iris/Mesa) e deixa tiles sem pintar — o DOM do explorador
 # tinha todas as notas de uma pasta, a tela só as primeiras. Rasterizar na
 # CPU resolve e mantém o Wayland nativo (o que importa pros acentos).
+# --remote-debugging-port: CDP pro vigia do explorador (_heal_explorer). O
+# Chromium escuta só em 127.0.0.1 DENTRO do container (porta não publicada);
+# o backend chega lá por `docker exec`.
+SESSION_CDP_PORT = 9222
 SESSION_AUTOSTART = (
     'if [ "$(whoami)" != "abc" ]; then\n'
     "  sudo lsiown -R $(id -u):$(id -u) \\\n"
     "    /opt/obsidian\n"
     "fi\n"
-    "obsidian --disable-gpu-rasterization\n"
+    f"obsidian --disable-gpu-rasterization --remote-debugging-port={SESSION_CDP_PORT}\n"
 )
 
 
@@ -453,6 +457,115 @@ def _seed_session_autostart(vault_id: str):
         f.write(SESSION_AUTOSTART)
     os.chmod(tmp, 0o555)
     os.replace(tmp, path)
+
+
+def _session_exec(name: str, cmd: list) -> tuple:
+    """`docker exec` sem TTY de entrada; devolve (exit_code, saída)."""
+    import json as _json
+    st, out = _docker_api("POST", f"/containers/{name}/exec",
+                          {"Cmd": cmd, "AttachStdout": True, "AttachStderr": True, "Tty": True})
+    if st != 201:
+        raise HTTPException(502, f"docker exec: HTTP {st} {out[:200]}")
+    exec_id = _json.loads(out)["Id"]
+    st, out = _docker_api("POST", f"/exec/{exec_id}/start", {"Detach": False, "Tty": True})
+    if st != 200:
+        raise HTTPException(502, f"docker exec start: HTTP {st} {out[:200]}")
+    _st, info = _docker_api("GET", f"/exec/{exec_id}/json")
+    try:
+        code = _json.loads(info).get("ExitCode")
+    except ValueError:
+        code = None
+    return code, out
+
+
+# ── Vigia do explorador do Obsidian ──
+# A lista virtual do explorador (infinityScroll) às vezes trava numa pasta
+# aberta: reserva a altura dos filhos (a linha-guia desce até o fim) e não
+# desenha nenhum. Visto em 2026-10-14 nas sessões que subiram no boot do PC;
+# recriar o processo de GPU NÃO resolvia, reiniciar o Obsidian sim — o estado
+# errado é do renderer. Gatilho exato não reproduzido; o vigia detecta o
+# sintoma, força remedição (invalidateAll) e, se persistir, recarrega o app.
+HEAL_EXPLORER_JS = r"""
+(async (hard) => {
+  const leaf = app.workspace.getLeavesOfType("file-explorer")[0];
+  const fe = leaf && leaf.view;
+  const is = fe && fe.tree && fe.tree.infinityScroll;
+  if (!is || !is.scrollEl || is.scrollEl.offsetParent === null) return { skipped: "explorer-hidden" };
+  const stuck = () => {
+    const vp = is.scrollEl.getBoundingClientRect();
+    const out = [];
+    if (vp.height <= 0) return out;
+    for (const [path, it] of Object.entries(fe.fileItems)) {
+      if (!it.file || !it.file.children || it.collapsed || !it.el || !it.el.isConnected) continue;
+      const kids = it.childrenEl;
+      if (!kids || !kids.isConnected) continue;
+      const r = kids.getBoundingClientRect();
+      if (r.height < 30 || r.bottom <= vp.top || r.top >= vp.bottom) continue;
+      if (!kids.querySelector(":scope > .tree-item")) out.push(path);
+    }
+    return out;
+  };
+  const before = stuck();
+  if (!before.length) return { stuck: [] };
+  is.invalidateAll();
+  for (let i = 0; i < 10; i++) { is.compute(true); if (is.rootEl.info.computed) break; }
+  is.updateVirtualDisplay();
+  await new Promise((r) => setTimeout(r, 300));
+  const after = stuck();
+  let reloaded = false;
+  if (after.length && hard) {
+    setTimeout(() => app.commands.executeCommandById("app:reload"), 50);
+    reloaded = true;
+  }
+  return { stuck: before, after, reloaded };
+})
+"""
+
+# Cliente CDP mínimo rodado no Python da imagem (/lsiopy tem websockets).
+_CDP_EVAL_PY = r"""
+import asyncio, json, sys, urllib.request
+import websockets
+async def main():
+    port, expr = sys.argv[1], sys.argv[2]
+    try:
+        pages = [p for p in json.load(urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/json/list", timeout=3)) if p.get("type") == "page"]
+    except OSError as e:
+        print(json.dumps({"error": f"cdp: {e}"})); return
+    if not pages:
+        print(json.dumps({"error": "cdp: sem página"})); return
+    async with websockets.connect(pages[0]["webSocketDebuggerUrl"], max_size=2**24, open_timeout=5) as ws:
+        await ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {
+            "expression": expr, "awaitPromise": True, "returnByValue": True}}))
+        while True:
+            r = json.loads(await asyncio.wait_for(ws.recv(), 10))
+            if r.get("id") == 1:
+                break
+    res = r.get("result", {})
+    if "exceptionDetails" in res:
+        print(json.dumps({"error": res["exceptionDetails"].get("text", "exception")})); return
+    print(json.dumps(res.get("result", {}).get("value")))
+asyncio.run(main())
+"""
+
+
+def _heal_explorer(vault_id: str, hard: bool) -> dict:
+    import json as _json
+    name = _session_name(vault_id)
+    expr = f"{HEAL_EXPLORER_JS}({'true' if hard else 'false'})"
+    _code, out = _session_exec(name, ["/lsiopy/bin/python3", "-c", _CDP_EVAL_PY,
+                                      str(SESSION_CDP_PORT), expr])
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    try:
+        res = _json.loads(lines[-1]) if lines else None
+    except ValueError:
+        res = None
+    if not isinstance(res, dict):
+        return {"ok": False, "error": (out.strip()[-300:] or "sem saída")}
+    if res.get("stuck"):
+        logger.warning("vaultfs: explorador travado na sessão %s: %s (depois: %s, recarregou: %s)",
+                       vault_id, res["stuck"][:5], res.get("after"), res.get("reloaded"))
+    return {"ok": "error" not in res, **res}
 
 
 # ── Política anti cross-sync ──
@@ -679,6 +792,11 @@ class SyncAllowBody(BaseModel):
 
 class ObsidianOpenBody(BaseModel):
     vault: str
+
+
+class ObsidianHealBody(BaseModel):
+    vault: str
+    hard: bool = False
 
 
 class RootsBody(BaseModel):
@@ -1039,6 +1157,14 @@ def setup_vaultfs_routes() -> APIRouter:
     @router.post("/obsidian-open")
     def obsidian_open(body: ObsidianOpenBody, request: Request, user: str = Depends(require_user)):
         return _ensure_session(body.vault)
+
+    @router.post("/obsidian-heal")
+    def obsidian_heal(body: ObsidianHealBody, request: Request, user: str = Depends(require_user)):
+        v = _vault_entry(body.vault)
+        st, info = _session_inspect(v["id"])
+        if st != 200 or not (info or {}).get("State", {}).get("Running"):
+            return {"ok": False, "skipped": "session-not-running"}
+        return _heal_explorer(v["id"], body.hard)
 
     @router.post("/obsidian-sync-allow")
     def sync_allow(body: SyncAllowBody, request: Request, user: str = Depends(require_user)):
