@@ -1427,9 +1427,38 @@ async function openVaultObsidian(v) {
     });
     ensureObsidianModal(v, r.ui_url, r.started);
     refreshSessions();
+    setTimeout(() => healExplorer(v, true), r.started ? 30000 : 2000);
   } catch (e) {
     showError(`Obsidian (${v.name}): ${e.message}`);
   }
+}
+
+// Vigia do explorador: a lista virtual do Obsidian às vezes trava numa pasta
+// aberta (espaço reservado, nenhum item desenhado). O backend detecta via
+// CDP, força remedição e, com `hard`, recarrega o app se não resolver.
+async function healExplorer(v, hard) {
+  try {
+    const r = await api('/obsidian-heal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vault: v.id, hard: !!hard }),
+    });
+    if (r.reloaded) showToast(`${v.name}: explorador do Obsidian travado — recarregando o app…`);
+    return r;
+  } catch (_) {
+    return null;
+  }
+}
+
+const HEAL_INTERVAL_MS = 30000;
+
+function watchExplorer(v, m) {
+  let strikes = 0;
+  setInterval(async () => {
+    if (document.hidden || m.classList.contains('hidden') || m.classList.contains('modal-minimized')) return;
+    // soft primeiro; só recarrega o app se o travamento persistir no ciclo seguinte
+    const r = await healExplorer(v, strikes > 0);
+    strikes = r && r.after && r.after.length && !r.reloaded ? strikes + 1 : 0;
+  }, HEAL_INTERVAL_MS);
 }
 
 function ensureObsidianModal(v, url, started) {
@@ -1458,8 +1487,10 @@ function ensureObsidianModal(v, url, started) {
       const src = fr.src;
       fr.src = 'about:blank';
       setTimeout(() => { fr.src = src; }, 100);
+      setTimeout(() => healExplorer(v, true), 2000);
     });
     m.querySelector('.vaults-sync-btn').addEventListener('click', () => toggleSession(v.id));
+    watchExplorer(v, m);
     makeWindowDraggable(m, {
       content: m.querySelector('.modal-content'),
       header: m.querySelector('.modal-header'),

@@ -143,6 +143,22 @@ com `obsidian --disable-gpu-rasterization` (composição GPU e Wayland nativo
 mantidos; acentos seguem ok). A imagem deixa o autostart read-only com
 RESTART_APP → troca atômica. `SESSION_SPEC_VERSION` → "5".
 
+**Vigia do explorador (2026-10-14):** depois do reboot do PC o sintoma
+voltou (POA: `Recursos e Mídia` aberta, linha-guia até o fim, nenhum item).
+Recriar só o processo de GPU NÃO resolveu e reiniciar o Obsidian sim → o
+estado errado é da lista virtual do explorador (infinityScroll, no
+renderer), não da rasterização. Gatilho exato não reproduzido (nem com
+subida sem cliente, CPU limitada, sidebar recolhida, mudanças de arquivo).
+Fix: a sessão sobe com `--remote-debugging-port=9222` (só 127.0.0.1 dentro
+do container); `POST /api/vaultfs/obsidian-heal {vault, hard}` roda via
+`docker exec` um cliente CDP no Python da imagem que detecta pasta aberta,
+visível, com altura reservada e zero itens; força `invalidateAll()` +
+`compute(true)` e, com `hard` e ainda travada, `app:reload`. O frontend
+(`healExplorer`/`watchExplorer` em vaults.js) chama ao abrir a vault (hard),
+a cada 30s com a janela visível (soft; hard se persistir no ciclo seguinte) e
+no botão ↻. Ocorrências vão pro log (`explorador travado na sessão …`).
+`SESSION_SPEC_VERSION` → "6".
+
 **Tool "Files" (File Browser, em Tools):** o painel custom (Browser|Git) migrou
 pra `#tool-files-btn`, generalizado pra raízes configuráveis
 (`file_browser_roots` ∪ vaults; `PUT /api/vaultfs/roots` pela UI). Árvore lazy

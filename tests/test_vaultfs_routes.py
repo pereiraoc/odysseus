@@ -446,7 +446,7 @@ def test_seed_session_autostart_desliga_gpu_rasterization(tmp_path, monkeypatch)
     auto.chmod(0o550)
     vr._seed_session_autostart("v")
     text = auto.read_text()
-    assert text.splitlines()[-1] == "obsidian --disable-gpu-rasterization"
+    assert text.splitlines()[-1] == "obsidian --disable-gpu-rasterization --remote-debugging-port=9222"
     assert "lsiown" in text  # preâmbulo da imagem preservado
     assert _os.access(auto, _os.X_OK)
     # idempotente: nada muda se já está certo
@@ -457,7 +457,52 @@ def test_seed_session_autostart_desliga_gpu_rasterization(tmp_path, monkeypatch)
     vr._seed_session_autostart("nova")
     assert (tmp_path / "nova" / ".config" / "labwc" / "autostart").read_text() == text
     # sessões antigas são recriadas no próximo open
-    assert vr.SESSION_SPEC_VERSION == "5"
+    assert vr.SESSION_SPEC_VERSION == "6"
+
+
+def test_heal_explorer_roda_cdp_na_sessao_e_reporta(monkeypatch):
+    """Vigia do explorador: executa o cliente CDP no Python da imagem via
+    docker exec, com o JS de detecção + a flag hard, e devolve o JSON."""
+    import routes.vaultfs_routes as vr
+    calls = []
+
+    def fake_exec(name, cmd):
+        calls.append((name, cmd))
+        return 0, 'lixo antes\r\n{"stuck": ["Recursos e Mídia"], "after": [], "reloaded": false}\r\n'
+    monkeypatch.setattr(vr, "_session_exec", fake_exec)
+    r = vr._heal_explorer("poa-1987", hard=True)
+    assert r == {"ok": True, "stuck": ["Recursos e Mídia"], "after": [], "reloaded": False}
+    name, cmd = calls[0]
+    assert name == "odysseus-obsidian-poa-1987"
+    assert cmd[:2] == ["/lsiopy/bin/python3", "-c"]
+    assert cmd[3] == "9222"
+    assert cmd[4].rstrip().endswith("(true)")
+    assert "invalidateAll" in cmd[4] and "app:reload" in cmd[4]
+    vr._heal_explorer("poa-1987", hard=False)
+    assert calls[1][1][4].rstrip().endswith("(false)")
+
+
+def test_heal_explorer_saida_invalida_e_erro_cdp(monkeypatch):
+    import routes.vaultfs_routes as vr
+    monkeypatch.setattr(vr, "_session_exec", lambda n, c: (1, "Traceback: boom\n"))
+    r = vr._heal_explorer("v", hard=False)
+    assert r["ok"] is False and "boom" in r["error"]
+    monkeypatch.setattr(vr, "_session_exec", lambda n, c: (0, '{"error": "cdp: sem página"}\n'))
+    assert vr._heal_explorer("v", hard=False) == {"ok": False, "error": "cdp: sem página"}
+
+
+def test_obsidian_heal_endpoint(client, monkeypatch):
+    import routes.vaultfs_routes as vr
+    monkeypatch.setattr(vr, "_session_inspect", lambda vid: (404, None))
+    r = client.post("/api/vaultfs/obsidian-heal", json={"vault": "test-vault"})
+    assert r.status_code == 200 and r.json() == {"ok": False, "skipped": "session-not-running"}
+    monkeypatch.setattr(vr, "_session_inspect", lambda vid: (200, {"State": {"Running": True}}))
+    seen = {}
+    monkeypatch.setattr(vr, "_heal_explorer",
+                        lambda vid, hard: seen.update(vid=vid, hard=hard) or {"ok": True, "stuck": []})
+    r = client.post("/api/vaultfs/obsidian-heal", json={"vault": "test-vault", "hard": True})
+    assert r.json() == {"ok": True, "stuck": []}
+    assert seen == {"vid": "test-vault", "hard": True}
 
 
 def test_obsidian_open_recria_container_de_spec_antigo(client, vault, tmp_path, monkeypatch):
