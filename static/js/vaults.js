@@ -5,11 +5,11 @@
 // é o File Browser: raízes configuráveis, árvore lazy, favoritos, preview
 // universal (md c/ Dataview, código, imagem, PDF, mídia) e git estilo VS Code.
 import { applyEdgeDock } from './modalSnap.js';
-import { snapModalToZone } from './tileManager.js';
+import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 import { nextToolWindowZ } from './toolWindowZOrder.js';
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js';
+import { showToast, showError, styledConfirm, styledPrompt, esc } from './ui.js?v=20260916largetoolscroll1';
 import { mdToHtml, svgifyEmoji } from './markdown.js';
 import { renderCommitGraph } from './vaultsGraph.js';
 import { registerMenuDismiss } from './escMenuStack.js';
