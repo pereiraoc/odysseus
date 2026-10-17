@@ -10,6 +10,12 @@ Mantidos **segregados** pra facilitar integrar updates do Odysseus depois.
   dry-run (`git worktree add --detach /tmp/ody-dryrun upstream/dev` + cherry-pick dos
   deltas) e só então apontar `pereiraoc` pro resultado. Push com `--force-with-lease`.
   (Conflito esperado nos itens 1 e 4, que são inline; os demais são aditivos.)
+- **Sync de 2026-10-17 — atenção no deploy:** (a) o compose do upstream mudou a porta
+  padrão do host de 7000 para **7011** — manter `APP_PORT=7000` no `.env` (o launcher
+  Electron abre localhost:7000); (b) o volume do ChromaDB passou de `/chroma/chroma` para
+  `/data` (`docs/chromadb-volume-migration.md`): o índice vivia na camada do container e
+  some quando ele é recriado — copiar antes; (c) migrações SQLite aditivas (ADD COLUMN)
+  rodam no 1º boot — backup do `data/app.db` antes.
 - **Sync de 2026-10-05 — lição:** o conflito append-only do `static/style.css`
   (upstream e fork anexando no fim) perdeu o `}` que fechava o último `@media`
   do upstream; o bloco `.vaults-*` inteiro virou regra aninhada e o navegador
@@ -17,15 +23,19 @@ Mantidos **segregados** pra facilitar integrar updates do Odysseus depois.
   sem estilo). `tests/test_static_css_balanced.py` pega isso agora — rodar
   depois de todo sync.
 
-## 1. `routes/shell_routes.py` — admin com `AUTH_ENABLED=false`  [inline patch]
-`_require_admin` retorna cedo quando `AUTH_ENABLED=false`, espelhando
-`core/middleware.require_admin`. Sem isso, os endpoints admin do Cookbook
-(packages/install/serve) dão **403** em modo single-user/no-auth: `app.state.
-auth_manager` é criado incondicionalmente (`app.py:249-250`) e o middleware de auth
-só sobe com `AUTH_ENABLED=true` (`app.py:256`), então `current_user` fica `None`
-(o `if not auth_manager` do upstream nunca dispara). DROPAR este commit se o
-upstream passar a tratar `AUTH_ENABLED=false` aqui (confirmado ainda necessário
-em d8a2059, sync de 2026-07-25; segue necessário no sync de 2026-10-05).
+## 1. `routes/shell_routes.py` — admin com `AUTH_ENABLED=false` atrás do Docker  [inline patch]
+Desde o sync de 2026-10-17 o upstream trata `AUTH_ENABLED=false` em `_require_admin`, mas
+só aceita cliente **loopback direto** (`src/auth_helpers.is_direct_loopback_request`: IP
+127.0.0.1/::1, sem headers de proxy, sem fetch cross-site, Origin igual). Atrás do Docker o
+navegador chega pelo docker-proxy e o container vê o **gateway da bridge** (172.18.0.1)
+→ todos os endpoints admin do Cookbook (packages/install/serve/download) dariam **403**.
+O patch acrescenta `_docker_proxy_operator_request`: aceita também o gateway da rede do
+container (lido de `/proc/net/route`, só com `/.dockerenv`) e aplica **o mesmo contrato de
+transporte** do upstream. Outros containers da rede, sites de fora (CSRF) e o header de tool
+interna seguem barrados — testes em `tests/test_local_docker_proxy_admin.py`.
+(Até o sync de 2026-10-05 o patch era um `return` cego com auth off, que deixava um site
+qualquer aberto no navegador disparar endpoints admin em localhost:7000 por CSRF.)
+DROPAR se o upstream passar a aceitar o gateway do Docker.
 
 ## 2. `docker/pereiraoc.yml` — overlay de deploy local  [arquivo novo, aditivo]
 Não toca nenhum arquivo do upstream. Adiciona ao serviço `odysseus`:
@@ -77,7 +87,12 @@ branches, push/pull/fetch, `git init`, lista + grafo de commits). Spec/plano em
 - `static/index.html`: seção `#vaults-section` no sidebar (após Tools) +
   `<script type="module" src="/static/js/vaults.js">` no bloco de módulos.
 - `app.py`: registro `setup_vaultfs_routes()` logo após o `vault_routes` (~L855).
-- `static/style.css`: bloco `.vaults-*` append-only no final.
+- CSS do fork em `static/css/zz-fork-vaults.css` (arquivo próprio, último na cascata),
+  registrado em `static/index.html` e no precache do `static/sw.js` com o mesmo `?v=` dos
+  outros (os testes de manifesto exigem). Até 2026-10-05 era append no fim do
+  `static/style.css`, que o upstream quebrou em fragmentos `static/css/NN-*.css`.
+- `static/js/vaults.js` importa `ui.js` e `tileManager.js` com o MESMO `?v=` do resto do app
+  (URL diferente = segunda instância do módulo; `test_frontend_module_version_parity`).
 - `core/middleware.py`: `frame-src 'self'` ganha extensão opcional via env
   `CSP_EXTRA_FRAME_SRC` (vazio = upstream intacto) — permite iframar o
   desktop remoto do Obsidian (localhost:3010) no modal embutido do painel.
