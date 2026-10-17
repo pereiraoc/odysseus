@@ -56,6 +56,45 @@ from core.platform_compat import (
 )
 
 
+def _docker_gateway() -> str | None:
+    """Default-gateway IPv4 of this container's network, or None off Docker.
+
+    [local patch — ver LOCAL_CHANGES.md] With the app in Docker, a browser on
+    the host reaches it through docker-proxy, so the container sees the bridge
+    gateway (e.g. 172.18.0.1) as the client instead of 127.0.0.1.
+    """
+    if not os.path.exists("/.dockerenv"):
+        return None
+    try:
+        with open("/proc/net/route") as fh:
+            for line in fh.readlines()[1:]:
+                fields = line.split()
+                if len(fields) > 2 and fields[1] == "00000000":
+                    raw = int(fields[2], 16)
+                    return ".".join(str((raw >> (8 * i)) & 0xFF) for i in range(4))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _docker_proxy_operator_request(request: Request) -> bool:
+    """[local patch] Same operator-transport contract as
+    is_direct_loopback_request (no forwarding headers, no cross-site fetch,
+    same Origin), but also accepting the Docker bridge gateway as the client.
+    Without it every admin Cookbook endpoint (packages, install, serve, download)
+    403s in auth-disabled mode behind Docker. Host ports stay on 127.0.0.1.
+    """
+    from types import SimpleNamespace
+    from src.auth_helpers import is_direct_loopback_request
+    client = getattr(request, "client", None)
+    gateway = _docker_gateway()
+    if not client or not gateway or client.host != gateway:
+        return False
+    shim = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"),
+                           headers=request.headers, base_url=request.base_url)
+    return is_direct_loopback_request(shim)
+
+
 def _require_admin(request: Request):
     """Reject non-admin callers. Shell exec is admin-only — never expose to
     regular users; that's RCE-after-signup."""
@@ -67,13 +106,10 @@ def _require_admin(request: Request):
     if is_internal_tool_request(request) or request.headers.get(INTERNAL_TOOL_HEADER):
         raise HTTPException(403, "Internal shell execution requires a dedicated resource-bound producer")
     if _auth_disabled():
-        # [local patch] Behind Docker the browser arrives via docker-proxy
-        # (client = bridge gateway, not 127.0.0.1), so upstream's
-        # is_direct_loopback_request() never matches and every admin Cookbook
-        # endpoint (packages, install, serve) 403s in auth-disabled mode.
-        # Honor AUTH_ENABLED=false like core/middleware.require_admin does.
-        # Ports stay bound to 127.0.0.1 on the host (APP_BIND).
-        return
+        from src.auth_helpers import is_direct_loopback_request
+        if is_direct_loopback_request(request) or _docker_proxy_operator_request(request):
+            return
+        raise HTTPException(403, "Anonymous native process control has no resource authority")
     auth_manager = getattr(request.app.state, "auth_manager", None)
     if not auth_manager:
         raise HTTPException(403, "Native process control requires authenticated administration")
