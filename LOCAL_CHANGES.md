@@ -200,7 +200,9 @@ em `/data/ai-usage/ai-usage.sqlite`. O painel só lê (`mode=ro`).
 
 - Abas: Visão geral (KPIs, barras empilhadas por dia/semana/mês, ranking,
   hora do dia, por ferramenta), Modelos, Sessões (busca + detalhe por dia e
-  modelo + ferramentas usadas), Calendário (heatmap), Ferramentas, Limites Codex.
+  modelo + ferramentas usadas), Calendário (heatmap), Ferramentas, Limites Codex,
+  Chats web (visitas e conversas por site, do histórico do navegador) e Código IA
+  (blocos do Cursor por modelo, linhas IA × humano por commit).
 - Filtros: período, agrupar por categoria/modelo/ferramenta/máquina, métrica,
   incluir estimados (Cursor e parte do Copilot não gravam tokens).
 - Gráficos em SVG próprio (o CSP não libera CDN).

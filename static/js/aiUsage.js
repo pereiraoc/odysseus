@@ -376,8 +376,79 @@ async function renderLimits(pane) {
   lineChart(pane.querySelector('.aiu-lim'), rows);
 }
 
+function seriesFrom(rows, keyField, valField) {
+  const buckets = [...new Set(rows.map(r => r.day))].sort();
+  const keys = [...new Set(rows.map(r => r[keyField]))];
+  const idx = new Map(buckets.map((b, i) => [b, i]));
+  const tot = new Map(keys.map(k => [k, 0]));
+  rows.forEach(r => tot.set(r[keyField], tot.get(r[keyField]) + (r[valField] || 0)));
+  keys.sort((a, b) => tot.get(b) - tot.get(a));
+  return { bucket: 'day', buckets, series: keys.map(k => {
+    const v = new Array(buckets.length).fill(0);
+    rows.forEach(r => { if (r[keyField] === k) v[idx.get(r.day)] += r[valField] || 0; });
+    return { key: k, values: v };
+  }) };
+}
+function rangeQs() {
+  const r = range(), p = new URLSearchParams();
+  if (r.from) p.set('from', r.from);
+  if (r.to) p.set('to', r.to);
+  return p.toString();
+}
+
+async function renderWeb(pane) {
+  const d = await (await fetch(`${API}/web?${rangeQs()}`, { credentials: 'same-origin' })).json();
+  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">Chats de IA no navegador · visitas por dia <span class="aiu-hint">do histórico do Firefox/Chrome: sem tokens (os sites não expõem); só o período filtra</span></div>
+      <div class="aiu-chart"></div><div class="aiu-legend"></div></div>
+    <div class="aiu-grid2">
+      <div class="aiu-card"><div class="aiu-card-h">Conversas mais visitadas</div>
+        <table class="aiu-table"><thead><tr><th>Conversa</th><th>Site</th><th class="num">Visitas</th><th>Período</th></tr></thead><tbody></tbody></table></div>
+      <div class="aiu-card"><div class="aiu-card-h">Por site</div><div class="aiu-sites"></div></div>
+    </div>`;
+  const prev = 'calls';
+  const fmtVis = v => fmt(v, prev);
+  const series = seriesFrom(d.days, 'site', 'visits');
+  const saved = st.metric; st.metric = 'calls';
+  stackedBars(pane.querySelector('.aiu-chart'), series);
+  st.metric = saved;
+  pane.querySelector('.aiu-legend').innerHTML = series.series.map(s => `<span><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}</span>`).join('');
+  hbars(pane.querySelector('.aiu-sites'), d.sites.map(x => ({ ...x, key: x.site, value: x.visits })), {
+    sub: x => `${x.conversations} conversas · ${x.days} dias · ${esc(shortDay(x.first_day))} → ${esc(shortDay(x.last_day))}`,
+  });
+  const tb = pane.querySelector('tbody');
+  tb.innerHTML = d.conversations.map(c => `<tr><td class="aiu-title" title="${esc(c.title || '')}">${esc(c.title || c.conversation)}</td><td>${esc(c.site)}</td><td class="num">${fmtVis(c.visits)}</td><td class="aiu-nowrap">${esc(shortDay(c.first_day))}${c.last_day !== c.first_day ? ' → ' + esc(shortDay(c.last_day)) : ''}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="aiu-empty">Nenhuma conversa no período.</td></tr>';
+}
+
+async function renderCode(pane) {
+  const d = await (await fetch(`${API}/ai-code?${rangeQs()}`, { credentials: 'same-origin' })).json();
+  const tot = d.commits.reduce((a, c) => ({ add: a.add + (c.lines_added || 0), ai: a.ai + (c.ai_added || 0), hu: a.hu + (c.human_added || 0) }), { add: 0, ai: 0, hu: 0 });
+  pane.innerHTML = `<div class="aiu-kpis">
+      <div class="aiu-kpi"><div class="aiu-kpi-v">${fmt(d.models.reduce((a, m) => a + m.blocks, 0), 'calls')}</div><div class="aiu-kpi-l">blocos de código gerados</div></div>
+      <div class="aiu-kpi"><div class="aiu-kpi-v">${d.commits.length}</div><div class="aiu-kpi-l">commits avaliados</div></div>
+      <div class="aiu-kpi"><div class="aiu-kpi-v">${tot.add ? Math.round(100 * tot.ai / tot.add) : 0}%</div><div class="aiu-kpi-l">das linhas commitadas vieram da IA</div><div class="aiu-kpi-s">${fmt(tot.ai, 'calls')} de ${fmt(tot.add, 'calls')} linhas</div></div>
+    </div>
+    <div class="aiu-card"><div class="aiu-card-h">Cursor · blocos de código por dia e modelo <span class="aiu-hint">ai-code-tracking do Cursor; só o período filtra</span></div><div class="aiu-chart"></div><div class="aiu-legend"></div></div>
+    <div class="aiu-grid2">
+      <div class="aiu-card"><div class="aiu-card-h">Commits (linhas IA × humano)</div>
+        <table class="aiu-table"><thead><tr><th>Dia</th><th>Branch</th><th>Commit</th><th class="num">+ linhas</th><th class="num">IA</th><th class="num">IA %</th></tr></thead><tbody></tbody></table></div>
+      <div class="aiu-card"><div class="aiu-card-h">Por modelo</div><div class="aiu-models"></div></div>
+    </div>`;
+  const series = seriesFrom(d.days, 'model', 'blocks');
+  const saved = st.metric; st.metric = 'calls';
+  stackedBars(pane.querySelector('.aiu-chart'), series);
+  hbars(pane.querySelector('.aiu-models'), d.models.map(m => ({ ...m, key: m.model, value: m.blocks })), {
+    sub: m => `${esc(m.kind)} · ${m.conversations} conversas · ${esc(shortDay(m.first_day))} → ${esc(shortDay(m.last_day))}`,
+  });
+  st.metric = saved;
+  pane.querySelector('.aiu-legend').innerHTML = series.series.map(s => `<span><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}</span>`).join('');
+  pane.querySelector('tbody').innerHTML = d.commits.map(c => `<tr><td class="aiu-nowrap">${esc(shortDay(c.day))}</td><td>${esc(c.branch || '')}</td><td><code>${esc((c.commit_hash || '').slice(0, 8))}</code></td><td class="num">${c.lines_added || 0}</td><td class="num">${c.ai_added || 0}</td><td class="num">${c.lines_added ? Math.round(100 * (c.ai_added || 0) / c.lines_added) : 0}%</td></tr>`).join('')
+    || '<tr><td colspan="6" class="aiu-empty">Nenhum commit no período.</td></tr>';
+}
+
 const TABS = { overview: ['Visão geral', renderOverview], models: ['Modelos', renderModels], sessions: ['Sessões', renderSessions],
-  calendar: ['Calendário', renderCalendar], tools: ['Ferramentas', renderTools], limits: ['Limites Codex', renderLimits] };
+  calendar: ['Calendário', renderCalendar], tools: ['Ferramentas', renderTools], limits: ['Limites Codex', renderLimits],
+  web: ['Chats web', renderWeb], code: ['Código IA', renderCode] };
 
 async function render() {
   if (!els.body) return;

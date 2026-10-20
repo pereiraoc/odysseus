@@ -253,4 +253,62 @@ def setup_ai_usage_routes() -> APIRouter:
         finally:
             con.close()
 
+    def _range(frm, to):
+        where, args = ["1=1"], []
+        if frm:
+            where.append("day >= ?"); args.append(frm)
+        if to:
+            where.append("day <= ?"); args.append(to)
+        return " and ".join(where), args
+
+    def _has(con, table):
+        return con.execute("select 1 from sqlite_master where name=?", (table,)).fetchone() is not None
+
+    @r.get("/web")
+    def web(frm: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
+            user: str = Depends(require_user)):
+        """Chats de IA no navegador (historico): sem tokens, so visitas e conversas."""
+        con = _con()
+        try:
+            if not _has(con, "web_visits"):
+                return {"days": [], "sites": [], "conversations": []}
+            w, a = _range(frm, to)
+            days = [dict(x) for x in con.execute(
+                f"select day, site, count(*) visits, count(distinct nullif(conversation,'')) conversations "
+                f"from web_visits where {w} group by day, site order by day", a)]
+            sites = [dict(x) for x in con.execute(
+                f"select site, count(*) visits, count(distinct nullif(conversation,'')) conversations, "
+                f"count(distinct day) days, min(day) first_day, max(day) last_day, group_concat(distinct browser) browsers "
+                f"from web_visits where {w} group by site order by visits desc", a)]
+            convs = [dict(x) for x in con.execute(
+                f"select site, conversation, max(title) title, count(*) visits, min(day) first_day, max(day) last_day "
+                f"from web_visits where {w} and conversation <> '' group by site, conversation "
+                f"order by visits desc limit 150", a)]
+            return {"days": days, "sites": sites, "conversations": convs}
+        finally:
+            con.close()
+
+    @r.get("/ai-code")
+    def ai_code(frm: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
+                user: str = Depends(require_user)):
+        """Codigo gerado por IA no Cursor (ai-code-tracking): blocos por modelo e placar por commit."""
+        con = _con()
+        try:
+            if not _has(con, "ai_code"):
+                return {"days": [], "models": [], "commits": []}
+            w, a = _range(frm, to)
+            days = [dict(x) for x in con.execute(
+                f"select day, coalesce(nullif(model,''),'(sem modelo)') model, count(*) blocks "
+                f"from ai_code where {w} group by day, model order by day", a)]
+            models = [dict(x) for x in con.execute(
+                f"select coalesce(nullif(model,''),'(sem modelo)') model, kind, count(*) blocks, "
+                f"count(distinct session_key) conversations, min(day) first_day, max(day) last_day "
+                f"from ai_code where {w} group by model, kind order by blocks desc", a)]
+            commits = [dict(x) for x in con.execute(
+                f"select day, branch, commit_hash, lines_added, lines_deleted, tab_added + composer_added ai_added, "
+                f"human_added, ai_percent from ai_commits where {w} order by ts desc limit 300", a)]
+            return {"days": days, "models": models, "commits": commits}
+        finally:
+            con.close()
+
     return r
