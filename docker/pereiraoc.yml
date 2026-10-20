@@ -23,6 +23,9 @@ services:
       # Vaults extras do painel de Vaults que vivem fora de /data/vaults:
       - /data/projects/pleitost-app:/app/vaults/pleitost-app
       - /data/projects/caelestia-arch-setup:/app/vaults/caelestia-arch-setup
+      # Painel "Uso de IA" (routes/ai_usage_routes.py): banco do ai-usage-export
+      # do host (timer diario do caelestia-arch-setup). So leitura.
+      - /data/ai-usage:/app/ai-usage:ro
       # Sessões do Obsidian pelo painel de Vaults: o backend usa o socket pra
       # criar/ligar/desligar SÓ containers `odysseus-obsidian-<vault-id>`
       # (prefixo fixo no código; rotas com auth). TRADEOFF consciente: montar

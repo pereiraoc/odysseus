@@ -924,6 +924,9 @@ app.include_router(setup_vault_routes())
 # Fork-local (ver LOCAL_CHANGES.md): painel de Vaults — arquivos + git.
 from routes.vaultfs_routes import setup_vaultfs_routes
 app.include_router(setup_vaultfs_routes())
+# Fork-local (ver LOCAL_CHANGES.md): painel "Uso de IA" -- le o banco do ai-usage-export do host
+from routes.ai_usage_routes import setup_ai_usage_routes
+app.include_router(setup_ai_usage_routes())
 
 # Contacts (CardDAV)
 from routes.contacts.contacts_routes import setup_contacts_routes

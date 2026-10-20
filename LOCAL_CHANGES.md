@@ -189,3 +189,29 @@ commits feitos pela UI dentro do container) e `VAULTFS_GIT_USER` +
 **Backups de segurança (2026-07-25):** tarballs pré-sync das duas vaults e a
 cópia parcial do episódio da conexão aninhada (`/vaults/X/X`) vivem em
 `/data/vaults-backups/` — nada foi deletado.
+
+## 6. Painel "Uso de IA" — tokens de outros apps de IA  [feature local]
+
+Painel na sidebar (seção "Uso de IA") que mostra o histórico de uso de IA de
+Claude Code, Codex, Cursor, Copilot, Cline e do próprio Odysseus: tokens por
+dia, sessão, modelo, categoria de atividade e máquina. Os dados vêm do banco
+SQLite que o `ai-usage-export` (repo `caelestia-arch-setup`, timer diário) mantém
+em `/data/ai-usage/ai-usage.sqlite`. O painel só lê (`mode=ro`).
+
+- Abas: Visão geral (KPIs, barras empilhadas por dia/semana/mês, ranking,
+  hora do dia, por ferramenta), Modelos, Sessões (busca + detalhe por dia e
+  modelo + ferramentas usadas), Calendário (heatmap), Ferramentas, Limites Codex.
+- Filtros: período, agrupar por categoria/modelo/ferramenta/máquina, métrica,
+  incluir estimados (Cursor e parte do Copilot não gravam tokens).
+- Gráficos em SVG próprio (o CSP não libera CDN).
+
+**Arquivos novos (aditivos, nunca conflitam):** `routes/ai_usage_routes.py`,
+`static/js/aiUsage.js`, `static/css/zz-fork-ai-usage.css`.
+
+**Hooks mínimos em arquivos do upstream:**
+- `app.py`: registro `setup_ai_usage_routes()` logo após o `setup_vaultfs_routes()`.
+- `static/index.html`: seção `#ai-usage-section` após a de Vaults, `<link>` do CSS e `<script type="module">`.
+- `docker/pereiraoc.yml`: volume `/data/ai-usage:/app/ai-usage:ro`.
+
+O caminho do banco pode ser trocado pela env `AI_USAGE_DB`. Sem banco, o painel
+mostra só um aviso.
