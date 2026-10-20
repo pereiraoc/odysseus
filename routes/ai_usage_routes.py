@@ -219,7 +219,8 @@ def setup_ai_usage_routes() -> APIRouter:
         try:
             return [dict(x) for x in con.execute(
                 f"select e.hour hour, {m} value from events e left join sessions s on s.key=e.session_key "
-                f"left join day_category dc on dc.session_key=e.session_key and dc.day=e.day where {w} "
+                f"left join day_category dc on dc.session_key=e.session_key and dc.day=e.day "
+                f"where {w} and coalesce(e.superseded, 0) = 0 "
                 f"group by e.hour order by e.hour", args)]
         finally:
             con.close()
