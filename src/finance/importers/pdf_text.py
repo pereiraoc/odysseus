@@ -60,3 +60,28 @@ def ocr_pdf_text(data: bytes, dpi: int = 300, lang: str = "por") -> str:
                 raise ParseError(f"tesseract falhou: {t.stderr.decode('utf-8', 'replace').strip()[:200]}")
             pages.append(t.stdout.decode("utf-8", "replace"))
         return "\n\f".join(pages)
+
+
+def pdf_text_columns(data: bytes, password: Optional[str] = None) -> str:
+    """Faturas em duas colunas: texto de cada pagina como metade esquerda + metade direita
+    (pdftotext com recorte; mantem espacos, ao contrario do pdfplumber nesse layout)."""
+    if not (shutil.which("pdftotext") and shutil.which("pdfinfo")):
+        raise ParseError("layout em colunas precisa do poppler (pdftotext/pdfinfo)")
+    pw = ["-upw", password] if password else []
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+        f.write(data)
+        f.flush()
+        info = subprocess.run(["pdfinfo", *pw, f.name], capture_output=True, text=True, timeout=60)
+        if info.returncode != 0:
+            raise ParseError(f"pdfinfo falhou: {info.stderr.strip()}" + (" (PDF com senha)" if "password" in info.stderr.lower() else ""))
+        pages = int(next(l.split()[1] for l in info.stdout.splitlines() if l.startswith("Pages:")))
+        size = next(l for l in info.stdout.splitlines() if l.startswith("Page size:")).split()
+        w, h = float(size[2]), float(size[4])
+        out = []
+        for pg in range(1, pages + 1):
+            for x in (0, w / 2):
+                p = subprocess.run(["pdftotext", "-layout", *pw, "-f", str(pg), "-l", str(pg), "-x", str(int(x)), "-y", "0",
+                                    "-W", str(int(w / 2) + 1), "-H", str(int(h) + 1), f.name, "-"],
+                                   capture_output=True, timeout=120)
+                out.append(p.stdout.decode("utf-8", "replace"))
+        return "\n\f".join(out)

@@ -277,3 +277,34 @@ def test_wise_api_blobs_merge_with_csv(store):
     assert tx_count(store, "wise:") == 1
     rep = reconcile.reconcile_balances(store, "wise:wallet:77:EUR")
     assert rep["status"] == "ok" and rep["checked"] == 3
+
+
+SANTANDER_FATURA_TXT = """    Vencimento
+    10/02/2023
+Detalhamento da Fatura
+OCTAVIO G PEREIRA - 5428 XXXX XXXX 1111
+Pagamento e Demais Créditos
+Compra Data Descrição                         Parcela      R$       US$
+          10/01 DEB. AUTOM. DE FATURA EM C/                -100,00
+Despesas
+          04/01 LOJA EXTERIOR                                68,32    11,99
+                  COTAÇÃO DOLAR R$ 5,6981
+                  IOF DESPESA NO EXTERIOR                     3,50             R
+   2      05/01 MERCADO                          02/03      28,18          R
+          VALOR TOTAL                                       100,00
+@ OCTAVIO G PEREIRA - 5428 XXXX XXXX 2222
+          13/01 ESTORNO LOJA                                -10,00
+Resumo da Fatura
+Saldo Anterior                                             100,00
+(=) Saldo Desta Fatura                                      90,00
+"""
+
+
+def test_santander_fatura_text():
+    from src.finance.importers import santander_fatura_pdf
+    p = santander_fatura_pdf.parse("f.pdf", b"", text=SANTANDER_FATURA_TXT)
+    assert [(r.date, r.amount_cents, r.kind) for r in p.records] == [
+        ("2023-01-10", 10000, "PAYMENT"), ("2023-01-04", -6832, "PURCHASE"), ("2023-01-04", -350, "IOF"),
+        ("2023-01-05", -2818, "PURCHASE"), ("2023-01-13", 1000, "CREDIT")]
+    assert p.records[3].extra["installment"] == 2 and p.records[4].extra["card"] == "2222"
+    assert not p.warnings

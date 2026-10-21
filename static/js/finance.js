@@ -16,7 +16,7 @@ const INST = { nubank: 'Nubank', santander: 'Santander', wise: 'Wise', caixa: 'C
 const KIND = { checking: 'conta', credit_card: 'cartão', wallet: 'carteira' };
 const IMPORTER = {
   ofx: 'OFX', wise_csv: 'CSV Wise', santander_cc_pdf: 'PDF extrato', nubank_fatura_pdf: 'PDF fatura',
-  santander_csv: 'planilha', santander_cc_ocr: 'OCR extrato', pluggy: 'Open Finance',
+  santander_csv: 'planilha', santander_fatura_pdf: 'PDF fatura', santander_cc_ocr: 'OCR extrato', pluggy: 'Open Finance',
 };
 
 const st = { cur: 'BRL', tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };

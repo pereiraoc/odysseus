@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from src.finance.importers import nubank_fatura_pdf, ofx, santander_cc_pdf, santander_csv, wise_api, wise_csv
+from src.finance.importers import (nubank_fatura_pdf, ofx, santander_cc_pdf, santander_csv, santander_fatura_pdf, wise_api,
+                                   wise_csv)
 from src.finance.importers.base import ParsedFile, ParseError
 from src.finance.importers.pdf_text import ocr_pdf_text, pdf_text
 
-BY_NAME = {m.NAME: m for m in (ofx, wise_csv, santander_csv, santander_cc_pdf, nubank_fatura_pdf)}
+BY_NAME = {m.NAME: m for m in (ofx, wise_csv, santander_csv, santander_cc_pdf, nubank_fatura_pdf, santander_fatura_pdf)}
 BY_NAME[santander_cc_pdf.OCR_NAME] = santander_cc_pdf
 BY_NAME[wise_api.NAME] = wise_api
 PDF_IMPORTERS = (santander_cc_pdf, nubank_fatura_pdf)
@@ -41,6 +42,8 @@ def parse_file(name: str, data: bytes, pdf_password: Optional[str] = None,
                                     for r in inferred]
                 return parsed
             raise ParseError("PDF em imagem: OCR feito, mas layout desconhecido")
+        if santander_fatura_pdf.matches_text(text):  # duas colunas: rele o PDF por metades
+            return santander_fatura_pdf.parse(name, data, password=pdf_password)
         for mod in PDF_IMPORTERS:
             if mod.matches_text(text):
                 return mod.parse(name, data, text=text)

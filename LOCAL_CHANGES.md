@@ -229,7 +229,7 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
   fonte + livro canônico reconstruível), `ledger/` (export hledger em git local,
   com asserções de saldo; `hledger check -s ordereddates` valida tudo) e
   `corrections/<sha>.json` (correções manuais de OCR, com motivo).
-- Importadores: OFX (Nubank/Santander), CSV do Wise, PDF do extrato Santander
+- Importadores: OFX (Nubank/Santander), CSV do Wise, PDF do extrato Santander (texto ou OCR), PDF da fatura Santander (senha via FINANCE_PDF_PASSWORD, duas colunas)
   (texto ou OCR), PDF da fatura Nubank, CSVs categorizados do Santander (fonte
   secundária), JSON da API do Wise. Cada parser confere saldo/total impresso.
 - Painel na sidebar ("Finanças"): Visão geral, Transações (com as fontes de cada

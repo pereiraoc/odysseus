@@ -18,7 +18,7 @@ from src.finance.store import Store
 
 WINDOW_DAYS = 3
 # ordem de processamento = precedencia da descricao canonica (fonte oficial primeiro)
-IMPORTER_RANK = {"pluggy": 0, "ofx": 1, "santander_cc_pdf": 1, "santander_cc_ocr": 1, "nubank_fatura_pdf": 1, "wise_csv": 1, "santander_csv": 9}
+IMPORTER_RANK = {"pluggy": 0, "ofx": 1, "santander_cc_pdf": 1, "santander_cc_ocr": 1, "nubank_fatura_pdf": 1, "santander_fatura_pdf": 1, "wise_csv": 1, "santander_csv": 9}
 
 
 def record_key(row) -> str:
