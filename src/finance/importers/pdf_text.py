@@ -1,6 +1,7 @@
 """Texto de PDF com layout preservado. pdftotext (poppler) se existir; senao pdfplumber."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -34,3 +35,28 @@ def pdf_text(data: bytes, password: Optional[str] = None) -> str:
             return "\n\f".join((page.extract_text(layout=True) or "") for page in pdf.pages)
     except Exception as exc:  # pdfminer levanta tipos variados para senha/corrompido
         raise ParseError(f"pdfplumber falhou: {exc}") from exc
+
+
+def ocr_available() -> bool:
+    return bool(shutil.which("tesseract") and shutil.which("pdftoppm"))
+
+
+def ocr_pdf_text(data: bytes, dpi: int = 300, lang: str = "por") -> str:
+    """PDF que e so imagem -> texto via pdftoppm + tesseract (psm 6, espacos preservados)."""
+    if not ocr_available():
+        raise ParseError("PDF sem texto (imagem): precisa de OCR e o tesseract nao esta instalado")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "in.pdf")
+        with open(src, "wb") as f:
+            f.write(data)
+        p = subprocess.run(["pdftoppm", "-r", str(dpi), "-png", src, os.path.join(tmp, "pg")], capture_output=True, timeout=600)
+        if p.returncode != 0:
+            raise ParseError(f"pdftoppm falhou: {p.stderr.decode('utf-8', 'replace').strip()}")
+        pages = []
+        for img in sorted(x for x in os.listdir(tmp) if x.startswith("pg") and x.endswith(".png")):
+            t = subprocess.run(["tesseract", os.path.join(tmp, img), "stdout", "-l", lang, "--psm", "6",
+                                "-c", "preserve_interword_spaces=1"], capture_output=True, timeout=600)
+            if t.returncode != 0:
+                raise ParseError(f"tesseract falhou: {t.stderr.decode('utf-8', 'replace').strip()[:200]}")
+            pages.append(t.stdout.decode("utf-8", "replace"))
+        return "\n\f".join(pages)

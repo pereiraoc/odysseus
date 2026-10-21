@@ -275,6 +275,7 @@
   <!-- Fork-local (ver LOCAL_CHANGES.md): CSS do painel de Vaults/Files, por último na cascata -->
   <link rel="stylesheet" href="/static/css/zz-fork-vaults.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/zz-fork-ai-usage.css?v=20261019aiu3">
+  <link rel="stylesheet" href="/static/css/zz-fork-finance.css?v=20261020fin2">
   <link rel="modulepreload" href="/static/app.js?v=20260929csssplit">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
@@ -1012,6 +1013,15 @@
           <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>Uso de IA</span>
         </div>
         <div id="ai-usage-list"></div>
+      </div>
+
+      <!-- Fork-local (ver LOCAL_CHANGES.md §7): painel "Finanças" (arquivo bancario
+           local, data/finance) — static/js/finance.js -->
+      <div class="section" id="finance-section">
+        <div class="section-header-flex">
+          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>Finanças</span>
+        </div>
+        <div id="finance-list"></div>
       </div>
     </div>
     <div class="sidebar-user-bar" id="sidebar-user-bar">
@@ -2698,6 +2708,7 @@
 <!-- Fork-local (ver LOCAL_CHANGES.md): painel de Vaults -->
 <script type="module" src="/static/js/vaults.js"></script>
 <script type="module" src="/static/js/aiUsage.js?v=20261019aiu3"></script>
+<script type="module" src="/static/js/finance.js?v=20261020fin2"></script>
 <script type="module" src="/static/js/tourHints.js"></script>
 <script type="module" src="/static/js/tourAutoplay.js"></script>
 <script type="module" src="/static/js/fileHandler.js?v=20260909mobileattachmentedit1"></script>

@@ -71,4 +71,12 @@ services:
       # renderD128 e o renderD129 antigo passou a ser a nvidia). Confira com
       # `ls -l /dev/dri/by-path/` — o alvo é o *-render da integrada.
       - OBSIDIAN_DRI_NODE=/dev/dri/by-path/pci-0000:00:02.0-render
+      # Painel "Finanças" (routes/finance_routes.py, src/finance): segredos SÓ via
+      # .env do compose (gitignored). Token do Wise = "Read only"; a senha dos PDFs
+      # de fatura do Santander abre os arquivos guardados em data/finance/raw.
+      - WISE_API_TOKEN=${WISE_API_TOKEN:-}
+      - FINANCE_PDF_PASSWORD=${FINANCE_PDF_PASSWORD:-}
+      - PLUGGY_CLIENT_ID=${PLUGGY_CLIENT_ID:-}
+      - PLUGGY_CLIENT_SECRET=${PLUGGY_CLIENT_SECRET:-}
+      - PLUGGY_ITEM_IDS=${PLUGGY_ITEM_IDS:-}
       - CSP_EXTRA_FRAME_SRC=http://localhost:3010 http://localhost:3011 http://localhost:3012 http://localhost:3013 http://localhost:3014 http://localhost:3015 http://localhost:3016 http://localhost:3017 http://localhost:3018 http://localhost:3019

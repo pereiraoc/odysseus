@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("rebuild")
     sub.add_parser("report")
     sub.add_parser("queue")
+    sub.add_parser("wise-sync")
     lg = sub.add_parser("ledger")
     lg.add_argument("--no-commit", action="store_true")
     rp = sub.add_parser("reparse")
@@ -92,6 +93,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(dedup.rebuild(store)))
         elif a.cmd == "report":
             _print_report(reconcile.report(store))
+        elif a.cmd == "wise-sync":
+            from src.finance import wise_api
+            token = os.environ.get("WISE_API_TOKEN")
+            if not token:
+                print("defina WISE_API_TOKEN"); return 2
+            res = wise_api.sync(store, token)
+            print(json.dumps({k: v for k, v in res.items() if k != "results"}, ensure_ascii=False))
+            for r in res["results"]:
+                print(" ", r.get("name") or r, r.get("status", ""), r.get("error", ""))
+            print("rebuild:", json.dumps(dedup.rebuild(store)))
         elif a.cmd == "ledger":
             from src.finance.ledger import export
             print(json.dumps(export(store, commit=not a.no_commit)))

@@ -115,6 +115,14 @@ RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
     && rm -rf /tmp/odysseus-wheels
 
 # Copy app code
+# Fork-local (ver LOCAL_CHANGES.md §7): ferramentas do arquivo financeiro
+# (src/finance). pdftotext -layout para extratos/faturas em PDF e tesseract
+# (pt) para extratos que so existem como imagem. Camada propria, depois do
+# pip, para nao invalidar o cache das camadas pesadas.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils tesseract-ocr tesseract-ocr-por \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 # Require the redistribution notices in the image build context.
 COPY licenses/ ./licenses/

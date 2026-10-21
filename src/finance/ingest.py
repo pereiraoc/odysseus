@@ -12,7 +12,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable, Optional
 
-from src.finance.importers import parse_file
+from src.finance.importers import parse_file_multi
 from src.finance.importers.base import ParsedFile, ParseError
 from src.finance.money import norm_desc
 from src.finance.store import Store, now
@@ -43,15 +43,21 @@ def _resolve_account(store: Store, parsed: ParsedFile) -> None:
     acc.number = rows[0]["number"]
 
 
-def store_parsed(store: Store, sha: str, parsed: ParsedFile) -> int:
+def clear_blob(store: Store, sha: str) -> None:
+    db = store.db
+    db.execute("DELETE FROM record_blobs WHERE sha256=?", (sha,))
+    db.execute("DELETE FROM checkpoints WHERE sha256=?", (sha,))
+    db.execute("DELETE FROM import_warnings WHERE sha256=?", (sha,))
+
+
+def store_parsed(store: Store, sha: str, parsed: ParsedFile, clear: bool = True) -> int:
     db = store.db
     _resolve_account(store, parsed)
     acc = parsed.account
     db.execute("INSERT OR IGNORE INTO accounts VALUES (?,?,?,?,?,?)",
                (acc.key, acc.institution, acc.kind, acc.number, acc.currency, acc.name))
-    db.execute("DELETE FROM record_blobs WHERE sha256=?", (sha,))
-    db.execute("DELETE FROM checkpoints WHERE sha256=?", (sha,))
-    db.execute("DELETE FROM import_warnings WHERE sha256=?", (sha,))
+    if clear:
+        clear_blob(store, sha)
     new = 0
     for rec, nk in zip(parsed.records, native_keys(parsed)):
         cur = db.execute(
@@ -69,8 +75,6 @@ def store_parsed(store: Store, sha: str, parsed: ParsedFile) -> int:
                    (acc.key, cp.date, cp.balance_cents, cp.kind, cp.note, sha))
     for w in parsed.warnings:
         db.execute("INSERT OR IGNORE INTO import_warnings VALUES (?, ?)", (sha, w))
-    # registros que nenhum bruto sustenta mais (parser mudou) saem: sao derivados do raw/
-    db.execute("DELETE FROM source_records WHERE id NOT IN (SELECT record_id FROM record_blobs)")
     db.execute("UPDATE raw_blobs SET importer=?, parse_version=?, status='parsed', error=NULL, account_key=?,"
                " period_start=?, period_end=?, n_records=? WHERE sha256=?",
                (parsed.importer, parsed.parse_version, acc.key, parsed.period_start, parsed.period_end,
@@ -78,12 +82,23 @@ def store_parsed(store: Store, sha: str, parsed: ParsedFile) -> int:
     return new
 
 
+def load_corrections(store: Store, sha: str) -> list[dict]:
+    """data/finance/corrections/<sha256>.json: [{"find", "replace", "reason"}], versionavel e auditavel."""
+    import json
+    f = store.root / "corrections" / f"{sha}.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else []
+
+
 def ingest_bytes(store: Store, name: str, data: bytes, pdf_password: Optional[str] = None) -> dict:
     sha, is_new = store.put_blob(name, data)
     store.db.commit()  # o bruto fica registrado mesmo se o parse falhar
     try:
-        parsed = parse_file(name, data, pdf_password)
-        new = store_parsed(store, sha, parsed)
+        parts = parse_file_multi(name, data, pdf_password, load_corrections(store, sha))
+        clear_blob(store, sha)
+        new = sum(store_parsed(store, sha, p, clear=False) for p in parts)
+        # registros que nenhum bruto sustenta mais (parser mudou) saem: sao derivados do raw/
+        store.db.execute("DELETE FROM source_records WHERE id NOT IN (SELECT record_id FROM record_blobs)")
+        parsed = parts[0]
     except Exception as exc:  # qualquer falha de parser: bruto fica guardado, status=error, nada parcial
         store.db.rollback()
         msg = str(exc) if isinstance(exc, ParseError) else f"{type(exc).__name__}: {exc}"
@@ -92,8 +107,8 @@ def ingest_bytes(store: Store, name: str, data: bytes, pdf_password: Optional[st
         return {"name": name, "sha256": sha, "new_blob": is_new, "status": "error", "error": msg}
     store.db.commit()
     return {"name": name, "sha256": sha, "new_blob": is_new, "status": "parsed", "importer": parsed.importer,
-            "account": parsed.account.key, "records": len(parsed.records), "new_records": new,
-            "warnings": parsed.warnings}
+            "account": parsed.account.key, "records": sum(len(p.records) for p in parts), "new_records": new,
+            "warnings": [w for p in parts for w in p.warnings]}
 
 
 def iter_files(paths: Iterable[str | Path]) -> Iterable[Path]:

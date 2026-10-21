@@ -218,7 +218,7 @@ em `/data/ai-usage/ai-usage.sqlite`. O painel só lê (`mode=ro`).
 O caminho do banco pode ser trocado pela env `AI_USAGE_DB`. Sem banco, o painel
 mostra só um aviso.
 
-## 7. Finanças — arquivo bancário vitalício  [feature local, em construção]
+## 7. Finanças — arquivo bancário vitalício  [feature local + inline patch no Dockerfile]
 
 Arquivo local de todo o histórico bancário (Nubank, Santander, Wise; Caixa só
 histórico), auditável e sem duplicatas entre fontes. Spec:
@@ -226,13 +226,26 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
 
 - Três camadas em `data/finance/` (gitignored, `chmod 700`): `raw/` (arquivo
   importado exatamente como veio, por sha256), `finance.sqlite` (registros por
-  fonte + livro canônico reconstruível) e `ledger/` (export hledger em git local,
-  com asserções de saldo; `hledger check -s ordereddates` valida tudo).
-- Importadores: OFX (Nubank/Santander), CSV do Wise, PDF do extrato Santander,
-  PDF da fatura Nubank, CSVs categorizados do Santander (fonte secundária).
-  Cada parser confere saldo/total impresso pela própria fonte.
-- CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse`.
+  fonte + livro canônico reconstruível), `ledger/` (export hledger em git local,
+  com asserções de saldo; `hledger check -s ordereddates` valida tudo) e
+  `corrections/<sha>.json` (correções manuais de OCR, com motivo).
+- Importadores: OFX (Nubank/Santander), CSV do Wise, PDF do extrato Santander
+  (texto ou OCR), PDF da fatura Nubank, CSVs categorizados do Santander (fonte
+  secundária), JSON da API do Wise. Cada parser confere saldo/total impresso.
+- Painel na sidebar ("Finanças"): Visão geral, Transações (com as fontes de cada
+  uma), Auditoria (quebras de saldo, faturas, fila de revisão, erros) e Arquivos
+  (upload + download do original).
+- CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse|wise-sync`.
 
-**Arquivos novos (aditivos, nunca conflitam):** `src/finance/**`, `tests/test_finance_core.py`.
+**Arquivos novos (aditivos, nunca conflitam):** `src/finance/**`, `routes/finance_routes.py`,
+`static/js/finance.js`, `static/css/zz-fork-finance.css`, `tests/test_finance_core.py`,
+`tests/test_finance_routes.py`.
 
-**Hooks em arquivos do upstream:** nenhum ainda (rotas, poller Pluggy e painel vêm nas próximas fases).
+**Hooks mínimos em arquivos do upstream:**
+- `app.py`: registro `setup_finance_routes()` logo após o do "Uso de IA".
+- `static/index.html`: seção `#finance-section` após a do "Uso de IA", `<link>` do CSS e `<script type="module">`.
+- `static/sw.js`: `zz-fork-finance.css` no precache (mesmo `?v=` do index).
+- `Dockerfile` **[inline patch]**: `RUN apt-get install poppler-utils tesseract-ocr tesseract-ocr-por`
+  numa camada própria antes do `COPY . .` (não invalida o cache do pip). Ao sincronizar,
+  reaplicar se o upstream mexer nessa região.
+- `docker/pereiraoc.yml`: envs `WISE_API_TOKEN`, `FINANCE_PDF_PASSWORD`, `PLUGGY_*` (valores só no `.env`).

@@ -258,3 +258,22 @@ def test_nubank_fatura_text_signs_years_and_check():
     assert not p.warnings
     bad = nubank_fatura_pdf.parse("f.pdf", b"", text=NUBANK_TXT.replace("R$ 50,00", "R$ 55,00"))
     assert bad.warnings
+
+
+def test_wise_api_blobs_merge_with_csv(store):
+    import json as _json
+    ingest_bytes(store, "statement_77_EUR_2023-01-01_2023-12-31.csv",
+                 wise([("CARD-5", "10-06-2023", "-5.87", "Loja", "20.03")]))
+    stmt = {"_source": "wise_api", "kind": "statement", "profile": 1, "fetched_at": "2023-06-30T00:00:00+00:00",
+            "balance_id": 77, "currency": "EUR",
+            "data": {"transactions": [{"date": "2023-06-10T12:00:00Z", "amount": {"value": -5.87, "currency": "EUR"},
+                                       "referenceNumber": "CARD-5", "details": {"description": "Loja", "type": "CARD"}}],
+                     "endOfStatementBalance": {"value": 20.03}, "query": {"intervalEnd": "2023-06-30T00:00:00Z"}}}
+    bal = {"_source": "wise_api", "kind": "balances", "profile": 1, "fetched_at": "2023-07-01T00:00:00+00:00",
+           "data": [{"id": 77, "currency": "EUR", "amount": {"value": 20.03, "currency": "EUR"}}]}
+    assert ingest_bytes(store, "s.json", _json.dumps(stmt).encode())["new_records"] == 1  # outra fonte; dedup funde
+    assert ingest_bytes(store, "b.json", _json.dumps(bal).encode())["status"] == "parsed"
+    dedup.rebuild(store)
+    assert tx_count(store, "wise:") == 1
+    rep = reconcile.reconcile_balances(store, "wise:wallet:77:EUR")
+    assert rep["status"] == "ok" and rep["checked"] == 3
