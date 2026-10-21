@@ -10,7 +10,9 @@ Definicoes (documentadas tambem na UI):
               fechada ate 45 dias antes). Moedas diferentes nao se somam (sem cambio inventado).
   aplicado    soma acumulada do que saiu para investimento (transferencias:investimento), SEM rendimento:
               estimativa ate os saldos de investimento chegarem pelo Open Finance
-  reserva     (patrimonio + aplicado) / media de gastos dos ultimos 6 meses (em meses de gasto)
+  investido   saldo real dos investimentos (snapshot do Open Finance mais recente ate o fim do periodo);
+              antes do primeiro snapshot usa o 'aplicado' estimado
+  reserva     (patrimonio + investido) / media de gastos dos ultimos 6 meses (em meses de gasto)
 Mes 'incompleto' = teve transferencia interna sem a outra ponta (falta extrato/fatura do outro lado),
 entao gasto de cartao daquele mes pode estar faltando.
 """
@@ -143,6 +145,16 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
     months_all = sorted(per)
     if not months_all:
         return {"currency": currency, "group": group, "periods": [], "groups": []}
+    snaps = db.execute("SELECT s.investment_id, s.date, s.balance_cents FROM investment_snapshots s JOIN investments i"
+                       " ON i.id=s.investment_id WHERE i.currency=? ORDER BY s.date", (currency,)).fetchall()
+
+    def real_investments(d: str):
+        last: dict[str, int] = {}
+        for sn in snaps:
+            if sn["date"] > d:
+                break
+            last[sn["investment_id"]] = sn["balance_cents"]
+        return sum(last.values()) if last else None
     nw = {}
     invested = 0
     for d in _month_ends(months_all[0], months_all[-1]):
@@ -156,7 +168,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
                 card_total += bals[i - 1]
             elif i or dates and dates[0] <= d:
                 card_ok = False  # cartao existia mas sem fatura recente: divida desconhecida
-        nw[d[:7]] = {"net_worth": sum(known) + card_total if known else None, "card_known": card_ok, "invested": invested}
+        nw[d[:7]] = {"net_worth": sum(known) + card_total if known else None, "card_known": card_ok, "invested": invested,
+                     "investments": real_investments(d)}
 
     # agregacao por periodo + filtros de data
     buckets: dict[str, dict] = {}
@@ -167,7 +180,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "people_in": 0,
                                    "people_out": 0, "fixed": 0, "variable": 0, "uncategorized": 0,
                                    "by_group": defaultdict(int), "incomplete": False, "card_known": True,
-                                   "net_worth": None, "invested": 0, "n": 0})
+                                   "net_worth": None, "invested": 0, "investments": None, "n": 0})
         p = per[m]
         b["months"] += 1
         for f in ("income", "expenses", "salary", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
@@ -179,6 +192,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
             b["net_worth"] = nw[m]["net_worth"]
             b["card_known"] = nw[m]["card_known"]
             b["invested"] = nw[m]["invested"]
+            b["investments"] = nw[m]["investments"]
     periods = [buckets[k] for k in sorted(buckets)]
     # periodo que contem o ultimo dia com dado e nao chegou ao fim do mes: parcial (fica fora dos KPIs)
     last_date = max(r["date"] for r in rows)
@@ -194,14 +208,16 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
     idx = {m: i for i, m in enumerate(months_all)}
     for b in periods:
         b["net"] = b["income"] - b["expenses"]
-        b["nw_plus"] = b["net_worth"] + b["invested"] if b["net_worth"] is not None else None
+        inv = b["investments"] if b["investments"] is not None else b["invested"]
+        b["investments_source"] = "real" if b["investments"] is not None else "estimado"
+        b["nw_plus"] = b["net_worth"] + inv if b["net_worth"] is not None else None
         b["savings_rate"] = round(b["net"] / b["income"], 4) if b["income"] > 0 else None
         b["by_group"] = dict(b["by_group"])
         last_m = max(m for m in months_all if _bucket(m, group) == b["period"])
         window = exp_hist[max(0, idx[last_m] - 5): idx[last_m] + 1]
         avg = sum(window) / len(window) if window else 0
         b["avg_expenses_6m"] = round(avg)
-        b["reserve_months"] = round((b["net_worth"] + b["invested"]) / avg, 1) if b["net_worth"] is not None and avg > 0 else None
+        b["reserve_months"] = round(b["nw_plus"] / avg, 1) if b["nw_plus"] is not None and avg > 0 else None
     totals = defaultdict(int)
     for b in periods:
         for g, v in b["by_group"].items():

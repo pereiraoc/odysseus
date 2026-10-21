@@ -60,13 +60,19 @@ def store_parsed(store: Store, sha: str, parsed: ParsedFile, clear: bool = True)
         clear_blob(store, sha)
     new = 0
     for rec, nk in zip(parsed.records, native_keys(parsed)):
+        # reparse com parser melhor atualiza o registro (mesma identidade), nunca duplica
+        existed = db.execute("SELECT 1 FROM source_records WHERE importer=? AND account_key=? AND native_key=?",
+                             (parsed.importer, acc.key, nk)).fetchone()
         cur = db.execute(
-            "INSERT OR IGNORE INTO source_records (importer, account_key, native_key, native_id, date, amount_cents,"
-            " description, desc_norm, kind, extra_json, secondary, first_blob, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO source_records (importer, account_key, native_key, native_id, date, amount_cents,"
+            " description, desc_norm, kind, extra_json, secondary, first_blob, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(importer, account_key, native_key) DO UPDATE SET date=excluded.date, amount_cents=excluded.amount_cents,"
+            " description=excluded.description, desc_norm=excluded.desc_norm, kind=excluded.kind, extra_json=excluded.extra_json,"
+            " secondary=excluded.secondary",
             (parsed.importer, acc.key, nk, rec.native_id, rec.date, rec.amount_cents, rec.description,
              norm_desc(rec.description), rec.kind, store.json(rec.extra) if rec.extra else None,
              int(parsed.secondary), sha, now()))
-        new += cur.rowcount
+        new += 0 if existed else 1
         rid = db.execute("SELECT id FROM source_records WHERE importer=? AND account_key=? AND native_key=?",
                          (parsed.importer, acc.key, nk)).fetchone()["id"]
         db.execute("INSERT OR IGNORE INTO record_blobs VALUES (?, ?)", (rid, sha))
@@ -98,10 +104,21 @@ def ingest_bytes(store: Store, name: str, data: bytes, pdf_password: Optional[st
         new = sum(store_parsed(store, sha, p, clear=False) for p in parts)
         # registros que nenhum bruto sustenta mais (parser mudou) saem: sao derivados do raw/
         store.db.execute("DELETE FROM source_records WHERE id NOT IN (SELECT record_id FROM record_blobs)")
+        if not parts:
+            store.db.execute("UPDATE raw_blobs SET status='parsed', n_records=0 WHERE sha256=?", (sha,))
+            store.db.commit()
+            return {"name": name, "sha256": sha, "new_blob": is_new, "status": "parsed", "importer": None,
+                    "account": None, "records": 0, "new_records": 0, "warnings": []}
         parsed = parts[0]
     except Exception as exc:  # qualquer falha de parser: bruto fica guardado, status=error, nada parcial
         store.db.rollback()
         msg = str(exc) if isinstance(exc, ParseError) else f"{type(exc).__name__}: {exc}"
+        prev = store.db.execute("SELECT status FROM raw_blobs WHERE sha256=?", (sha,)).fetchone()
+        env_problem = any(k in msg.lower() for k in ("tesseract", "senha", "password", "poppler", "pdftotext"))
+        if prev and prev["status"] == "parsed" and env_problem:
+            # ja tinha sido lido; a falha e do ambiente (sem OCR/senha aqui), nao do arquivo: mantem como estava
+            return {"name": name, "sha256": sha, "new_blob": is_new, "status": "parsed", "records": 0, "new_records": 0,
+                    "warnings": [f"nao reprocessado neste ambiente: {msg}"], "importer": None, "account": None}
         store.db.execute("UPDATE raw_blobs SET status='error', error=? WHERE sha256=?", (msg, sha))
         store.db.commit()
         return {"name": name, "sha256": sha, "new_blob": is_new, "status": "error", "error": msg}

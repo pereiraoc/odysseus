@@ -362,3 +362,48 @@ def test_monthly_income_expenses_neutral_and_networth(store):
     assert p["by_group"] == {"alimentacao": 30000, "pessoas": 5000}
     q = monthly(store, people=False)["periods"][0]
     assert q["expenses"] == 30000 and q["people_out"] == -5000
+
+
+def test_pluggy_blob_signs_dates_and_pending(store):
+    import json as _json
+    from src.finance.importers.pluggy import parse_multi
+    card = {"_source": "pluggy", "kind": "account", "item": "i1", "institution": "nubank", "item_last_updated": "2026-10-21T02:11:27Z",
+            "account": {"id": "a1", "type": "CREDIT", "currencyCode": "BRL", "name": "Cartao", "balance": 100},
+            "transactions": [
+                {"id": "t1", "type": "DEBIT", "amount": 50.5, "date": "2026-10-05T00:30:00Z", "description": "Loja",
+                 "status": "POSTED", "creditCardMetadata": {"purchaseDate": "2026-10-04T23:30:00Z", "installmentNumber": 2, "totalInstallments": 3}},
+                {"id": "t2", "type": "CREDIT", "amount": -20, "date": "2026-10-06T03:00:00Z", "description": "Pagamento recebido", "status": "POSTED"},
+                {"id": "t3", "type": "DEBIT", "amount": 9, "date": "2027-01-05T03:00:00Z", "description": "Parcela futura", "status": "PENDING"}]}
+    p = parse_multi("x.json", _json.dumps(card, sort_keys=True).encode())[0]
+    assert p.account.key == "nubank:credit_card:principal:BRL" and not p.checkpoints
+    assert [(r.date, r.amount_cents) for r in p.records] == [("2026-10-04", -5050), ("2026-10-06", 2000)]
+    assert p.records[0].extra["installment"] == 2 and p.warnings
+    bank = {**card, "account": {"id": "a2", "type": "BANK", "currencyCode": "BRL", "number": "05555-1", "balance": 638.27},
+            "transactions": [{"id": "b1", "type": "DEBIT", "amount": -10, "date": "2026-10-20T01:00:00Z", "description": "Pix", "status": "POSTED"}]}
+    q = parse_multi("y.json", _json.dumps(bank, sort_keys=True).encode())[0]
+    assert q.account.key == "nubank:checking:55551:BRL" and q.records[0].date == "2026-10-19"
+    assert q.checkpoints[0].date == "2026-10-20" and q.checkpoints[0].balance_cents == 63827
+    res = ingest_bytes(store, "y.json", _json.dumps(bank, sort_keys=True).encode())
+    assert res["status"] == "parsed" and res["new_records"] == 1
+    inv = ingest_bytes(store, "inv.json", b'{"_source": "pluggy-investments", "results": []}')
+    assert inv["status"] == "parsed" and inv["records"] == 0
+
+
+def test_pluggy_self_transfer_and_counterparty_rule(store):
+    import json as _json
+    from src.finance import rules
+    bank = {"_source": "pluggy", "kind": "account", "item": "i1", "institution": "nubank", "item_last_updated": "2026-10-21T02:11:27Z",
+            "account": {"id": "a2", "type": "BANK", "currencyCode": "BRL", "number": "05555-1", "balance": 10, "taxNumber": "123.456.789-00"},
+            "transactions": [
+                {"id": "s1", "type": "CREDIT", "amount": 4980, "date": "2026-10-15T12:00:00Z", "description": "Transferência Recebida", "status": "POSTED",
+                 "paymentData": {"payer": {"routingNumber": "033", "branchNumber": "3735", "accountNumber": "71308654-8",
+                                           "documentNumber": {"type": "CPF", "value": "12345678900"}}}},
+                {"id": "s2", "type": "CREDIT", "amount": 50, "date": "2026-10-16T12:00:00Z", "description": "Transferência Recebida", "status": "POSTED",
+                 "paymentData": {"payer": {"routingNumber": "260", "accountNumber": "999", "documentNumber": {"type": "CPF", "value": "12345678900"}}}}]}
+    ingest_bytes(store, "b.json", _json.dumps(bank, sort_keys=True).encode())
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "sal", "priority": 960, "when": {"counterparty_account_any": ["033/3735/713086548"], "sign": "credit"}, "then": {"category": "renda:salario"}},
+        {"id": "self", "priority": 905, "when": {"flag": "self_transfer"}, "then": {"category": "transferencias:interna"}}]}))
+    assert rules.categorize(store)["hits"] == {"sal": 1, "self": 1}

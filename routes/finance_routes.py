@@ -20,12 +20,17 @@ Rotas (todas exigem usuario):
   GET  /api/finance/transfers      transferencias internas sem par (indicam extrato/fatura faltando)
   POST /api/finance/tx/{id}/category   categoria manual (vence qualquer regra)
   GET  /api/finance/monthly        mes a mes: patrimonio, ganhos x gastos, salario, poupanca, reserva, grupos
+  POST /api/finance/sync/pluggy    puxa Nubank/Santander/Wise do Meu Pluggy (tambem roda sozinho a cada 3h)
+  GET  /api/finance/investments    posicao atual dos investimentos (ultimo snapshot)
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import threading
+import time
 from bisect import bisect_right
 from typing import Optional
 
@@ -40,6 +45,43 @@ from src.finance.store import Store, now
 
 MAX_UPLOAD = 50 * 1024 * 1024
 _lock = asyncio.Lock()  # import/rebuild sao sequenciais (um so escritor no SQLite)
+_wlock = threading.Lock()  # o mesmo, entre as rotas e a thread do poller
+POLL_SECONDS = int(os.environ.get("FINANCE_POLL_SECONDS", str(3 * 3600)))
+_poller_started = False
+log = logging.getLogger("finance")
+
+
+def _locked(fn):
+    with _wlock:
+        return fn()
+
+
+def _poller() -> None:
+    from src.finance import pluggy_sync
+    time.sleep(90)  # deixa o app subir
+    while True:
+        try:
+            with _wlock:
+                store = _store()
+                try:
+                    res = pluggy_sync.sync(store)
+                    log.info("finance poller: %s", [(i.get("institution"), i.get("skipped") or i.get("error") or "sync")
+                                                   for i in res["items"]])
+                finally:
+                    store.close()
+        except Exception:  # nunca derruba a thread; tenta de novo no proximo ciclo
+            log.exception("finance poller falhou")
+        time.sleep(POLL_SECONDS)
+
+
+def start_poller() -> bool:
+    global _poller_started
+    from src.finance import pluggy_sync
+    if _poller_started or not pluggy_sync.configured() or os.environ.get("FINANCE_POLLER", "1") == "0":
+        return False
+    _poller_started = True
+    threading.Thread(target=_poller, name="finance-pluggy-poller", daemon=True).start()
+    return True
 
 
 def _store() -> Store:
@@ -138,6 +180,12 @@ def setup_finance_routes() -> APIRouter:
             return {"available": bool(accounts), "root": str(store.root), "accounts": accounts,
                     "files": {r["status"]: r["n"] for r in files}, "last_import": last, "queue": queue,
                     "pluggy_configured": bool(os.environ.get("PLUGGY_CLIENT_ID")),
+                    "pluggy_items": [dict(r) for r in store.db.execute("SELECT * FROM pluggy_items ORDER BY institution")],
+                    "investments_total": [dict(r) for r in store.db.execute(
+                        "SELECT i.institution, i.currency, sum(s.balance_cents) total, max(s.date) date, count(*) n"
+                        " FROM investments i JOIN investment_snapshots s ON s.investment_id=i.id"
+                        " WHERE s.date = (SELECT max(date) FROM investment_snapshots WHERE investment_id=i.id)"
+                        " GROUP BY i.institution, i.currency")],
                     "wise_configured": bool(os.environ.get("WISE_API_TOKEN"))}
         finally:
             store.close()
@@ -256,7 +304,7 @@ def setup_finance_routes() -> APIRouter:
                     return {"results": res, **pipeline.refresh(store)}
                 finally:
                     store.close()
-            return await asyncio.to_thread(work)
+            return await asyncio.to_thread(_locked, work)
 
     @router.post("/queue/{record_id}")
     async def decide(record_id: int, body: Decision, _user: str = Depends(require_user)):
@@ -280,7 +328,7 @@ def setup_finance_routes() -> APIRouter:
                     return {"ok": True, **pipeline.refresh(store)}
                 finally:
                     store.close()
-            return await asyncio.to_thread(work)
+            return await asyncio.to_thread(_locked, work)
 
     @router.post("/sync/wise")
     async def sync_wise(_user: str = Depends(require_user)):
@@ -298,7 +346,7 @@ def setup_finance_routes() -> APIRouter:
                 finally:
                     store.close()
             try:
-                return await asyncio.to_thread(work)
+                return await asyncio.to_thread(_locked, work)
             except RuntimeError as exc:
                 raise HTTPException(502, str(exc)) from exc
 
@@ -310,6 +358,33 @@ def setup_finance_routes() -> APIRouter:
         store = _store()
         try:
             return monthly(store, currency, date_from, date_to, group, people)
+        finally:
+            store.close()
+
+    @router.post("/sync/pluggy")
+    async def sync_pluggy(full: bool = False, _user: str = Depends(require_user)):
+        from src.finance import pluggy_sync
+        if not pluggy_sync.configured():
+            raise HTTPException(400, "PLUGGY_CLIENT_ID/SECRET/ITEM_IDS nao configurados")
+        async with _lock:
+            def work():
+                store = _store()
+                try:
+                    res = pluggy_sync.sync(store, force_full=full)
+                    return {"items": res["items"], "categories": res.get("categories", {}).get("coverage")}
+                finally:
+                    store.close()
+            return await asyncio.to_thread(_locked, work)
+
+    @router.get("/investments")
+    def investments(_user: str = Depends(require_user)):
+        store = _store()
+        try:
+            rows = store.db.execute(
+                "SELECT i.*, s.date, s.balance_cents, s.original_cents FROM investments i JOIN investment_snapshots s"
+                " ON s.investment_id=i.id WHERE s.date = (SELECT max(date) FROM investment_snapshots WHERE investment_id=i.id)"
+                " ORDER BY s.balance_cents DESC").fetchall()
+            return {"investments": [dict(r) for r in rows]}
         finally:
             store.close()
 
@@ -398,6 +473,7 @@ def setup_finance_routes() -> APIRouter:
                     return {"ok": True, "category": cat or None, "coverage": res["coverage"]}
                 finally:
                     store.close()
-            return await asyncio.to_thread(work)
+            return await asyncio.to_thread(_locked, work)
 
+    start_poller()
     return router

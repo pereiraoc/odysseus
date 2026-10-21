@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from src.finance.importers import (nubank_fatura_pdf, ofx, santander_cc_pdf, santander_csv, santander_fatura_pdf, wise_api,
+from src.finance.importers import (nubank_fatura_pdf, ofx, pluggy, santander_cc_pdf, santander_csv, santander_fatura_pdf, wise_api,
                                    wise_csv)
 from src.finance.importers.base import ParsedFile, ParseError
 from src.finance.importers.pdf_text import ocr_pdf_text, pdf_text
@@ -11,6 +11,7 @@ from src.finance.importers.pdf_text import ocr_pdf_text, pdf_text
 BY_NAME = {m.NAME: m for m in (ofx, wise_csv, santander_csv, santander_cc_pdf, nubank_fatura_pdf, santander_fatura_pdf)}
 BY_NAME[santander_cc_pdf.OCR_NAME] = santander_cc_pdf
 BY_NAME[wise_api.NAME] = wise_api
+BY_NAME[pluggy.NAME] = pluggy
 PDF_IMPORTERS = (santander_cc_pdf, nubank_fatura_pdf)
 SNIFF_IMPORTERS = (ofx, wise_csv, santander_csv)
 
@@ -60,4 +61,8 @@ def parse_file_multi(name: str, data: bytes, pdf_password: Optional[str] = None,
     """Um bruto pode gerar varias contas (ex.: saldos de todas as moedas do Wise num JSON)."""
     if wise_api.sniff(name, data[:4096]):
         return wise_api.parse_multi(name, data)
+    if b'"_source": "pluggy-investments"' in data[:200]:
+        return []  # posicao de investimento: vai para investment_snapshots (pluggy_sync), nao para o livro
+    if pluggy.sniff(name, data[:4096]):
+        return pluggy.parse_multi(name, data)
     return [parse_file(name, data, pdf_password, corrections)]

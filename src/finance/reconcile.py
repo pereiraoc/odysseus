@@ -74,6 +74,8 @@ def reconcile_bills(store: Store, account_key: str) -> dict:
     bills, problems = [], []
     for b in blobs:
         cp = {r["kind"]: r["balance_cents"] for r in db.execute("SELECT kind, balance_cents FROM checkpoints WHERE sha256=?", (b["sha256"],))}
+        if "opening" not in cp or "closing" not in cp:
+            continue  # fonte sem fatura fechada (ex.: Open Finance): nao entra na conferencia fatura a fatura
         items = db.execute("SELECT coalesce(sum(s.amount_cents),0) FROM source_records s JOIN record_blobs rb ON rb.record_id=s.id"
                            " WHERE rb.sha256=?", (b["sha256"],)).fetchone()[0]
         diff = cp.get("opening", 0) + items - cp.get("closing", 0)

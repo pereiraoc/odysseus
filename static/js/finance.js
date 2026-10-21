@@ -94,16 +94,48 @@ async function renderOverview(pane) {
   const main = m.accounts.filter(a => !idle.includes(a));
   const cards = main.map(card).join('') + (idle.length
     ? `<details class="fin-idle"><summary>${idle.length} carteiras zeradas (${idle.map(a => a.currency).join(', ')})</summary><div class="fin-accs">${idle.map(card).join('')}</div></details>` : '');
+  const when = ts => ts ? new Date(ts).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  const items = (m.pluggy_items || []).map(it => {
+    const days = it.consent_expires ? Math.round((new Date(it.consent_expires) - Date.now()) / 864e5) : null;
+    return `<span class="fin-chip ${it.status === 'UPDATED' ? 'ok' : 'warn'}" title="autorização vale até ${when(it.consent_expires)}${days !== null ? ` (${days} dias)` : ''}">${esc(INST[it.institution] || it.institution)}: banco atualizado ${when(it.last_updated)}</span>`;
+  }).join('');
   const conn = `
     <div class="fin-conn">
-      <span class="fin-chip ${m.pluggy_configured ? 'ok' : ''}">Open Finance (Meu Pluggy): ${m.pluggy_configured ? 'configurado' : 'não configurado'}</span>
-      <span class="fin-chip ${m.wise_configured ? 'ok' : ''}">Wise API: ${m.wise_configured ? 'configurado' : 'não configurado'}</span>
+      ${m.pluggy_configured ? `${items}<button class="fin-btn fin-sync-pluggy" title="o banco atualiza no Open Finance a cada 24h; isto busca o que já chegou">Atualizar bancos</button>` : '<span class="fin-chip">Open Finance (Meu Pluggy): não configurado</span>'}
       ${m.wise_configured ? '<button class="fin-btn fin-sync-wise">Atualizar Wise</button>' : ''}
-      <span class="fin-chip">${(m.files.parsed || 0)} arquivos lidos · ${(m.files.error || 0)} com erro</span>
+      <span class="fin-chip">${(m.files.parsed || 0)} arquivos · ${(m.files.error || 0)} com erro</span>
       ${m.queue ? `<span class="fin-chip warn">${m.queue} na fila de revisão</span>` : ''}
     </div>`;
-  pane.innerHTML = `${conn}<div class="fin-accs">${cards}</div>
+  const invCards = (m.investments_total || []).map(iv => `
+    <div class="fin-acc" data-inv="1" title="ver investimentos">
+      <div class="fin-acc-h">${esc(INST[iv.institution] || iv.institution)} · investimentos</div>
+      <div class="fin-acc-v">${money(iv.total, iv.currency)}</div>
+      <div class="fin-acc-s">${iv.n} posições · em ${day(iv.date)} (Open Finance)</div>
+    </div>`).join('');
+  pane.innerHTML = `${conn}<div class="fin-accs">${invCards}${cards}</div><div class="fin-invlist"></div>
     <div class="fin-card"><div class="fin-card-h">Saldo no fim de cada mês <select class="fin-cur"></select><span class="fin-hint">uma moeda por vez; lacunas conhecidas já ajustadas</span></div><div class="fin-chart"></div></div>`;
+  pane.querySelector('.fin-sync-pluggy')?.addEventListener('click', async e => {
+    e.target.disabled = true;
+    e.target.textContent = 'Atualizando…';
+    try {
+      const r = await fetch(`${API}/sync/pluggy`, { method: 'POST', credentials: 'same-origin' });
+      if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+      const res = await r.json();
+      const skipped = res.items.filter(i => i.skipped).length;
+      if (skipped === res.items.length) showError('Finanças: os bancos ainda não atualizaram desde a última busca (o Open Finance atualiza a cada 24h).');
+      await refreshMeta();
+      render();
+    } catch (err) { showError(`Open Finance: ${err.message}`); e.target.disabled = false; e.target.textContent = 'Atualizar bancos'; }
+  });
+  pane.querySelectorAll('[data-inv]').forEach(c => c.addEventListener('click', async () => {
+    const host = pane.querySelector('.fin-invlist');
+    if (host.innerHTML) { host.innerHTML = ''; return; }
+    const { investments } = await get('/investments');
+    host.innerHTML = `<div class="fin-card"><div class="fin-card-h">Investimentos (${investments.length}) <span class="fin-hint">posição do último snapshot; o histórico de posição se forma a cada atualização</span></div>
+      <table class="fin-table"><thead><tr><th>Instituição</th><th>Tipo</th><th>Nome</th><th>Data</th><th class="num">Saldo</th></tr></thead><tbody>
+      ${investments.filter(i => i.balance_cents).map(i => `<tr><td>${esc(INST[i.institution] || i.institution)}</td><td>${esc((i.type || '') + (i.subtype ? ' / ' + i.subtype : ''))}</td><td class="desc">${esc(i.name || '')}</td><td>${day(i.date)}</td><td class="num">${money(i.balance_cents, i.currency)}</td></tr>`).join('')}</tbody></table>
+      <div class="fin-dim">${investments.filter(i => !i.balance_cents).length} posições zeradas (resgatadas) ocultas</div></div>`;
+  }));
   pane.querySelector('.fin-sync-wise')?.addEventListener('click', async e => {
     e.target.disabled = true;
     e.target.textContent = 'Atualizando…';
@@ -411,17 +443,17 @@ async function renderMonthly(pane) {
   const nwLast = lastP.net_worth, nwDelta = nwStart && nwLast !== null ? nwLast - nwStart.net_worth : null;
   const incompleteN = P.filter(p => p.incomplete).length;
   const kpis = `<div class="fin-kpis">
-    ${kpi('Patrimônio (contas − cartão)', money(nwLast, cur), nwDelta !== null ? `${nwDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(nwDelta), cur)} no período · + ${money(lastP.invested, cur)} aplicado*` : '')}
+    ${kpi('Patrimônio', money(lastP.nw_plus, cur), `contas − cartão ${money(nwLast, cur)} + investimentos ${money(lastP.investments ?? lastP.invested, cur)}${lastP.investments_source === 'estimado' ? '*' : ''}${nwDelta !== null ? ` · contas ${nwDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(nwDelta), cur)} no período` : ''}`)}
     ${kpi('Ganhos / mês', money(Math.round(incomeAvg), cur), `média dos últimos ${months12} meses`)}
     ${kpi('Gastos / mês', money(Math.round(expAvg), cur), `média dos últimos ${months12} meses`)}
     ${kpi('Taxa de poupança', sr === null ? '—' : (sr * 100).toFixed(0) + '%', 'referência comum: 15–20%')}
     ${kpi('Salário', money(lastP.salary, cur), `${esc(periodLabel(lastP.period, st.mGroup))} · média ${money(Math.round(sum('salary') / months12), cur)}/mês`)}
-    ${kpi('Reserva', lastP.reserve_months === null ? '—' : lastP.reserve_months.toFixed(1).replace('.', ',') + ' meses', '(patrimônio + aplicado) / gasto médio de 6 meses · ref. 3–6')}
+    ${kpi('Reserva', lastP.reserve_months === null ? '—' : lastP.reserve_months.toFixed(1).replace('.', ',') + ' meses', 'patrimônio / gasto médio de 6 meses · ref. 3–6')}
   </div>`;
   const warn = incompleteN ? `<div class="fin-note">⚠ ${incompleteN} período(s) com dados incompletos (barras apagadas): houve transferência entre suas contas sem o extrato/fatura do outro lado — o gasto de cartão desses meses pode estar faltando. Ver Auditoria.</div>` : '';
   const table = `<details class="fin-card"><summary class="fin-card-h">Tabela (${P.length} períodos) <button class="fin-btn fin-csv">baixar CSV</button></summary>
-    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Aplicado*</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
-    ${P.slice().reverse().map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary, cur)}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.invested, cur)}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
+    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Investido</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
+    ${P.slice().reverse().map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary, cur)}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.investments ?? p.invested, cur)}${p.investments_source === 'estimado' ? '*' : ''}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
   pane.innerHTML = `${filters}${kpis}${warn}
     <div class="fin-card"><div class="fin-card-h">Ganhos × gastos <span class="fin-hint">transferências entre suas contas, câmbio e aplicações não contam</span></div><div class="fin-ch-ie"></div></div>
     <div class="fin-grid2">
@@ -433,10 +465,10 @@ async function renderMonthly(pane) {
       <div class="fin-card"><div class="fin-card-h">Taxa de poupança <span class="fin-hint">(ganhos − gastos) ÷ ganhos</span></div><div class="fin-ch-sr"></div></div>
     </div>
     ${table}
-    <div class="fin-dim fin-defs">* <b>Aplicado</b> = soma do que foi para caixinhas/RDB/IPO, sem rendimento (estimativa até os saldos de investimento chegarem pelo Open Finance). Patrimônio soma só contas na moeda escolhida: dinheiro convertido para o Wise sai do total em BRL e aparece na moeda dele.</div>`;
+    <div class="fin-dim fin-defs">* <b>Investido estimado</b>: antes do primeiro snapshot do Open Finance, soma do que foi para caixinhas/RDB/IPO, sem rendimento. A partir dele, saldo real dos investimentos. Patrimônio soma só contas na moeda escolhida: dinheiro convertido para o Wise sai do total em BRL e aparece na moeda dele.</div>`;
   chartIncomeExpense(pane.querySelector('.fin-ch-ie'), P, cur);
   chartLine(pane.querySelector('.fin-ch-nw'), P, 'net_worth', SERIES[0], cur, { label: 'patrimônio',
-    extra: { key: 'nw_plus', label: 'patrimônio + aplicado*', color: SERIES[2], fmtTip: v => money(v, cur) } });
+    extra: { key: 'nw_plus', label: 'com investimentos (* estimado antes do Open Finance)', color: SERIES[2], fmtTip: v => money(v, cur) } });
   chartLine(pane.querySelector('.fin-ch-sal'), P, 'salary', SERIES[0], cur, { label: 'salário', area: false });
   chartStacked(pane.querySelector('.fin-ch-st'), P, d.groups, cur);
   chartLine(pane.querySelector('.fin-ch-sr'), P.map(p => ({ ...p, sr100: p.savings_rate === null ? null : Math.round(p.savings_rate * 10000) })), 'sr100', SERIES[0], cur,
@@ -444,7 +476,7 @@ async function renderMonthly(pane) {
   pane.querySelector('.fin-csv').addEventListener('click', e => {
     e.preventDefault();
     const head = ['periodo', 'ganhos', 'salario', 'gastos', 'fixos', 'variaveis', 'saldo', 'taxa_poupanca', 'patrimonio', 'aplicado', 'reserva_meses', 'incompleto'];
-    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary, p.expenses, p.fixed, p.variable, p.net, p.savings_rate ?? '', p.net_worth ?? '', p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
+    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary, p.expenses, p.fixed, p.variable, p.net, p.savings_rate ?? '', p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
       .map((v, i) => (i >= 1 && i <= 6) || i === 8 || i === 9 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));

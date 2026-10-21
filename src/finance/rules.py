@@ -14,6 +14,9 @@ Condicoes (todas precisam bater; texto e normalizado sem acento/caixa):
   institution / kind / currency     da conta ('nubank', 'credit_card', 'BRL'...)
   sign                              'debit' (saida) | 'credit' (entrada)
   min / max                         valor absoluto em reais
+  provider_category_any             categoria que o Open Finance/Pluggy mandou (ingles: 'Eating out', ...)
+  flag                              marca do importador ('self_transfer' = de/para o seu proprio CPF)
+  counterparty_account_any          conta da outra ponta ('033/3735/713086548'; substring, so Open Finance)
 Acoes: category (obrigatoria). Vence a regra de MAIOR priority; empate -> ordem no arquivo.
 Categoria manual (annotations.manual=1) nunca e sobrescrita.
 
@@ -90,6 +93,12 @@ class Rule:
             return False
         if w.get("sign") == "credit" and tx["amount_cents"] <= 0:
             return False
+        if "provider_category_any" in w and tx["provider_category"] not in w["provider_category_any"]:
+            return False
+        if "flag" in w and not tx["flags"].get(w["flag"]):
+            return False
+        if "counterparty_account_any" in w and not any(x in tx["counterparty_account"] for x in w["counterparty_account_any"]):
+            return False
         a = abs(tx["amount_cents"]) / 100
         if "min" in w and a < w["min"]:
             return False
@@ -124,9 +133,20 @@ def _txs(store: Store) -> list[dict]:
     rows = store.db.execute(
         "SELECT t.id, t.anchor_key, t.account_key, t.date, t.amount_cents, t.description,"
         " a.institution, a.kind, a.currency FROM transactions t JOIN accounts a ON a.key=t.account_key").fetchall()
+    extras: dict[int, dict] = {}
+    for r in store.db.execute("SELECT l.tx_id, s.extra_json FROM tx_links l JOIN source_records s ON s.id=l.record_id"
+                              " WHERE s.extra_json IS NOT NULL"):
+        e = json.loads(r["extra_json"])
+        cur = extras.setdefault(r["tx_id"], {})
+        for k, v in e.items():
+            cur.setdefault(k, v)
     out = []
     for r in rows:
         d = dict(r)
+        e = extras.get(r["id"], {})
+        d["provider_category"] = e.get("category") if isinstance(e.get("category"), str) else None
+        d["flags"] = {k: v for k, v in e.items() if k in ("self_transfer",)}
+        d["counterparty_account"] = e.get("counterparty_account") or ""
         d["text"] = norm_desc(r["description"])
         d["merchant"] = merchant(r["description"])
         out.append(d)

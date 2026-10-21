@@ -239,6 +239,18 @@ O caminho é baixar à mão (PDF, às vezes assinado) e importar com um parser p
   - orçamento/metas por categoria;
   - comparação ano a ano.
 
+## Estado (2026-10-21): Open Finance ligado
+- **Meu Pluggy conectado:** Nubank, Santander e Wise; o consentimento vale até 2027-10-21.
+- **O que veio no spike** (12 meses, de 10/2025 em diante):
+  - Nubank: conta, cartão (com parcelas futuras PENDING) e 38 CDBs/caixinhas;
+  - Santander: conta e cartão;
+  - Wise: saldos por moeda;
+  - nenhum empréstimo.
+- **Sem saldo por transação:** a Pluggy não manda. O período dela só fecha com os extratos de 01/2024 a 09/2025.
+- **Conta-salário Santander 033/3735/71308654-8:** não entra no Open Finance. O salário chega ao Nubank como transferência do próprio CPF; a regra `salario-conta-salario-santander` classifica.
+- **Mesmo CPF:** transferências de/para o próprio CPF ganham a marca `self_transfer` e viram transferência interna.
+- **Categorias da Pluggy:** as categorias em inglês viram regras de reserva, com prioridade 50; cobertura de 91%.
+
 ## Passos que dependem de você (o resto eu faço)
 Você faz isso uma vez, antes da F0, e me manda Client ID, Client Secret e os Item IDs. Eu coloco no `.env`, que é gitignored.
 1. Criar conta em **meu.pluggy.ai** e clicar em **"Conectar Minha Conta"**.

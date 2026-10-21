@@ -235,7 +235,13 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
 - Painel na sidebar ("Finanças"): Visão geral, Transações (com as fontes de cada
   uma), Auditoria (quebras de saldo, faturas, fila de revisão, erros) e Arquivos
   (upload + download do original).
-- CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse|wise-sync`.
+- Open Finance (Meu Pluggy, grátis): `src/finance/pluggy_client.py`, `pluggy_sync.py`, `importers/pluggy.py`.
+  Poller em thread própria (a cada 3h, `FINANCE_POLL_SECONDS`; desliga com `FINANCE_POLLER=0`), só baixa quando
+  o banco atualizou (`lastUpdatedAt`); leitura completa semanal. Investimentos viram `investment_snapshots`.
+  Spike/diagnóstico: `./venv/bin/python -m src.finance.pluggy_probe`.
+- CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse|wise-sync|uncategorized`.
+- **Reprocessar tudo (`reparse`) só dentro do container** (`docker exec -u 1000 odysseus-odysseus-1 ...`): o host
+  não tem tesseract; arquivos que falham só por ambiente mantêm o estado anterior.
 
 **Arquivos novos (aditivos, nunca conflitam):** `src/finance/**`, `routes/finance_routes.py`,
 `static/js/finance.js`, `static/css/zz-fork-finance.css`, `tests/test_finance_core.py`,
