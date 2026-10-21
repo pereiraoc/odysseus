@@ -5,6 +5,9 @@ Definicoes (documentadas tambem na UI):
   gastos      tudo que sai e nao e movimento entre contas proprias (- estornos da mesma categoria)
   neutros     transferencias:interna/cambio/investimento, financeiro:rotativo, ajustes:* -- nao contam
   salario     renda:salario (base); adicional = renda:adicional:* (ex.: expatriacao) conta como ganho, nao como salario
+  13o/extra   ESTIMADOS (o extrato nao traz a quebra do holerite): base = mediana do salario dos ate 6 meses
+              normais anteriores; base = mediana dos meses vizinhos (3 antes/3 depois, sem nov/dez); o que passar de 1,25x a base vira 13o em nov/dez e 'extra' nos outros meses
+              (ferias ou outro pagamento avulso; o padrao tipico de ferias e deposito fora do dia + saldo menor no fim do mes). Hora extra fica dentro do salario normal e nao se separa.
   periodos    data/finance/ledger/periods.json: faixas de contexto (ex.: expatriado) desenhadas nos graficos
   poupanca    (ganhos - gastos) / ganhos
   patrimonio  soma do saldo de fim de mes das contas na moeda + passivo do cartao (ultima fatura
@@ -91,7 +94,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         " WHERE a.category=? AND c.currency=? AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs)",
         (INTERNAL, currency))}
 
-    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "people_in": 0, "people_out": 0,
+    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
                                "fixed": 0, "variable": 0, "uncategorized": 0, "by_group": defaultdict(int), "n": 0})
     for r in rows:
         m, v, cat = r["date"][:7], r["amount_cents"], r["cat"]
@@ -131,6 +134,32 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
             p["fixed"] -= v
         else:
             p["variable"] -= v
+
+    # decomposicao ESTIMADA do salario por mes: base x 13o x extra. Base = mediana dos meses vizinhos
+    # (ate 3 antes e 3 depois, sem nov/dez): aumento de salario entra na base, pico isolado nao.
+    from statistics import median
+    sal_months = [m for m in sorted(per) if per[m]["salary"] > 0]
+    regular = [m for m in sal_months if m[5:7] not in ("11", "12")]
+    for m in sorted(per):
+        p = per[m]
+        total = p["salary"]
+        p["salary_base"], p["salary_13"], p["salary_other"] = total, 0, 0
+        if total <= 0:
+            continue
+        def dist(a: str, b: str) -> int:
+            return abs((int(a[:4]) - int(b[:4])) * 12 + int(a[5:7]) - int(b[5:7]))
+        before = [x for x in regular if x < m and dist(x, m) <= 6][-3:]
+        after = [x for x in regular if x > m and dist(x, m) <= 6][:3]
+        neigh = [per[x]["salary"] for x in before + after]
+        if len(neigh) < 3:
+            continue
+        base = median(neigh)
+        if total > base * 1.25:
+            p["salary_base"] = round(base)
+            if m[5:7] in ("11", "12"):
+                p["salary_13"] = total - round(base)
+            else:
+                p["salary_other"] = total - round(base)
 
     # patrimonio de fim de mes (contas + carteiras na moeda; cartao = -ultima fatura recente)
     accs = db.execute("SELECT key, kind FROM accounts WHERE currency=?", (currency,)).fetchall()
@@ -183,7 +212,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if (date_from and m < date_from[:7]) or (date_to and m > date_to[:7]):
             continue
         k = _bucket(m, group)
-        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "people_in": 0,
+        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0,
+                                   "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0,
                                    "people_out": 0, "fixed": 0, "variable": 0, "uncategorized": 0,
                                    "by_group": defaultdict(int), "incomplete": False, "card_known": True,
                                    "net_worth": None, "invested": 0, "investments": None, "n": 0, "data_months": 0})
@@ -192,7 +222,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if p is None or not p["n"]:
             continue
         b["data_months"] += 1
-        for f in ("income", "expenses", "salary", "salary_extra", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
+        for f in ("income", "expenses", "salary", "salary_extra", "salary_base", "salary_13", "salary_other", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
             b[f] += p[f]
         for g, v in p["by_group"].items():
             b["by_group"][g] += v

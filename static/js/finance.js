@@ -449,26 +449,34 @@ function chartStacked(host, periods, groups, cur) {
   host.insertAdjacentHTML('beforeend', legend(top.map(g => [g, colorOf(g)]).concat(groups.length > 7 ? [['outros', OTHER]] : [])));
 }
 
+const SAL_PARTS = [  // ordem fixa = cores fixas (slots 1-4 da paleta validada)
+  ['salary_base', 'salário base', SERIES[0]],
+  ['salary_13', '13º (estimado)', SERIES[1]],
+  ['salary_other', 'férias/outros (estimado)', SERIES[2]],
+  ['salary_extra', 'adicional de expatriação', SERIES[3]],
+];
 function chartSalary(host, periods, cur) {
-  const f = axisFrame(host, periods, 0, Math.max(1, ...periods.map(p => p.salary + p.salary_extra)));
+  const total = p => SAL_PARTS.reduce((a, [k]) => a + (p[k] || 0), 0);
+  const f = axisFrame(host, periods, 0, Math.max(1, ...periods.map(total)));
   const bw = Math.min(24, f.band - 6);
   periods.forEach((p, i) => {
-    const op = p.partial ? 0.45 : 1;
-    if (p.salary > 0) {
-      const el = p.salary_extra > 0 ? svgEl('rect', { x: f.xc(i) - bw / 2, y: f.y(p.salary), width: bw, height: f.y(0) - f.y(p.salary), fill: SERIES[0] })
-        : roundedBar(f.xc(i) - bw / 2, bw, f.y(0), f.y(p.salary), SERIES[0]);
-      el.setAttribute('opacity', op); f.svg.append(el);
-    }
-    if (p.salary_extra > 0) {
-      const el = roundedBar(f.xc(i) - bw / 2, bw, f.y(p.salary) - 2, f.y(p.salary + p.salary_extra), SERIES[3]);
-      el.setAttribute('opacity', op); f.svg.append(el);
-    }
+    const parts = SAL_PARTS.filter(([k]) => (p[k] || 0) > 0);
+    let acc = 0;
+    parts.forEach(([k, , color], j) => {
+      const v = p[k], y0 = f.y(acc) - (j ? 2 : 0), y1 = f.y(acc + v);
+      const el = j === parts.length - 1 ? roundedBar(f.xc(i) - bw / 2, bw, y0, y1, color)
+        : svgEl('rect', { x: f.xc(i) - bw / 2, y: y1, width: bw, height: Math.max(0, y0 - y1), fill: color });
+      if (p.partial) el.setAttribute('opacity', 0.45);
+      f.svg.append(el);
+      acc += v;
+    });
   });
-  hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow('salário base', money(p.salary, cur), SERIES[0])
-    + (p.salary_extra ? tipRow('adicional (expatriação etc.)', money(p.salary_extra, cur), SERIES[3]) : ''));
+  hitColumns(f.svg, f, periods, p => tipHead(p) + SAL_PARTS.filter(([k]) => p[k]).map(([k, l, c]) => tipRow(l, money(p[k], cur), c)).join('')
+    + (total(p) ? tipRow('total', money(total(p), cur)) : ''));
   host.innerHTML = '';
   host.append(f.svg);
-  if (periods.some(p => p.salary_extra)) host.insertAdjacentHTML('beforeend', legend([['Salário base', SERIES[0]], ['Adicional (renda:adicional:*)', SERIES[3]]]));
+  const used = SAL_PARTS.filter(([k]) => periods.some(p => p[k]));
+  if (used.length > 1) host.insertAdjacentHTML('beforeend', legend(used.map(([, l, c]) => [l, c])));
 }
 
 function kpi(label, value, sub) {
@@ -505,18 +513,18 @@ async function renderMonthly(pane) {
     ${kpi('Ganhos / mês', money(Math.round(incomeAvg), cur), `média dos últimos ${months12} meses`)}
     ${kpi('Gastos / mês', money(Math.round(expAvg), cur), `média dos últimos ${months12} meses`)}
     ${kpi('Taxa de poupança', sr === null ? '—' : (sr * 100).toFixed(0) + '%', 'referência comum: 15–20%')}
-    ${kpi('Salário (base)', money(lastP.salary, cur), `${esc(periodLabel(lastP.period, st.mGroup))} · média ${money(Math.round(sum('salary') / months12), cur)}/mês${sum('salary_extra') ? ` · + adicional ${money(Math.round(sum('salary_extra') / months12), cur)}/mês` : ''}`)}
+    ${kpi('Salário (base)', money(lastP.salary_base, cur), `${esc(periodLabel(lastP.period, st.mGroup))} · base média ${money(Math.round(sum('salary_base') / months12), cur)}/mês · 13º+extras+adicional ${money(sum('salary_13') + sum('salary_other') + sum('salary_extra'), cur)} em ${months12} meses`)}
     ${kpi('Reserva', lastP.reserve_months === null ? '—' : lastP.reserve_months.toFixed(1).replace('.', ',') + ' meses', 'patrimônio / gasto médio de 6 meses · ref. 3–6')}
   </div>`;
   const warn = incompleteN ? `<div class="fin-note">⚠ ${incompleteN} período(s) com dados incompletos (barras apagadas): houve transferência entre suas contas sem o extrato/fatura do outro lado — o gasto de cartão desses meses pode estar faltando. Ver Auditoria.</div>` : '';
   const table = `<details class="fin-card"><summary class="fin-card-h">Tabela (${P.length} períodos) <button class="fin-btn fin-csv">baixar CSV</button></summary>
-    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário</th><th class="num">Adicional</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Investido</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
-    ${P.slice().reverse().filter(p => !p.no_data).map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary, cur)}</td><td class="num">${p.salary_extra ? money(p.salary_extra, cur) : ''}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.investments ?? p.invested, cur)}${p.investments_source === 'estimado' ? '*' : ''}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
+    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário base</th><th class="num">13º*</th><th class="num">Férias/outros*</th><th class="num">Adicional</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Investido</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
+    ${P.slice().reverse().filter(p => !p.no_data).map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary_base, cur)}</td><td class="num">${p.salary_13 ? money(p.salary_13, cur) : ''}</td><td class="num">${p.salary_other ? money(p.salary_other, cur) : ''}</td><td class="num">${p.salary_extra ? money(p.salary_extra, cur) : ''}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.investments ?? p.invested, cur)}${p.investments_source === 'estimado' ? '*' : ''}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
   pane.innerHTML = `${filters}${kpis}${warn}
     <div class="fin-card"><div class="fin-card-h">Ganhos × gastos <span class="fin-hint">transferências entre suas contas, câmbio e aplicações não contam</span></div><div class="fin-ch-ie"></div></div>
     <div class="fin-grid2">
       <div class="fin-card"><div class="fin-card-h">Patrimônio <span class="fin-hint">saldo das contas − cartão, fim do período</span></div><div class="fin-ch-nw"></div></div>
-      <div class="fin-card"><div class="fin-card-h">Salário <span class="fin-hint">base + adicionais separados</span></div><div class="fin-ch-sal"></div></div>
+      <div class="fin-card"><div class="fin-card-h">Salário <span class="fin-hint">13º e extras estimados pelo padrão de depósitos (o holerite daria o exato)</span></div><div class="fin-ch-sal"></div></div>
     </div>
     <div class="fin-grid2">
       <div class="fin-card"><div class="fin-card-h">Gastos por grupo</div><div class="fin-ch-st"></div></div>
@@ -533,9 +541,9 @@ async function renderMonthly(pane) {
     { label: 'taxa de poupança', fmt: v => (v / 100).toFixed(0) + '%', tipFmt: v => (v / 100).toFixed(0) + '%', area: false });
   pane.querySelector('.fin-csv').addEventListener('click', e => {
     e.preventDefault();
-    const head = ['periodo', 'ganhos', 'salario', 'adicional', 'gastos', 'fixos', 'variaveis', 'saldo', 'taxa_poupanca_pct', 'patrimonio', 'aplicado', 'reserva_meses', 'incompleto'];
-    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary, p.salary_extra, p.expenses, p.fixed, p.variable, p.net, p.savings_rate === null ? '' : Math.round(p.savings_rate * 1000) / 10, p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
-      .map((v, i) => (i >= 1 && i <= 7) || i === 9 || i === 10 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
+    const head = ['periodo', 'ganhos', 'salario_base', 'decimo_terceiro_est', 'ferias_outros_est', 'adicional', 'gastos', 'fixos', 'variaveis', 'saldo', 'taxa_poupanca_pct', 'patrimonio', 'aplicado', 'reserva_meses', 'incompleto'];
+    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary_base, p.salary_13, p.salary_other, p.salary_extra, p.expenses, p.fixed, p.variable, p.net, p.savings_rate === null ? '' : Math.round(p.savings_rate * 1000) / 10, p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
+      .map((v, i) => (i >= 1 && i <= 9) || i === 11 || i === 12 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
     a.download = `financas-${cur}-${st.mGroup}.csv`;

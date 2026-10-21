@@ -407,3 +407,23 @@ def test_pluggy_self_transfer_and_counterparty_rule(store):
         {"id": "sal", "priority": 960, "when": {"counterparty_account_any": ["033/3735/713086548"], "sign": "credit"}, "then": {"category": "renda:salario"}},
         {"id": "self", "priority": 905, "when": {"flag": "self_transfer"}, "then": {"category": "transferencias:interna"}}]}))
     assert rules.categorize(store)["hits"] == {"sal": 1, "self": 1}
+
+
+def test_salary_split_estimates_13th_and_extra(store):
+    import json as _json
+    from src.finance import rules
+    from src.finance.analytics import monthly
+    rows, months = [], ["2023-%02d" % m for m in range(1, 13)]
+    for m in months:
+        amount = {"2023-04": "9000.00", "2023-11": "11000.00", "2023-12": "12000.00"}.get(m, "5000.00")
+        rows.append((m.replace("-", "") + "15", amount, f"s{m}", "Credito de salario"))
+    ingest_bytes(store, "a.ofx", ofx("5555-1", rows))
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "sal", "when": {"text_any": ["salario"]}, "then": {"category": "renda:salario"}}]}))
+    rules.categorize(store)
+    p = {x["period"]: x for x in monthly(store)["periods"]}
+    assert (p["2023-04"]["salary_base"], p["2023-04"]["salary_other"]) == (500000, 400000)   # pico fora de nov/dez = extra
+    assert (p["2023-11"]["salary_base"], p["2023-11"]["salary_13"]) == (500000, 600000)      # nov/dez = 13o
+    assert p["2023-06"]["salary_13"] == p["2023-06"]["salary_other"] == 0 and p["2023-06"]["salary_base"] == 500000
