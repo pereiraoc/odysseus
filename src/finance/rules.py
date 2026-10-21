@@ -17,6 +17,7 @@ Condicoes (todas precisam bater; texto e normalizado sem acento/caixa):
   provider_category_any             categoria que o Open Finance/Pluggy mandou (ingles: 'Eating out', ...)
   flag                              marca do importador ('self_transfer' = de/para o seu proprio CPF)
   counterparty_account_any          conta da outra ponta ('033/3735/713086548'; substring, so Open Finance)
+  date_from / date_to               periodo (AAAA-MM ou AAAA-MM-DD, inclusivo)
 Acoes: category (obrigatoria). Vence a regra de MAIOR priority; empate -> ordem no arquivo.
 Categoria manual (annotations.manual=1) nunca e sobrescrita.
 
@@ -98,6 +99,10 @@ class Rule:
         if "flag" in w and not tx["flags"].get(w["flag"]):
             return False
         if "counterparty_account_any" in w and not any(x in tx["counterparty_account"] for x in w["counterparty_account_any"]):
+            return False
+        if "date_from" in w and tx["date"] < w["date_from"]:
+            return False
+        if "date_to" in w and tx["date"][: len(w["date_to"])] > w["date_to"]:
             return False
         a = abs(tx["amount_cents"]) / 100
         if "min" in w and a < w["min"]:

@@ -4,7 +4,8 @@ Definicoes (documentadas tambem na UI):
   ganhos      categorias renda:* (+ entradas sem categoria; + Pix/TED recebidos de pessoas se people=True)
   gastos      tudo que sai e nao e movimento entre contas proprias (- estornos da mesma categoria)
   neutros     transferencias:interna/cambio/investimento, financeiro:rotativo, ajustes:* -- nao contam
-  salario     renda:salario
+  salario     renda:salario (base); adicional = renda:adicional:* (ex.: expatriacao) conta como ganho, nao como salario
+  periodos    data/finance/ledger/periods.json: faixas de contexto (ex.: expatriado) desenhadas nos graficos
   poupanca    (ganhos - gastos) / ganhos
   patrimonio  soma do saldo de fim de mes das contas na moeda + passivo do cartao (ultima fatura
               fechada ate 45 dias antes). Moedas diferentes nao se somam (sem cambio inventado).
@@ -90,7 +91,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         " WHERE a.category=? AND c.currency=? AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs)",
         (INTERNAL, currency))}
 
-    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "people_in": 0, "people_out": 0,
+    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "people_in": 0, "people_out": 0,
                                "fixed": 0, "variable": 0, "uncategorized": 0, "by_group": defaultdict(int), "n": 0})
     for r in rows:
         m, v, cat = r["date"][:7], r["amount_cents"], r["cat"]
@@ -115,6 +116,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
             p["income"] += v
             if cat == "renda:salario":
                 p["salary"] += v
+            elif cat.startswith("renda:adicional"):
+                p["salary_extra"] += v
             if not cat:
                 p["uncategorized"] += v
             continue
@@ -173,17 +176,23 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
 
     # agregacao por periodo + filtros de data
     buckets: dict[str, dict] = {}
-    for m in months_all:
+    # todos os meses entre o primeiro e o ultimo dado: mes sem nenhum lancamento aparece vazio (no_data)
+    # em vez de sumir do eixo e fazer a linha "pular" o buraco
+    all_months = [d[:7] for d in _month_ends(months_all[0], months_all[-1])]
+    for m in all_months:
         if (date_from and m < date_from[:7]) or (date_to and m > date_to[:7]):
             continue
         k = _bucket(m, group)
-        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "people_in": 0,
+        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "people_in": 0,
                                    "people_out": 0, "fixed": 0, "variable": 0, "uncategorized": 0,
                                    "by_group": defaultdict(int), "incomplete": False, "card_known": True,
-                                   "net_worth": None, "invested": 0, "investments": None, "n": 0})
-        p = per[m]
+                                   "net_worth": None, "invested": 0, "investments": None, "n": 0, "data_months": 0})
+        p = per[m] if m in per else None
         b["months"] += 1
-        for f in ("income", "expenses", "salary", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
+        if p is None or not p["n"]:
+            continue
+        b["data_months"] += 1
+        for f in ("income", "expenses", "salary", "salary_extra", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
             b[f] += p[f]
         for g, v in p["by_group"].items():
             b["by_group"][g] += v
@@ -204,16 +213,23 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
                 b["partial"], b["last_date"] = True, last_date
     for b in periods:
         b.setdefault("partial", False)
+        b["no_data"] = b["data_months"] == 0
     exp_hist = [per[m]["expenses"] for m in months_all]
     idx = {m: i for i, m in enumerate(months_all)}
     for b in periods:
         b["net"] = b["income"] - b["expenses"]
+        b.pop("nw_plus_raw", None)
         inv = b["investments"] if b["investments"] is not None else b["invested"]
         b["investments_source"] = "real" if b["investments"] is not None else "estimado"
         b["nw_plus"] = b["net_worth"] + inv if b["net_worth"] is not None else None
-        b["savings_rate"] = round(b["net"] / b["income"], 4) if b["income"] > 0 else None
+        b["savings_rate"] = round(b["net"] / b["income"], 4) if b["income"] > 0 and not b["no_data"] else None
+        if b["no_data"]:
+            b["net_worth"] = b["nw_plus"] = None
         b["by_group"] = dict(b["by_group"])
-        last_m = max(m for m in months_all if _bucket(m, group) == b["period"])
+        last_m = max((m for m in months_all if _bucket(m, group) == b["period"]), default=None)
+        if last_m is None:
+            b["avg_expenses_6m"], b["reserve_months"] = 0, None
+            continue
         window = exp_hist[max(0, idx[last_m] - 5): idx[last_m] + 1]
         avg = sum(window) / len(window) if window else 0
         b["avg_expenses_6m"] = round(avg)
@@ -223,5 +239,10 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         for g, v in b["by_group"].items():
             totals[g] += v
     groups = [g for g, _ in sorted(totals.items(), key=lambda kv: -kv[1])]
-    return {"currency": currency, "group": group, "periods": periods, "groups": groups,
+    ctx = []
+    pf = store.root / "ledger" / "periods.json"
+    if pf.is_file():
+        import json
+        ctx = json.loads(pf.read_text(encoding="utf-8")).get("periods", [])
+    return {"currency": currency, "group": group, "periods": periods, "groups": groups, "context": ctx,
             "definitions": __doc__.split("Definicoes (documentadas tambem na UI):")[1].strip()}

@@ -301,6 +301,13 @@ function periodLabel(p, group) {
   const m = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(p.slice(5, 7)) - 1];
   return `${m}/${p.slice(2, 4)}`;
 }
+let ctxBands = [];
+function periodMonth(p) {  // primeiro e ultimo AAAA-MM cobertos pelo periodo (mes, trimestre ou ano)
+  if (/^\d{4}$/.test(p)) return [p + '-01', p + '-12'];
+  const q = p.match(/^(\d{4})-T(\d)$/);
+  if (q) { const a = (Number(q[2]) - 1) * 3 + 1; return [`${q[1]}-${String(a).padStart(2, '0')}`, `${q[1]}-${String(a + 2).padStart(2, '0')}`]; }
+  return [p, p];
+}
 function axisFrame(host, periods, vmin, vmax, { H = 230, fmt = compact } = {}) {
   const W = Math.max(host.clientWidth || 900, 360), P = { l: 64, r: 12, t: 10, b: 26 };
   const ticks = niceTicks(Math.min(0, vmin), Math.max(0, vmax));
@@ -309,6 +316,18 @@ function axisFrame(host, periods, vmin, vmax, { H = 230, fmt = compact } = {}) {
   const band = (W - P.l - P.r) / Math.max(periods.length, 1);
   const xc = i => P.l + band * (i + 0.5);
   const svg = svgEl('svg', { width: W, height: H, class: 'fin-svg' });
+  ctxBands.forEach(b => {  // faixa de contexto (ex.: expatriado) atras de tudo
+    const idx = periods.map((p, i) => [i, periodMonth(p.period)]).filter(([, [a, z]]) => z >= b.from && a <= b.to).map(([i]) => i);
+    if (!idx.length) return;
+    const x0 = P.l + band * idx[0], x1 = P.l + band * (idx[idx.length - 1] + 1);
+    svg.append(svgEl('rect', { x: x0, y: P.t, width: x1 - x0, height: H - P.t - P.b, class: 'fin-band' }));
+    svg.append(svgEl('text', { x: x0 + 4, y: P.t + 11, class: 'fin-band-l' }, b.label));
+  });
+  let run = null;
+  const endRun = i => { if (run !== null) { svg.append(svgEl('rect', { x: P.l + band * run, y: P.t, width: band * (i - run), height: H - P.t - P.b, class: 'fin-nodata' }));
+    if (i - run >= 3) svg.append(svgEl('text', { x: P.l + band * (run + (i - run) / 2), y: P.t + 24, 'text-anchor': 'middle', class: 'fin-band-l' }, 'sem dados')); run = null; } };
+  periods.forEach((p, i) => { if (p.no_data) { if (run === null) run = i; } else endRun(i); });
+  endRun(periods.length);
   ticks.forEach(v => {
     svg.append(svgEl('line', { x1: P.l, x2: W - P.r, y1: y(v), y2: y(v), class: v === 0 ? 'fin-base' : 'fin-grid' }));
     svg.append(svgEl('text', { x: P.l - 6, y: y(v) + 3, 'text-anchor': 'end', class: 'fin-axis' }, fmt(v)));
@@ -339,7 +358,7 @@ function hitColumns(svg, f, periods, onTip) {
   });
 }
 const tipRow = (label, value, color) => `<div class="fin-tip-r">${color ? `<i style="background:${color}"></i>` : ''}<b>${value}</b><span>${esc(label)}</span></div>`;
-const tipHead = p => `<div class="fin-tip-h">${esc(periodLabel(p.period, st.mGroup))}${p.partial ? ' · parcial (dados até ' + day(p.last_date) + ')' : ''}${p.incomplete ? ' · ⚠ dados incompletos' : ''}</div>`;
+const tipHead = p => `<div class="fin-tip-h">${esc(periodLabel(p.period, st.mGroup))}${p.no_data ? ' · sem dados (falta extrato)' : ''}${p.partial ? ' · parcial (dados até ' + day(p.last_date) + ')' : ''}${p.incomplete ? ' · ⚠ dados incompletos' : ''}</div>`;
 
 function chartIncomeExpense(host, periods, cur) {
   const vals = periods.flatMap(p => [p.income, p.expenses, p.net]);
@@ -353,8 +372,10 @@ function chartIncomeExpense(host, periods, cur) {
       const b = roundedBar(x, bw, f.y(0), f.y(v), c); b.setAttribute('opacity', op); f.svg.append(b);
     });
   });
-  const pts = periods.map((p, i) => `${f.xc(i).toFixed(1)},${f.y(p.net).toFixed(1)}`).join(' ');
-  f.svg.append(svgEl('polyline', { points: pts, fill: 'none', stroke: 'var(--fin-ink2)', 'stroke-width': 2, 'stroke-linejoin': 'round' }));
+  let seg = [];
+  const flush = () => { if (seg.length > 1) f.svg.append(svgEl('polyline', { points: seg.join(' '), fill: 'none', stroke: 'var(--fin-ink2)', 'stroke-width': 2, 'stroke-linejoin': 'round' })); seg = []; };
+  periods.forEach((p, i) => { if (p.no_data) flush(); else seg.push(`${f.xc(i).toFixed(1)},${f.y(p.net).toFixed(1)}`); });
+  flush();
   hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow('ganhos', money(p.income, cur), SERIES[0]) + tipRow('gastos', money(p.expenses, cur), SERIES[1])
     + tipRow('saldo do período', money(p.net, cur)) + (p.savings_rate !== null ? tipRow('taxa de poupança', (p.savings_rate * 100).toFixed(0) + '%') : ''));
   host.innerHTML = '';
@@ -362,22 +383,36 @@ function chartIncomeExpense(host, periods, cur) {
   host.insertAdjacentHTML('beforeend', legend([['Ganhos', SERIES[0]], ['Gastos', SERIES[1]], ['Saldo (ganhos − gastos)', 'var(--fin-ink2)', 'line']]));
 }
 
-function chartLine(host, periods, key, color, cur, { label, fmt = compact, extra, area = true } = {}) {
+function chartLine(host, periods, key, color, cur, { label, fmt = compact, tipFmt, extra, area = true } = {}) {
+  // formato do tooltip e explicito por grafico (nada de adivinhar pelo nome do campo)
+  const tf = tipFmt || (v => money(v, cur));
   const pts = periods.map((p, i) => [i, p[key]]).filter(([, v]) => v !== null && v !== undefined);
   if (!pts.length) { host.innerHTML = '<div class="fin-empty">Sem dados no período.</div>'; return; }
-  const vals = pts.map(([, v]) => v).concat(extra ? periods.map(p => p[extra.key]).filter(v => v !== null) : []);
+  const vals = pts.map(([, v]) => v).concat(extra ? periods.map(p => p[extra.key]).filter(v => v !== null && v !== undefined) : []);
   const f = axisFrame(host, periods, Math.min(...vals), Math.max(...vals), { fmt });
-  const line = pts.map(([i, v]) => `${f.xc(i).toFixed(1)},${f.y(v).toFixed(1)}`).join(' ');
-  if (area) f.svg.append(svgEl('polygon', { points: `${f.xc(pts[0][0])},${f.y(0)} ${line} ${f.xc(pts[pts.length - 1][0])},${f.y(0)}`, fill: color, opacity: 0.1 }));
-  if (extra) {
-    const ep = periods.map((p, i) => [i, p[extra.key]]).filter(([, v]) => v !== null);
-    f.svg.append(svgEl('polyline', { points: ep.map(([i, v]) => `${f.xc(i).toFixed(1)},${f.y(v).toFixed(1)}`).join(' '), fill: 'none', stroke: extra.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }));
-  }
-  f.svg.append(svgEl('polyline', { points: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  // linha interrompida onde nao ha dado (nunca liga os dois lados de um buraco)
+  const segments = k => {
+    const out = []; let cur = [];
+    periods.forEach((p, i) => {
+      const v = p[k];
+      if (v === null || v === undefined) { if (cur.length) out.push(cur); cur = []; } else cur.push([i, v]);
+    });
+    if (cur.length) out.push(cur);
+    return out;
+  };
+  const toPts = seg => seg.map(([i, v]) => `${f.xc(i).toFixed(1)},${f.y(v).toFixed(1)}`).join(' ');
+  segments(key).forEach(seg => {
+    if (area && seg.length > 1) f.svg.append(svgEl('polygon', { points: `${f.xc(seg[0][0])},${f.y(0)} ${toPts(seg)} ${f.xc(seg[seg.length - 1][0])},${f.y(0)}`, fill: color, opacity: 0.1 }));
+  });
+  if (extra) segments(extra.key).forEach(seg => f.svg.append(svgEl('polyline', { points: toPts(seg), fill: 'none', stroke: extra.color, 'stroke-width': 2, 'stroke-linejoin': 'round' })));
+  segments(key).forEach(seg => {
+    if (seg.length === 1) f.svg.append(svgEl('circle', { cx: f.xc(seg[0][0]), cy: f.y(seg[0][1]), r: 3, fill: color }));
+    else f.svg.append(svgEl('polyline', { points: toPts(seg), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  });
   const [li, lv] = pts[pts.length - 1];
   f.svg.append(svgEl('circle', { cx: f.xc(li), cy: f.y(lv), r: 4, fill: color, stroke: 'var(--fin-surface)', 'stroke-width': 2 }));
   f.svg.append(svgEl('text', { x: Math.min(f.xc(li) + 7, f.W - 4), y: f.y(lv) - 7, 'text-anchor': f.xc(li) > f.W - 80 ? 'end' : 'start', class: 'fin-endlabel' }, fmt(lv)));
-  hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow(label, p[key] === null ? '—' : (key === 'savings_rate' ? (p[key] * 100).toFixed(0) + '%' : money(p[key], cur)), color)
+  hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow(label, p[key] === null || p[key] === undefined ? '—' : tf(p[key]), color)
     + (extra && p[extra.key] !== null ? tipRow(extra.label, extra.fmtTip(p[extra.key]), extra.color) : ''));
   host.innerHTML = '';
   host.append(f.svg);
@@ -414,6 +449,28 @@ function chartStacked(host, periods, groups, cur) {
   host.insertAdjacentHTML('beforeend', legend(top.map(g => [g, colorOf(g)]).concat(groups.length > 7 ? [['outros', OTHER]] : [])));
 }
 
+function chartSalary(host, periods, cur) {
+  const f = axisFrame(host, periods, 0, Math.max(1, ...periods.map(p => p.salary + p.salary_extra)));
+  const bw = Math.min(24, f.band - 6);
+  periods.forEach((p, i) => {
+    const op = p.partial ? 0.45 : 1;
+    if (p.salary > 0) {
+      const el = p.salary_extra > 0 ? svgEl('rect', { x: f.xc(i) - bw / 2, y: f.y(p.salary), width: bw, height: f.y(0) - f.y(p.salary), fill: SERIES[0] })
+        : roundedBar(f.xc(i) - bw / 2, bw, f.y(0), f.y(p.salary), SERIES[0]);
+      el.setAttribute('opacity', op); f.svg.append(el);
+    }
+    if (p.salary_extra > 0) {
+      const el = roundedBar(f.xc(i) - bw / 2, bw, f.y(p.salary) - 2, f.y(p.salary + p.salary_extra), SERIES[3]);
+      el.setAttribute('opacity', op); f.svg.append(el);
+    }
+  });
+  hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow('salário base', money(p.salary, cur), SERIES[0])
+    + (p.salary_extra ? tipRow('adicional (expatriação etc.)', money(p.salary_extra, cur), SERIES[3]) : ''));
+  host.innerHTML = '';
+  host.append(f.svg);
+  if (periods.some(p => p.salary_extra)) host.insertAdjacentHTML('beforeend', legend([['Salário base', SERIES[0]], ['Adicional (renda:adicional:*)', SERIES[3]]]));
+}
+
 function kpi(label, value, sub) {
   return `<div class="fin-kpi"><div class="fin-kpi-l">${esc(label)}</div><div class="fin-kpi-v">${value}</div><div class="fin-kpi-s">${sub || ''}</div></div>`;
 }
@@ -425,6 +482,7 @@ async function renderMonthly(pane) {
   const q = new URLSearchParams({ currency: st.cur, from, group: st.mGroup, people: st.mPeople ? 'true' : 'false' });
   const d = await get(`/monthly?${q}`);
   const P = d.periods, cur = st.cur;
+  ctxBands = d.context || [];
   const periods = [['12', '12 meses'], ['24', '24 meses'], ['36', '3 anos'], ['60', '5 anos'], ['all', 'tudo']];
   const curs = [...new Set(st.meta.accounts.map(a => a.currency))].sort((a, b) => (a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b)));
   const filters = `<div class="fin-filters">${periods.map(([v, l]) => `<button class="fin-btn ${st.mPeriod === v ? 'active' : ''}" data-mp="${v}">${l}</button>`).join('')}
@@ -434,10 +492,10 @@ async function renderMonthly(pane) {
       <span class="fin-f-sum">${from ? 'desde ' + day(from) : 'todo o histórico'} até o último dado (${day(last)})</span></div>`;
   if (!P.length) { pane.innerHTML = filters + '<div class="fin-empty">Sem dados nessa moeda/período.</div>'; bindM(); return; }
   // KPIs usam so periodos completos (o ultimo mes costuma ter poucos dias de dado)
-  const full = P.filter(p => !p.partial).length ? P.filter(p => !p.partial) : P;
+  const full = P.filter(p => !p.partial && !p.no_data).length ? P.filter(p => !p.partial && !p.no_data) : P;
   const lastP = full[full.length - 1], window12 = full.slice(-Math.min(full.length, st.mGroup === 'month' ? 12 : st.mGroup === 'quarter' ? 4 : 1));
   const sum = k => window12.reduce((a, p) => a + (p[k] || 0), 0);
-  const months12 = window12.reduce((a, p) => a + p.months, 0) || 1;
+  const months12 = window12.reduce((a, p) => a + (p.data_months ?? p.months), 0) || 1;  // media so sobre meses com dado
   const nwStart = P.find(p => p.net_worth !== null);
   const incomeAvg = sum('income') / months12, expAvg = sum('expenses') / months12, sr = sum('income') > 0 ? (sum('income') - sum('expenses')) / sum('income') : null;
   const nwLast = lastP.net_worth, nwDelta = nwStart && nwLast !== null ? nwLast - nwStart.net_worth : null;
@@ -447,18 +505,18 @@ async function renderMonthly(pane) {
     ${kpi('Ganhos / mês', money(Math.round(incomeAvg), cur), `média dos últimos ${months12} meses`)}
     ${kpi('Gastos / mês', money(Math.round(expAvg), cur), `média dos últimos ${months12} meses`)}
     ${kpi('Taxa de poupança', sr === null ? '—' : (sr * 100).toFixed(0) + '%', 'referência comum: 15–20%')}
-    ${kpi('Salário', money(lastP.salary, cur), `${esc(periodLabel(lastP.period, st.mGroup))} · média ${money(Math.round(sum('salary') / months12), cur)}/mês`)}
+    ${kpi('Salário (base)', money(lastP.salary, cur), `${esc(periodLabel(lastP.period, st.mGroup))} · média ${money(Math.round(sum('salary') / months12), cur)}/mês${sum('salary_extra') ? ` · + adicional ${money(Math.round(sum('salary_extra') / months12), cur)}/mês` : ''}`)}
     ${kpi('Reserva', lastP.reserve_months === null ? '—' : lastP.reserve_months.toFixed(1).replace('.', ',') + ' meses', 'patrimônio / gasto médio de 6 meses · ref. 3–6')}
   </div>`;
   const warn = incompleteN ? `<div class="fin-note">⚠ ${incompleteN} período(s) com dados incompletos (barras apagadas): houve transferência entre suas contas sem o extrato/fatura do outro lado — o gasto de cartão desses meses pode estar faltando. Ver Auditoria.</div>` : '';
   const table = `<details class="fin-card"><summary class="fin-card-h">Tabela (${P.length} períodos) <button class="fin-btn fin-csv">baixar CSV</button></summary>
-    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Investido</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
-    ${P.slice().reverse().map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary, cur)}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.investments ?? p.invested, cur)}${p.investments_source === 'estimado' ? '*' : ''}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
+    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário</th><th class="num">Adicional</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Investido</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
+    ${P.slice().reverse().filter(p => !p.no_data).map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary, cur)}</td><td class="num">${p.salary_extra ? money(p.salary_extra, cur) : ''}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.investments ?? p.invested, cur)}${p.investments_source === 'estimado' ? '*' : ''}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
   pane.innerHTML = `${filters}${kpis}${warn}
     <div class="fin-card"><div class="fin-card-h">Ganhos × gastos <span class="fin-hint">transferências entre suas contas, câmbio e aplicações não contam</span></div><div class="fin-ch-ie"></div></div>
     <div class="fin-grid2">
       <div class="fin-card"><div class="fin-card-h">Patrimônio <span class="fin-hint">saldo das contas − cartão, fim do período</span></div><div class="fin-ch-nw"></div></div>
-      <div class="fin-card"><div class="fin-card-h">Salário</div><div class="fin-ch-sal"></div></div>
+      <div class="fin-card"><div class="fin-card-h">Salário <span class="fin-hint">base + adicionais separados</span></div><div class="fin-ch-sal"></div></div>
     </div>
     <div class="fin-grid2">
       <div class="fin-card"><div class="fin-card-h">Gastos por grupo</div><div class="fin-ch-st"></div></div>
@@ -469,15 +527,15 @@ async function renderMonthly(pane) {
   chartIncomeExpense(pane.querySelector('.fin-ch-ie'), P, cur);
   chartLine(pane.querySelector('.fin-ch-nw'), P, 'net_worth', SERIES[0], cur, { label: 'patrimônio',
     extra: { key: 'nw_plus', label: 'com investimentos (* estimado antes do Open Finance)', color: SERIES[2], fmtTip: v => money(v, cur) } });
-  chartLine(pane.querySelector('.fin-ch-sal'), P, 'salary', SERIES[0], cur, { label: 'salário', area: false });
+  chartSalary(pane.querySelector('.fin-ch-sal'), P, cur);
   chartStacked(pane.querySelector('.fin-ch-st'), P, d.groups, cur);
   chartLine(pane.querySelector('.fin-ch-sr'), P.map(p => ({ ...p, sr100: p.savings_rate === null ? null : Math.round(p.savings_rate * 10000) })), 'sr100', SERIES[0], cur,
-    { label: 'taxa de poupança', fmt: v => (v / 100).toFixed(0) + '%', area: false });
+    { label: 'taxa de poupança', fmt: v => (v / 100).toFixed(0) + '%', tipFmt: v => (v / 100).toFixed(0) + '%', area: false });
   pane.querySelector('.fin-csv').addEventListener('click', e => {
     e.preventDefault();
-    const head = ['periodo', 'ganhos', 'salario', 'gastos', 'fixos', 'variaveis', 'saldo', 'taxa_poupanca', 'patrimonio', 'aplicado', 'reserva_meses', 'incompleto'];
-    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary, p.expenses, p.fixed, p.variable, p.net, p.savings_rate ?? '', p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
-      .map((v, i) => (i >= 1 && i <= 6) || i === 8 || i === 9 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
+    const head = ['periodo', 'ganhos', 'salario', 'adicional', 'gastos', 'fixos', 'variaveis', 'saldo', 'taxa_poupanca_pct', 'patrimonio', 'aplicado', 'reserva_meses', 'incompleto'];
+    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary, p.salary_extra, p.expenses, p.fixed, p.variable, p.net, p.savings_rate === null ? '' : Math.round(p.savings_rate * 1000) / 10, p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
+      .map((v, i) => (i >= 1 && i <= 7) || i === 9 || i === 10 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
     a.download = `financas-${cur}-${st.mGroup}.csv`;
