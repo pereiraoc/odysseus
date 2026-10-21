@@ -37,6 +37,7 @@ NEUTRAL_PREFIXES = ("transferencias:interna", "transferencias:cambio", "transfer
 PEOPLE = "transferencias:pessoas"
 FIXED_PREFIXES = ("moradia:", "assinaturas:", "financeiro:tarifas", "contas:")
 CARD_STALE_DAYS = 45
+INCOMPLETE_MIN_CENTS = 5000
 
 
 def _bucket(month: str, group: str) -> str:
@@ -111,10 +112,15 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
             unconverted += 1
             continue
         rows.append({"id": r["id"], "date": r["date"], "amount_cents": v, "cat": r["cat"]})
-    unpaired = {r["date"][:7] for r in db.execute(
-        "SELECT t.date FROM transactions t JOIN annotations a ON a.anchor_key=t.anchor_key JOIN accounts c ON c.key=t.account_key"
-        f" WHERE a.category=? AND {where} AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs)",
-        (INTERNAL, *wargs))}
+    # mes "incompleto": transferencia entre contas suas sem a outra ponta somando > R$ 50 no mes
+    # (pagamento de fatura de R$ 5,40 de anuidade num cartao sem fatura baixada nao torna o mes suspeito)
+    unpaired_sum: dict[str, int] = defaultdict(int)
+    for r in db.execute(
+            "SELECT t.date, t.amount_cents, c.currency cur FROM transactions t JOIN annotations a ON a.anchor_key=t.anchor_key"
+            f" JOIN accounts c ON c.key=t.account_key WHERE a.category=? AND {where}"
+            " AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs)", (INTERNAL, *wargs)):
+        unpaired_sum[r["date"][:7]] += abs(conv(r["amount_cents"], r["cur"], r["date"]) or 0)
+    unpaired = {m for m, v in unpaired_sum.items() if v > INCOMPLETE_MIN_CENTS}
 
     per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
                                "fixed": 0, "variable": 0, "uncategorized": 0, "by_group": defaultdict(int), "n": 0})
