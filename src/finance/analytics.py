@@ -16,6 +16,8 @@ Definicoes (documentadas tambem na UI):
               estimativa ate os saldos de investimento chegarem pelo Open Finance
   investido   saldo real dos investimentos (snapshot do Open Finance mais recente ate o fim do periodo);
               antes do primeiro snapshot usa o 'aplicado' estimado
+  cambio      no agregado (ALL), a diferenca entre a saida em BRL e a chegada na outra moeda (cotacao do dia)
+              vira gasto 'custo de cambio'; as duas pontas em si nao sao ganho nem gasto
   reserva     (patrimonio + investido) / media de gastos dos ultimos 6 meses (em meses de gasto)
 Mes 'incompleto' = teve transferencia interna sem a outra ponta (falta extrato/fatura do outro lado),
 entao gasto de cartao daquele mes pode estar faltando.
@@ -24,7 +26,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections import defaultdict
-from datetime import date as Date
+from datetime import date as Date, timedelta
 
 from src.finance import reconcile
 from src.finance.rules import INTERNAL
@@ -82,22 +84,45 @@ def _balance_fn(store: Store, key: str):
     return bal, first
 
 
+ALL = "ALL"  # todas as moedas convertidas para BRL pela cotacao da data (fx.py)
+
+
+def _amounts(store: Store, currency: str):
+    """(filtro SQL de moeda, conversor). currency=ALL -> todas as contas, cada valor em BRL pela cotacao do dia."""
+    if currency == ALL:
+        from src.finance.fx import Converter
+        conv = Converter(store)
+        return "1=1", (), (lambda cents, cur, day: cents if cur == "BRL" else conv.to_brl(cents, cur, day)), conv
+    return "c.currency=?", (currency,), (lambda cents, cur, day: cents), None
+
+
 def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: str = "",
             group: str = "month", people: bool = True) -> dict:
     db = store.db
-    rows = db.execute(
-        "SELECT t.id, t.date, t.amount_cents, coalesce(a.category, '') cat FROM transactions t"
+    where, wargs, conv, converter = _amounts(store, currency)
+    raw_rows = db.execute(
+        "SELECT t.id, t.date, t.amount_cents, coalesce(a.category, '') cat, c.currency cur FROM transactions t"
         " JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
-        " WHERE c.currency=?", (currency,)).fetchall()
+        f" WHERE {where}", wargs).fetchall()
+    rows, unconverted = [], 0
+    for r in raw_rows:
+        v = conv(r["amount_cents"], r["cur"], r["date"])
+        if v is None:
+            unconverted += 1
+            continue
+        rows.append({"id": r["id"], "date": r["date"], "amount_cents": v, "cat": r["cat"]})
     unpaired = {r["date"][:7] for r in db.execute(
         "SELECT t.date FROM transactions t JOIN annotations a ON a.anchor_key=t.anchor_key JOIN accounts c ON c.key=t.account_key"
-        " WHERE a.category=? AND c.currency=? AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs)",
-        (INTERNAL, currency))}
+        f" WHERE a.category=? AND {where} AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs)",
+        (INTERNAL, *wargs))}
 
     per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
                                "fixed": 0, "variable": 0, "uncategorized": 0, "by_group": defaultdict(int), "n": 0})
+    cambio_net: dict[str, int] = defaultdict(int)
     for r in rows:
         m, v, cat = r["date"][:7], r["amount_cents"], r["cat"]
+        if currency == ALL and cat.startswith("transferencias:cambio"):
+            cambio_net[m] += v  # saiu em BRL (-) + entrou na outra moeda (+, em BRL do dia) = custo do cambio
         if cat.startswith("transferencias:investimento"):
             per[m]["invested_flow"] -= v  # aplicacao sai da conta (-) e entra no investimento (+)
         if any(cat.startswith(p) for p in NEUTRAL_PREFIXES):
@@ -135,6 +160,15 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         else:
             p["variable"] -= v
 
+    # no agregado, o que se perdeu entre as duas pontas do cambio (spread/taxas) e gasto real
+    for m, net in cambio_net.items():
+        if net < 0:
+            p = per[m]
+            p["expenses"] -= net
+            p["variable"] -= net
+            p["by_group"]["custo de cambio"] -= net
+            p["n"] += 1
+
     # decomposicao ESTIMADA do salario por mes: base x 13o x extra. Base = mediana dos meses vizinhos
     # (ate 3 antes e 3 depois, sem nov/dez): aumento de salario entra na base, pico isolado nao.
     from statistics import median
@@ -162,42 +196,44 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
                 p["salary_other"] = total - round(base)
 
     # patrimonio de fim de mes (contas + carteiras na moeda; cartao = -ultima fatura recente)
-    accs = db.execute("SELECT key, kind FROM accounts WHERE currency=?", (currency,)).fetchall()
+    accs = db.execute(f"SELECT key, kind, currency FROM accounts c WHERE {where}", wargs).fetchall()
     fns = []
     cards = []
     for a in accs:
         if a["kind"] == "credit_card":
             cps = db.execute("SELECT date, balance_cents FROM checkpoints WHERE account_key=? AND kind='closing' ORDER BY date",
                              (a["key"],)).fetchall()
-            cards.append(([c["date"] for c in cps], [c["balance_cents"] for c in cps]))
+            cards.append(([c["date"] for c in cps], [c["balance_cents"] for c in cps], a["currency"]))
         else:
             f, _ = _balance_fn(store, a["key"])
             if f:
-                fns.append(f)
+                fns.append((f, a["currency"]))
     months_all = sorted(per)
     if not months_all:
         return {"currency": currency, "group": group, "periods": [], "groups": []}
-    snaps = db.execute("SELECT s.investment_id, s.date, s.balance_cents FROM investment_snapshots s JOIN investments i"
-                       " ON i.id=s.investment_id WHERE i.currency=? ORDER BY s.date", (currency,)).fetchall()
+    snaps = db.execute("SELECT s.investment_id, s.date, s.balance_cents, i.currency FROM investment_snapshots s JOIN investments i"
+                       " ON i.id=s.investment_id" + ("" if currency == ALL else " WHERE i.currency=?") + " ORDER BY s.date",
+                       () if currency == ALL else (currency,)).fetchall()
 
     def real_investments(d: str):
         last: dict[str, int] = {}
         for sn in snaps:
             if sn["date"] > d:
                 break
-            last[sn["investment_id"]] = sn["balance_cents"]
+            last[sn["investment_id"]] = conv(sn["balance_cents"], sn["currency"], d) or 0
         return sum(last.values()) if last else None
     nw = {}
     invested = 0
     for d in _month_ends(months_all[0], months_all[-1]):
         invested += per[d[:7]]["invested_flow"] if d[:7] in per else 0
-        vals = [f(d) for f in fns]
+        vals = [f(d) for f, _ in fns]
+        vals = [None if v is None else conv(v, cur, d) for v, (_, cur) in zip(vals, fns)]
         known = [v for v in vals if v is not None]
         card_total, card_ok = 0, True
-        for dates, bals in cards:
+        for dates, bals, ccur in cards:
             i = bisect_right(dates, d)
             if i and (Date.fromisoformat(d) - Date.fromisoformat(dates[i - 1])).days <= CARD_STALE_DAYS:
-                card_total += bals[i - 1]
+                card_total += conv(bals[i - 1], ccur, d) or 0
             elif i or dates and dates[0] <= d:
                 card_ok = False  # cartao existia mas sem fatura recente: divida desconhecida
         nw[d[:7]] = {"net_worth": sum(known) + card_total if known else None, "card_known": card_ok, "invested": invested,
@@ -274,5 +310,202 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
     if pf.is_file():
         import json
         ctx = json.loads(pf.read_text(encoding="utf-8")).get("periods", [])
-    return {"currency": currency, "group": group, "periods": periods, "groups": groups, "context": ctx,
+    return {"currency": currency, "display_currency": "BRL" if currency == ALL else currency, "unconverted": unconverted,
+            "fx_source": "cotacao BCE do dia de cada lancamento (fim do mes para saldos)" if currency == ALL else None,
+            "group": group, "periods": periods, "groups": groups, "context": ctx,
             "definitions": __doc__.split("Definicoes (documentadas tambem na UI):")[1].strip()}
+
+
+# ---------------------------------------------------------------------------------------------
+# custo mensal: essencial fixo x assinaturas x variavel (media dos ultimos 3 meses FECHADOS)
+DEFAULT_COST_CLASSES = {
+    "essencial": ["moradia:aluguel", "moradia:condominio", "moradia:energia", "moradia:agua", "moradia:gas",
+                  "moradia:telefone-internet", "moradia:contas", "financeiro:seguros", "saude:plano", "educacao:mensalidade"],
+    "assinaturas": ["assinaturas:"],
+    "ignorar": ["transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo",
+                "ajustes:", "renda:"],
+}
+
+
+def _cost_classes(store: Store) -> dict:
+    import json
+    p = store.root / "ledger" / "cost_classes.json"
+    if not p.is_file():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(DEFAULT_COST_CLASSES, ensure_ascii=False, indent=1), encoding="utf-8")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _class_of(cat: str, classes: dict) -> str:
+    def hit(prefixes):
+        return any(cat == p or cat.startswith(p if p.endswith(":") else p + ":") or (p.endswith(":") and cat.startswith(p))
+                   for p in prefixes)
+    if not cat:
+        return "variavel"
+    if hit(classes.get("ignorar", [])):
+        return "ignorar"
+    if hit(classes.get("essencial", [])):
+        return "essencial"
+    if hit(classes.get("assinaturas", [])):
+        return "assinaturas"
+    return "variavel"
+
+
+def _shift_late(per_month: dict[str, list], months: list[str]) -> list[str]:
+    """Regra do usuario: pagamento feito no mes seguinte mas que e do anterior conta no anterior.
+    Mes fechado sem pagamento + mes seguinte com pagamento(s) -> o primeiro do seguinte volta 1 mes."""
+    moved = []
+    for i, m in enumerate(months[:-1]):
+        nxt = months[i + 1]
+        if not per_month.get(m) and per_month.get(nxt):
+            if len(per_month[nxt]) >= 2 or i + 1 == len(months) - 1:
+                per_month[nxt].sort(key=lambda r: r["date"])
+                per_month.setdefault(m, []).append(per_month[nxt].pop(0))
+                moved.append(f"{nxt} -> {m}")
+    return moved
+
+
+def cost_structure(store: Store, today: str | None = None, currency: str = "BRL", n_months: int = 3) -> dict:
+    import re
+    from datetime import date as _date
+    from src.finance.rules import merchant
+    t = _date.fromisoformat(today) if today else _date.today()
+    open_month = f"{t.year:04d}-{t.month:02d}"
+    y, m = t.year, t.month
+    closed = []
+    for _ in range(n_months):
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+        closed.insert(0, f"{y:04d}-{m:02d}")
+    window = closed + [open_month]  # o mes aberto so serve para trazer pagamento atrasado do ultimo fechado
+    classes = _cost_classes(store)
+    where, wargs, conv, _ = _amounts(store, currency)
+    rows = []
+    for r in store.db.execute(
+            "SELECT t.id, t.date, t.amount_cents, t.description, coalesce(a.category, '') cat, c.currency cur FROM transactions t"
+            " JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
+            f" WHERE {where} AND t.date >= ? AND t.date < ?",
+            (*wargs, closed[0] + "-01", _month_ends(open_month, open_month)[0] + "T")).fetchall():
+        v = conv(r["amount_cents"], r["cur"], r["date"])
+        if v is not None:
+            rows.append({**dict(r), "amount_cents": v})
+
+    buckets: dict[str, dict[str, dict[str, list]]] = {"essencial": {}, "assinaturas": {}, "variavel": {}}
+    for r in rows:
+        klass = _class_of(r["cat"], classes)
+        if klass == "ignorar" or (r["cat"].startswith("transferencias:pessoas") and r["amount_cents"] > 0):
+            continue
+        if klass == "variavel" and r["amount_cents"] > 0 and not r["cat"]:
+            continue  # entrada sem categoria nao e "gasto negativo"
+        if klass == "essencial":
+            key = r["cat"]
+        elif klass == "assinaturas":
+            key = re.sub(r"\s*(parc\s*\d+|\d+/\d+)$", "", merchant(r["description"])) or r["cat"]
+        else:
+            key = (r["cat"].split(":")[0] if r["cat"] else "sem categoria")
+            if r["cat"].startswith("transferencias:pessoas"):
+                key = "pix/ted para pessoas"
+        buckets[klass].setdefault(key, {}).setdefault(r["date"][:7], []).append(dict(r))
+
+    out: dict = {"months": closed, "open_month": open_month, "currency": currency,
+                 "display_currency": "BRL" if currency == ALL else currency, "classes": {}}
+    for klass, series in buckets.items():
+        items = []
+        for key, per_month in series.items():
+            moved = _shift_late(per_month, window) if klass != "variavel" else []
+            vals = {mm: -sum(x["amount_cents"] for x in per_month.get(mm, [])) for mm in closed}
+            total = sum(vals.values())
+            if total <= 0 and klass != "variavel":
+                continue
+            items.append({"key": key, "months": vals, "avg": round(total / len(closed)),
+                          "payments": sum(len(per_month.get(mm, [])) for mm in closed), "shifted": moved,
+                          "category": next((x["cat"] for mm in closed for x in per_month.get(mm, [])), "")})
+        items.sort(key=lambda i: -i["avg"])
+        out["classes"][klass] = {"avg": sum(i["avg"] for i in items), "items": items}
+    out["total_avg"] = sum(c["avg"] for c in out["classes"].values())
+
+    # salario base medio dos mesmos meses (para %); vem da analise mensal
+    mon = {p["period"]: p for p in monthly(store, currency)["periods"]}
+    base = [mon[mm]["salary_base"] for mm in closed if mm in mon]
+    out["salary_base_avg"] = round(sum(base) / len(base)) if base else None
+    out["incomplete_months"] = [mm for mm in closed if mm in mon and (mon[mm]["incomplete"] or mon[mm]["no_data"])]
+    out["future_installments"] = future_installments(store, t.isoformat())
+    out["open_bill"] = open_bill(store)
+    return out
+
+
+def future_installments(store: Store, today: str, months_ahead: int = 12) -> list[dict]:
+    """Parcelas ja contratadas que ainda vao cair nos cartoes. O Open Finance nao lista as parcelas futuras,
+    entao elas sao projetadas das parcelas ja lancadas: ultima vista k/N (nos ultimos 70 dias) -> faltam N-k
+    do mesmo valor, uma por mes."""
+    import re
+    from datetime import date as _date
+    t = _date.fromisoformat(today)
+    rx = re.compile(r"^(.*?)[\s-]*(?:parcela\s*)?(\d{1,2})/(\d{1,2})\s*$", re.I)
+    series: dict[tuple, dict] = {}
+    import json
+    for r in store.db.execute(
+            "SELECT t.date, t.amount_cents, t.description, t.account_key,"
+            " (SELECT group_concat(s.extra_json, '\x1e') FROM tx_links l JOIN source_records s ON s.id=l.record_id WHERE l.tx_id=t.id) ex"
+            " FROM transactions t JOIN accounts a ON a.key=t.account_key"
+            " WHERE a.kind='credit_card' AND t.amount_cents < 0 AND t.date >= ?", ((t.replace(day=1) - timedelta(days=75)).isoformat(),)):
+        desc = " ".join(r["description"].split())
+        k = n = None
+        for e in (r["ex"] or "").split("\x1e"):
+            if e:
+                d = json.loads(e)
+                if d.get("installments"):
+                    k, n = int(d.get("installment") or 0), int(d["installments"])
+                    break
+        m = rx.match(desc)
+        if n is None and m:
+            k, n = int(m.group(2)), int(m.group(3))
+        if not n or n < 2 or not k or k > n:
+            continue
+        base = (m.group(1) if m else desc).strip(" -*").lower()
+        key = (r["account_key"], base, r["amount_cents"], n)
+        cur = series.get(key)
+        if not cur or k > cur["k"]:
+            series[key] = {"k": k, "n": n, "date": r["date"], "description": base, "amount": -r["amount_cents"],
+                           "account": r["account_key"]}
+    by_month: dict[str, dict] = {}
+    for sr in series.values():
+        last = _date.fromisoformat(sr["date"])
+        if (t - last).days > 70 or sr["k"] >= sr["n"]:  # parcela do mes corrente pode estar so na fatura aberta
+            continue
+        y, mo = last.year, last.month
+        for i in range(sr["k"] + 1, sr["n"] + 1):
+            mo += 1
+            if mo > 12:
+                y, mo = y + 1, 1
+            key = f"{y:04d}-{mo:02d}"
+            if key <= f"{t.year:04d}-{t.month:02d}":
+                continue  # ja caiu (ou cai na fatura aberta)
+            b = by_month.setdefault(key, {"total": 0, "items": []})
+            b["total"] += sr["amount"]
+            b["items"].append({"description": sr["description"], "amount": sr["amount"], "installment": f"{i}/{sr['n']}",
+                               "account": sr["account"]})
+    return [{"month": k, **v} for k, v in sorted(by_month.items())][:months_ahead]
+
+
+def open_bill(store: Store) -> list[dict]:
+    """Fatura aberta ate agora: lancamentos PENDING do ultimo bruto completo de cada cartao no Open Finance."""
+    import json
+    from src.finance.importers.pluggy import account_ref, cents
+    latest: dict[str, tuple] = {}
+    for r in store.db.execute("SELECT sha256, first_seen_at FROM raw_blobs WHERE source_name LIKE 'pluggy/%'"
+                              " AND source_name NOT LIKE '%investments%' AND status='parsed' ORDER BY first_seen_at"):
+        doc = json.loads(store.blob_bytes(r["sha256"]))
+        acc = doc.get("account") or {}
+        if acc.get("type") == "CREDIT":
+            latest[acc["id"]] = (doc, r["first_seen_at"])
+    out = []
+    for doc, seen in latest.values():
+        pend = [t for t in doc.get("transactions", []) if t.get("status") == "PENDING"
+                and not (t.get("creditCardMetadata") or {}).get("totalInstallments")]
+        purchases = sum(cents(t["amount"]) for t in pend if t["amount"] > 0)
+        credits = -sum(cents(t["amount"]) for t in pend if t["amount"] < 0)
+        out.append({"account": account_ref(doc["institution"], doc["account"]).key, "as_of": doc.get("item_last_updated"),
+                    "purchases": purchases, "credits": credits, "count": len(pend)})
+    return out

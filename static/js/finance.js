@@ -19,12 +19,13 @@ const IMPORTER = {
   santander_csv: 'planilha', santander_fatura_pdf: 'PDF fatura', santander_cc_ocr: 'OCR extrato', pluggy: 'Open Finance',
 };
 
-const st = { mPeriod: '24', mGroup: 'month', mPeople: true, cur: 'BRL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
+const st = { mPeriod: '24', mGroup: 'month', mPeople: true, cur: 'ALL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
 let els = {};
 
 // ── util ────────────────────────────────────────────────────────────────
 function money(cents, cur = 'BRL') {
   if (cents === null || cents === undefined) return '—';
+  if (cur === 'ALL') cur = 'BRL';  // agregado: tudo convertido para reais
   const v = cents / 100;
   try { return v.toLocaleString('pt-BR', { style: 'currency', currency: cur }); } catch (_) { return `${v.toFixed(2)} ${cur}`; }
 }
@@ -80,6 +81,49 @@ function lineChart(host, series) {
   host.append(leg);
 }
 
+
+// ── custo mensal (visão geral) ──────────────────────────────────────────
+const COST_LABEL = {
+  'moradia:aluguel': 'Aluguel', 'moradia:condominio': 'Condomínio', 'moradia:energia': 'Luz', 'moradia:agua': 'Água', 'moradia:gas': 'Gás',
+  'moradia:telefone-internet': 'Internet e telefone', 'moradia:contas': 'Outras contas da casa', 'financeiro:seguros': 'Seguros',
+  'saude:plano': 'Plano de saúde', 'educacao:mensalidade': 'Mensalidade (educação)',
+};
+const COST_CLASS = [['essencial', 'Essencial fixo', SERIES_C(0)], ['assinaturas', 'Assinaturas', SERIES_C(1)], ['variavel', 'Variável', SERIES_C(2)]];
+function SERIES_C(i) { return ['#3987e5', '#d95926', '#199e70'][i]; }
+function monthShort(m) { return `${['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`; }
+
+async function renderCosts(host) {
+  const c = await get(`/costs?currency=ALL`);
+  const tot = c.total_avg || 1, cur = 'BRL';
+  const months = c.months;
+  const pct = v => `${Math.round((v / tot) * 100)}%`;
+  const ofSal = c.salary_base_avg ? ` · ${Math.round((c.total_avg / c.salary_base_avg) * 100)}% do salário base médio (${money(c.salary_base_avg, cur)})` : '';
+  const bar = COST_CLASS.map(([k, , color]) => `<i style="width:${((c.classes[k]?.avg || 0) / tot * 100).toFixed(1)}%;background:${color}" title="${k}"></i>`).join('');
+  const table = (k, label) => {
+    const items = (c.classes[k]?.items || []).filter(i => i.avg || i.payments);
+    if (!items.length) return '';
+    const rows = items.map(i => `<tr><td>${esc(COST_LABEL[i.key] || i.key)}${i.shifted?.length ? ` <span class="fin-chip" title="pagamento do mês seguinte atribuído ao mês anterior: ${esc(i.shifted.join(', '))}">ajustado</span>` : ''}</td>
+      ${months.map(m => `<td class="num">${i.months[m] ? money(i.months[m], cur) : '<span class="fin-dim">—</span>'}</td>`).join('')}<td class="num"><b>${money(i.avg, cur)}</b></td></tr>`).join('');
+    return `<details class="fin-costd" ${k === 'essencial' ? 'open' : ''}><summary>${esc(label)} · <b>${money(c.classes[k].avg, cur)}</b>/mês</summary>
+      <table class="fin-table"><thead><tr><th></th>${months.map(m => `<th class="num">${monthShort(m)}</th>`).join('')}<th class="num">média</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+  };
+  const fut = c.future_installments || [];
+  const ob = (c.open_bill || []).filter(o => o.count);
+  const futHtml = `<div class="fin-costf"><div class="fin-card-h">Já contratado no cartão</div>
+    ${ob.map(o => `<div>Fatura aberta ${esc(INST[o.account.split(':')[0]] || o.account)}: <b>${money(o.purchases, cur)}</b> em compras desde o último fechamento${o.as_of ? ` <span class="fin-dim">(dados do banco de ${day(o.as_of.slice(0, 10))})</span>` : ''}${o.credits ? `<div class="fin-dim">pagamentos e estornos lançados nela: ${money(o.credits, cur)} (não reduzem o gasto)</div>` : ''}</div>`).join('') || '<div class="fin-dim">sem fatura aberta no Open Finance</div>'}
+    ${fut.length ? `<table class="fin-table"><thead><tr><th>Parcelas futuras</th><th class="num">total</th><th>o que</th></tr></thead><tbody>${fut.map(f => `<tr><td>${monthShort(f.month)}</td><td class="num">${money(f.total, cur)}</td><td class="fin-dim">${f.items.map(i => esc(`${i.description} ${i.installment}`)).join(' · ')}</td></tr>`).join('')}</tbody></table>` : '<div class="fin-dim">nenhuma parcela futura</div>'}</div>`;
+  host.innerHTML = `<div class="fin-card">
+    <div class="fin-card-h">Custo mensal <span class="fin-hint">média de ${monthShort(months[0])}–${monthShort(months[months.length - 1])} (últimos ${months.length} meses fechados) · todas as moedas em R$${c.incomplete_months?.length ? ` · ⚠ dados incompletos em ${c.incomplete_months.map(monthShort).join(', ')}` : ''}</span></div>
+    <div class="fin-kpis">
+      ${COST_CLASS.map(([k, label, color]) => `<div class="fin-kpi"><div class="fin-kpi-l"><i class="fin-sw" style="background:${color}"></i>${label}</div><div class="fin-kpi-v">${money(c.classes[k]?.avg || 0, cur)}</div><div class="fin-kpi-s">${pct(c.classes[k]?.avg || 0)} do total</div></div>`).join('')}
+      <div class="fin-kpi"><div class="fin-kpi-l">Total por mês</div><div class="fin-kpi-v">${money(c.total_avg, cur)}</div><div class="fin-kpi-s">${ofSal.replace(/^ · /, '')}</div></div>
+    </div>
+    <div class="fin-costbar">${bar}</div>
+    <div class="fin-costgrid"><div>${table('essencial', 'Essencial fixo')}${table('assinaturas', 'Assinaturas')}${table('variavel', 'Variável (por grupo)')}</div>${futHtml}</div>
+    <div class="fin-dim fin-defs">Essencial fixo = moradia (aluguel, condomínio, luz, água, gás, internet/telefone), seguros e mensalidades; ajuste em <code>data/finance/ledger/cost_classes.json</code>. Pagamento feito no mês seguinte entra no mês a que pertence. Assinaturas = categorias assinaturas:*. Variável = todo o resto, sem transferências entre suas contas, câmbio e aplicações.</div>
+  </div>`;
+}
+
 // ── abas ────────────────────────────────────────────────────────────────
 async function renderOverview(pane) {
   const m = st.meta;
@@ -112,7 +156,7 @@ async function renderOverview(pane) {
       <div class="fin-acc-v">${money(iv.total, iv.currency)}</div>
       <div class="fin-acc-s">${iv.n} posições · em ${day(iv.date)} (Open Finance)</div>
     </div>`).join('');
-  pane.innerHTML = `${conn}<div class="fin-accs">${invCards}${cards}</div><div class="fin-invlist"></div>
+  pane.innerHTML = `${conn}<div class="fin-costs"><div class="fin-empty">Calculando custo mensal…</div></div><div class="fin-accs">${invCards}${cards}</div><div class="fin-invlist"></div>
     <div class="fin-card"><div class="fin-card-h">Saldo no fim de cada mês <select class="fin-cur"></select><span class="fin-hint">uma moeda por vez; lacunas conhecidas já ajustadas</span></div><div class="fin-chart"></div></div>`;
   pane.querySelector('.fin-sync-pluggy')?.addEventListener('click', async e => {
     e.target.disabled = true;
@@ -147,6 +191,7 @@ async function renderOverview(pane) {
     } catch (err) { showError(`Wise: ${err.message}`); e.target.disabled = false; e.target.textContent = 'Atualizar Wise'; }
   });
   pane.querySelectorAll('[data-acc]').forEach(c => c.addEventListener('click', () => { st.account = c.dataset.acc; st.offset = 0; switchTab('transactions'); }));
+  renderCosts(pane.querySelector('.fin-costs')).catch(e => { pane.querySelector('.fin-costs').innerHTML = `<div class="fin-empty">Custo mensal falhou: ${esc(e.message)}</div>`; });
   const { series } = await get('/balances');
   const curs = [...new Set(Object.keys(series).map(k => accByKey(k)?.currency || 'BRL'))].sort((a, b) => (a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b)));
   const sel = pane.querySelector('.fin-cur');
@@ -244,7 +289,7 @@ async function renderCategories(pane) {
   const sumOut = out.reduce((a, c) => a + c.total, 0), sumIn = inc.reduce((a, c) => a + c.total, 0);
   pane.innerHTML = `
     <div class="fin-filters">${periods.map(([v, l]) => `<button class="fin-btn ${st.catPeriod === v ? 'active' : ''}" data-cp="${v}">${l}</button>`).join('')}
-      <select class="fin-cur2">${['BRL', 'USD', 'EUR', 'ILS', 'CHF', 'HUF', 'CZK', 'PLN', 'RON', 'GBP'].map(c => `<option ${c === st.cur ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <select class="fin-cur2">${['ALL', 'BRL', 'USD', 'EUR', 'ILS', 'CHF', 'HUF', 'CZK', 'PLN', 'RON', 'GBP'].map(c => `<option value="${c}" ${c === st.cur ? 'selected' : ''}>${c === 'ALL' ? 'Todas (em R$)' : c}</option>`).join('')}</select>
       <label><input type="checkbox" class="fin-wt" ${st.withTransfers ? 'checked' : ''}> incluir transferências</label>
       <span class="fin-f-sum">${fromA ? 'desde ' + day(fromA) + ' (até o último dado)' : 'todo o histórico'} · entradas ${money(sumIn, st.cur)} · saídas ${money(sumOut, st.cur)}</span></div>
     <div class="fin-grid2">
@@ -484,7 +529,7 @@ function kpi(label, value, sub) {
 }
 
 async function renderMonthly(pane) {
-  const last = (st.meta.accounts.filter(a => a.currency === st.cur).map(a => a.last).sort().pop() || new Date().toISOString()).slice(0, 10);
+  const last = (st.meta.accounts.filter(a => st.cur === 'ALL' || a.currency === st.cur).map(a => a.last).sort().pop() || new Date().toISOString()).slice(0, 10);
   const an = new Date(last + 'T12:00:00');
   const from = st.mPeriod === 'all' ? '' : new Date(an.getFullYear(), an.getMonth() - Number(st.mPeriod) + 1, 1).toISOString().slice(0, 10);
   const q = new URLSearchParams({ currency: st.cur, from, group: st.mGroup, people: st.mPeople ? 'true' : 'false' });
@@ -492,10 +537,10 @@ async function renderMonthly(pane) {
   const P = d.periods, cur = st.cur;
   ctxBands = d.context || [];
   const periods = [['12', '12 meses'], ['24', '24 meses'], ['36', '3 anos'], ['60', '5 anos'], ['all', 'tudo']];
-  const curs = [...new Set(st.meta.accounts.map(a => a.currency))].sort((a, b) => (a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b)));
+  const curs = ['ALL', ...[...new Set(st.meta.accounts.map(a => a.currency))].sort((a, b) => (a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b)))];
   const filters = `<div class="fin-filters">${periods.map(([v, l]) => `<button class="fin-btn ${st.mPeriod === v ? 'active' : ''}" data-mp="${v}">${l}</button>`).join('')}
       <select class="fin-mg"><option value="month" ${st.mGroup === 'month' ? 'selected' : ''}>por mês</option><option value="quarter" ${st.mGroup === 'quarter' ? 'selected' : ''}>por trimestre</option><option value="year" ${st.mGroup === 'year' ? 'selected' : ''}>por ano</option></select>
-      <select class="fin-mc">${curs.map(c => `<option ${c === cur ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <select class="fin-mc" title="Todas = cada lançamento convertido para R$ pela cotação do BCE do dia; saldos pela do fim do mês">${curs.map(c => `<option value="${c}" ${c === cur ? 'selected' : ''}>${c === 'ALL' ? 'Todas (em R$)' : c}</option>`).join('')}</select>
       <label title="Pix/TED/DOC com pessoas (transferencias:pessoas): enviados contam como gasto, recebidos como ganho"><input type="checkbox" class="fin-mpp" ${st.mPeople ? 'checked' : ''}> contar Pix/TED com pessoas</label>
       <span class="fin-f-sum">${from ? 'desde ' + day(from) : 'todo o histórico'} até o último dado (${day(last)})</span></div>`;
   if (!P.length) { pane.innerHTML = filters + '<div class="fin-empty">Sem dados nessa moeda/período.</div>'; bindM(); return; }
@@ -640,7 +685,8 @@ async function render() {
   if (!els.body) return;
   els.tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === st.tab));
   const pane = els.body;
-  pane.innerHTML = '<div class="fin-empty">Carregando…</div>';
+  if (!pane.children.length) pane.innerHTML = '<div class="fin-empty">Carregando…</div>';
+  pane.style.opacity = '0.55';  // segura o desenho anterior enquanto carrega (sem piscar)
   try {
     if (!st.meta?.available && st.tab !== 'files') {
       pane.innerHTML = '<div class="fin-empty">Nenhum dado ainda. Importe arquivos na aba Arquivos.</div>';
@@ -649,6 +695,8 @@ async function render() {
     await TABS[st.tab][1](pane);
   } catch (e) {
     pane.innerHTML = `<div class="fin-empty">Falhou: ${esc(e.message)}</div>`;
+  } finally {
+    pane.style.opacity = '';
   }
 }
 

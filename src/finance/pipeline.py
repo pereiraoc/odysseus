@@ -10,5 +10,10 @@ def refresh(store: Store, commit_ledger: bool = True) -> dict:
     out = {"rebuild": dedup.rebuild(store)}
     out["categories"] = rules.categorize(store)
     out["transfers"] = rules.pair_transfers(store)
+    try:  # cotacoes para o agregado em R$; sem rede, segue com o que ja tem
+        from src.finance import fx
+        out["fx"] = fx.update(store)
+    except Exception as exc:  # noqa: BLE001 - nunca derruba a ingestao por causa de cotacao
+        out["fx"] = {"error": str(exc)[:200]}
     out["ledger"] = export(store, commit=commit_ledger)
     return out

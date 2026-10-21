@@ -454,11 +454,15 @@ async function render() {
   if (!els.body) return;
   els.tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === st.tab));
   const pane = els.body;
-  pane.innerHTML = '<div class="aiu-empty">Carregando…</div>';
+  // mantem o desenho anterior esmaecido enquanto carrega (sem trocar por "Carregando…": era o que piscava)
+  if (!pane.children.length) pane.innerHTML = '<div class="aiu-empty">Carregando…</div>';
+  pane.style.opacity = '0.55';
   try {
     await TABS[st.tab][1](pane);
   } catch (e) {
     pane.innerHTML = `<div class="aiu-empty">Falhou: ${esc(e.message)}</div>`;
+  } finally {
+    pane.style.opacity = '';
   }
 }
 
@@ -559,7 +563,16 @@ function buildPanel() {
     Modals.injectMinimizeButton(panel, PANEL_ID);
   }
   let rt;
-  new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(() => { if (!panel.classList.contains('hidden')) render(); }, 250); }).observe(els.body);
+  // so redesenha quando a janela muda de largura de verdade. Antes: a barra de rolagem aparecer mudava a
+  // largura util -> redesenho -> conteudo encolhia no meio do redesenho -> barra sumia -> loop (piscava 2x/s)
+  let lastW = 0;
+  new ResizeObserver(() => {
+    // offsetWidth inclui a barra de rolagem: ela aparecer/sumir NAO muda esse valor (contentRect mudava)
+    const w = els.body.offsetWidth;
+    if (Math.abs(w - lastW) <= 8) return;
+    lastW = w;
+    clearTimeout(rt); rt = setTimeout(() => { if (!panel.classList.contains('hidden')) render(); }, 250);
+  }).observe(els.body);
   return panel;
 }
 

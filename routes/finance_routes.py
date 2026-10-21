@@ -22,6 +22,7 @@ Rotas (todas exigem usuario):
   GET  /api/finance/monthly        mes a mes: patrimonio, ganhos x gastos, salario, poupanca, reserva, grupos
   POST /api/finance/sync/pluggy    puxa Nubank/Santander/Wise do Meu Pluggy (tambem roda sozinho a cada 3h)
   GET  /api/finance/investments    posicao atual dos investimentos (ultimo snapshot)
+  GET  /api/finance/costs          custo mensal: essencial fixo x assinaturas x variavel (ultimos 3 meses fechados)
 """
 from __future__ import annotations
 
@@ -351,7 +352,7 @@ def setup_finance_routes() -> APIRouter:
                 raise HTTPException(502, str(exc)) from exc
 
     @router.get("/monthly")
-    def monthly_view(currency: str = "BRL", date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
+    def monthly_view(currency: str = "ALL", date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
                      group: str = Query("month", pattern="^(month|quarter|year)$"), people: bool = True,
                      _user: str = Depends(require_user)):
         from src.finance.analytics import monthly
@@ -388,26 +389,40 @@ def setup_finance_routes() -> APIRouter:
         finally:
             store.close()
 
-    @router.get("/categories")
-    def categories(date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
-                   currency: str = "BRL", _user: str = Depends(require_user)):
+    @router.get("/costs")
+    def costs(currency: str = "ALL", months: int = Query(3, ge=1, le=12), _user: str = Depends(require_user)):
+        from src.finance.analytics import cost_structure
         store = _store()
         try:
-            where, args = (["c.currency = ?"], [currency]) if currency else (["1=1"], [])
+            return cost_structure(store, currency=currency, n_months=months)
+        finally:
+            store.close()
+
+    @router.get("/categories")
+    def categories(date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
+                   currency: str = "ALL", _user: str = Depends(require_user)):
+        from src.finance.analytics import _amounts
+        store = _store()
+        try:
+            where, wargs, conv, _ = _amounts(store, currency) if currency else ("1=1", (), (lambda c, cur, d: c), None)
+            args = list(wargs)
             if date_from:
-                where.append("t.date >= ?"); args.append(date_from)
+                where += " AND t.date >= ?"; args.append(date_from)
             if date_to:
-                where.append("t.date <= ?"); args.append(date_to)
-            w = " AND ".join(where)
-            rows = store.db.execute(
-                "SELECT coalesce(a.category, '(sem)') cat, substr(t.date,1,7) month, sum(t.amount_cents) total, count(*) n"
-                " FROM transactions t JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
-                f" WHERE {w} GROUP BY cat, month", args).fetchall()
+                where += " AND t.date <= ?"; args.append(date_to)
             cats: dict[str, dict] = {}
-            for r in rows:
+            for r in store.db.execute(
+                    "SELECT coalesce(a.category, '(sem)') cat, t.date, t.amount_cents, c.currency cur FROM transactions t"
+                    " JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
+                    f" WHERE {where}", args):
+                v = conv(r["amount_cents"], r["cur"], r["date"]) if currency else r["amount_cents"]
+                if v is None:
+                    continue
                 c = cats.setdefault(r["cat"], {"category": r["cat"], "total": 0, "count": 0, "months": {}})
-                c["total"] += r["total"]; c["count"] += r["n"]; c["months"][r["month"]] = r["total"]
-            months = sorted({r["month"] for r in rows})
+                c["total"] += v
+                c["count"] += 1
+                c["months"][r["date"][:7]] = c["months"].get(r["date"][:7], 0) + v
+            months = sorted({m for c in cats.values() for m in c["months"]})
             return {"currency": currency, "months": months, "categories": sorted(cats.values(), key=lambda c: c["total"])}
         finally:
             store.close()
