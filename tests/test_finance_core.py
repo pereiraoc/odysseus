@@ -308,3 +308,33 @@ def test_santander_fatura_text():
         ("2023-01-05", -2818, "PURCHASE"), ("2023-01-13", 1000, "CREDIT")]
     assert p.records[3].extra["installment"] == 2 and p.records[4].extra["card"] == "2222"
     assert not p.warnings
+
+
+def test_rules_priority_manual_and_transfer_pairs(store):
+    import json as _json
+    from src.finance import rules
+    ingest_bytes(store, "n.ofx", ofx("5555-1", [
+        ("20230105", "-100.00", "n1", "Pagamento da fatura - Cartão Nubank"),
+        ("20230106", "-30.00", "n2", "Compra no débito - Uber Eats"),
+        ("20230107", "-40.00", "n3", "Compra no débito - Uber Trip")]))
+    ingest_bytes(store, "s.ofx", ofx("000012345678", [("20230108", "100.00", "000000", "DEB. AUTOM. DE FATURA EM C/")],
+                                     bank="0033"))
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "uber", "priority": 600, "when": {"text_any": ["uber"]}, "then": {"category": "transporte:app"}},
+        {"id": "eats", "priority": 610, "when": {"text_any": ["uber eats"]}, "then": {"category": "alimentacao:delivery"}},
+        {"id": "fatura", "priority": 900, "when": {"text_any": ["pagamento da fatura", "deb autom de fatura"]},
+         "then": {"category": "transferencias:interna"}}]}))
+    res = rules.categorize(store)
+    assert res["coverage"] == 1.0 and res["hits"] == {"fatura": 2, "eats": 1, "uber": 1}
+    cat = dict(store.db.execute("SELECT t.description, a.category FROM transactions t JOIN annotations a USING (anchor_key)").fetchall())
+    assert cat["Compra no débito - Uber Eats"] == "alimentacao:delivery"
+    assert rules.pair_transfers(store) == {"internal": 2, "pairs": 1, "unpaired": 0}
+    # manual vence regra e sobrevive a recategorizar
+    anchor = store.db.execute("SELECT anchor_key FROM transactions WHERE description LIKE '%Trip'").fetchone()[0]
+    store.db.execute("INSERT OR REPLACE INTO annotations VALUES (?, 'viagem:taxi', 'manual', 1, 'x')", (anchor,))
+    rules.categorize(store)
+    assert store.db.execute("SELECT category FROM annotations WHERE anchor_key=?", (anchor,)).fetchone()[0] == "viagem:taxi"
+    assert rules.merchant("COMPRA CARTAO MAESTRO | 25/02 ZAFFARI LOJA 08") == "zaffari loja 08"
+    assert rules.merchant("Transação por cartão de 5.00 EUR emitida por Loja X") == "loja x"

@@ -13,7 +13,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from src.finance import dedup, reconcile
+from src.finance import dedup, pipeline, reconcile, rules
 from src.finance.ingest import ingest_bytes, ingest_paths, reparse_all
 from src.finance.money import fmt_cents
 from src.finance.store import Store
@@ -64,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("report")
     sub.add_parser("queue")
     sub.add_parser("wise-sync")
+    un = sub.add_parser("uncategorized")
+    un.add_argument("--limit", type=int, default=80)
     lg = sub.add_parser("ledger")
     lg.add_argument("--no-commit", action="store_true")
     rp = sub.add_parser("reparse")
@@ -88,9 +90,11 @@ def main(argv: list[str] | None = None) -> int:
             for r in ok:
                 for w in r["warnings"]:
                     print(f"  AVISO {r['name']}: {w}")
-            print("rebuild:", json.dumps(dedup.rebuild(store)))
+            print("refresh:", json.dumps(pipeline.refresh(store)["categories"] | {"hits": None}))
         elif a.cmd == "rebuild":
-            print(json.dumps(dedup.rebuild(store)))
+            r = pipeline.refresh(store)
+            print(json.dumps({k: v for k, v in r.items() if k != "categories"}))
+            print("categorias:", json.dumps({k: v for k, v in r["categories"].items() if k != "hits"}))
         elif a.cmd == "report":
             _print_report(reconcile.report(store))
         elif a.cmd == "wise-sync":
@@ -102,7 +106,11 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({k: v for k, v in res.items() if k != "results"}, ensure_ascii=False))
             for r in res["results"]:
                 print(" ", r.get("name") or r, r.get("status", ""), r.get("error", ""))
-            print("rebuild:", json.dumps(dedup.rebuild(store)))
+            print("refresh:", json.dumps(pipeline.refresh(store)["transfers"]))
+        elif a.cmd == "uncategorized":
+            for g in rules.uncategorized(store, a.limit):
+                print(f"{g['count']:5d} {fmt_cents(g['sum_cents']):>12s} {g['currency']} {g['institution']}/{g['kind']:12s} "
+                      f"{g['merchant'][:45]:45s} | {g['examples'][0][:70]}")
         elif a.cmd == "ledger":
             from src.finance.ledger import export
             print(json.dumps(export(store, commit=not a.no_commit)))

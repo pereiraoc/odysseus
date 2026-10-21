@@ -54,3 +54,23 @@ def test_queue_decision(client):
 
 def test_raw_rejects_bad_sha(client):
     assert client.get("/api/finance/raw/..%2f..%2fetc").status_code in (400, 404)
+
+
+def test_rules_categories_and_manual_override(client, tmp_path):
+    import json
+    data = ofx("9-9", [("20230110", "-10.00", "a", "Compra no débito - Padaria Central"),
+                       ("20230111", "-20.00", "b", "Compra no débito - Mercado X")], bal=("20230131", "70.00"))
+    client.post("/api/finance/import", files=[("files", ("jan.ofx", data, "x"))])
+    (tmp_path / "finance" / "ledger" / "rules.json").write_text(json.dumps({"rules": [
+        {"id": "mercado", "priority": 600, "when": {"text_any": ["mercado"]}, "then": {"category": "alimentacao:mercado"}}]}))
+    client.post("/api/finance/import", files=[("files", ("jan.ofx", data, "x"))])  # reimport -> reaplica regras
+    rl = client.get("/api/finance/rules").json()
+    assert rl["rules"][0]["hits"] == 1 and rl["coverage"] == 0.5
+    cats = {c["category"]: c for c in client.get("/api/finance/categories").json()["categories"]}
+    assert cats["alimentacao:mercado"]["total"] == -2000 and cats["(sem)"]["count"] == 1
+    assert client.get("/api/finance/uncategorized").json()["groups"][0]["merchant"] == "padaria central"
+    tx = client.get("/api/finance/transactions", params={"category": "(sem)"}).json()["rows"][0]
+    r = client.post(f"/api/finance/tx/{tx['id']}/category", json={"category": "Alimentacao: Padaria"}).json()
+    assert r["category"] == "alimentacao:padaria" and r["coverage"] == 1.0
+    tx = client.get("/api/finance/transactions", params={"category": "alimentacao"}).json()
+    assert tx["total"] == 2

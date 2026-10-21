@@ -14,6 +14,11 @@ Rotas (todas exigem usuario):
   POST /api/finance/import         upload de arquivos -> ingest + rebuild + export do ledger
   POST /api/finance/queue/{id}     decide um item da fila (mesclar com outro registro ou manter separado)
   POST /api/finance/sync/wise      puxa saldos/statements do Wise (env WISE_API_TOKEN, token Read only)
+  GET  /api/finance/categories     soma por categoria e por mes (transferencias separadas)
+  GET  /api/finance/uncategorized  sem categoria, agrupado por estabelecimento
+  GET  /api/finance/rules          regras (data/finance/ledger/rules.json) + quantas transacoes cada uma pega
+  GET  /api/finance/transfers      transferencias internas sem par (indicam extrato/fatura faltando)
+  POST /api/finance/tx/{id}/category   categoria manual (vence qualquer regra)
 """
 from __future__ import annotations
 
@@ -28,9 +33,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from src.auth_helpers import require_user
-from src.finance import dedup, reconcile
+from src.finance import dedup, pipeline, reconcile, rules
 from src.finance.ingest import ingest_bytes, reparse_all
-from src.finance.ledger import export as export_ledger
 from src.finance.store import Store, now
 
 MAX_UPLOAD = 50 * 1024 * 1024
@@ -110,6 +114,10 @@ def _account_rows(store: Store) -> list[dict]:
     return rows
 
 
+class CategoryIn(BaseModel):
+    category: str = ""   # vazio = remove a categoria manual (volta para a regra)
+
+
 class Decision(BaseModel):
     target_tx_id: Optional[int] = None   # transacao canonica com que mesclar; None = manter separado
     note: str = ""
@@ -147,7 +155,7 @@ def setup_finance_routes() -> APIRouter:
             store.close()
 
     @router.get("/transactions")
-    def transactions(account: str = "", q: str = "", date_from: str = Query("", alias="from"),
+    def transactions(account: str = "", q: str = "", category: str = "", date_from: str = Query("", alias="from"),
                      date_to: str = Query("", alias="to"), limit: int = Query(200, le=2000), offset: int = 0,
                      _user: str = Depends(require_user)):
         store = _store()
@@ -157,14 +165,19 @@ def setup_finance_routes() -> APIRouter:
                 where.append("t.account_key = ?"); args.append(account)
             if q:
                 where.append("t.description LIKE ?"); args.append(f"%{q}%")
+            if category == "(sem)":
+                where.append("a.category IS NULL")
+            elif category:
+                where.append("(a.category = ? OR a.category LIKE ?)"); args += [category, category + ":%"]
             if date_from:
                 where.append("t.date >= ?"); args.append(date_from)
             if date_to:
                 where.append("t.date <= ?"); args.append(date_to)
             w = ("WHERE " + " AND ".join(where)) if where else ""
-            total = store.db.execute(f"SELECT count(*), coalesce(sum(amount_cents),0) FROM transactions t {w}", args).fetchone()
+            j = "FROM transactions t LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
+            total = store.db.execute(f"SELECT count(*), coalesce(sum(t.amount_cents),0) {j} {w}", args).fetchone()
             rows = store.db.execute(
-                f"SELECT t.*, a.category FROM transactions t LEFT JOIN annotations a ON a.anchor_key=t.anchor_key {w}"
+                f"SELECT t.*, a.category, a.manual, a.note AS rule {j} {w}"
                 " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
             ids = [r["id"] for r in rows]
             sources: dict[int, list] = {}
@@ -239,9 +252,7 @@ def setup_finance_routes() -> APIRouter:
                     res = [ingest_bytes(store, name, data, pw) for name, data in payload]
                     retry = {r["sha256"]: r for r in reparse_all(store, pw, only_errors=True)}
                     res = [retry.get(r["sha256"], r) for r in res]
-                    stats = dedup.rebuild(store)
-                    ledger = export_ledger(store)
-                    return {"results": res, "rebuild": stats, "ledger": ledger}
+                    return {"results": res, **pipeline.refresh(store)}
                 finally:
                     store.close()
             return await asyncio.to_thread(work)
@@ -265,9 +276,7 @@ def setup_finance_routes() -> APIRouter:
                     store.db.execute("INSERT OR REPLACE INTO merge_decisions VALUES (?,?,?,?)",
                                      (dedup.record_key(rec), target, now(), body.note))
                     store.db.commit()
-                    stats = dedup.rebuild(store)
-                    export_ledger(store)
-                    return {"ok": True, "rebuild": stats}
+                    return {"ok": True, **pipeline.refresh(store)}
                 finally:
                     store.close()
             return await asyncio.to_thread(work)
@@ -283,8 +292,7 @@ def setup_finance_routes() -> APIRouter:
                 store = _store()
                 try:
                     res = wise_api.sync(store, token)
-                    res["rebuild"] = dedup.rebuild(store)
-                    res["ledger"] = export_ledger(store)
+                    res.update(pipeline.refresh(store))
                     return res
                 finally:
                     store.close()
@@ -292,5 +300,92 @@ def setup_finance_routes() -> APIRouter:
                 return await asyncio.to_thread(work)
             except RuntimeError as exc:
                 raise HTTPException(502, str(exc)) from exc
+
+    @router.get("/categories")
+    def categories(date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
+                   currency: str = "BRL", _user: str = Depends(require_user)):
+        store = _store()
+        try:
+            where, args = (["c.currency = ?"], [currency]) if currency else (["1=1"], [])
+            if date_from:
+                where.append("t.date >= ?"); args.append(date_from)
+            if date_to:
+                where.append("t.date <= ?"); args.append(date_to)
+            w = " AND ".join(where)
+            rows = store.db.execute(
+                "SELECT coalesce(a.category, '(sem)') cat, substr(t.date,1,7) month, sum(t.amount_cents) total, count(*) n"
+                " FROM transactions t JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
+                f" WHERE {w} GROUP BY cat, month", args).fetchall()
+            cats: dict[str, dict] = {}
+            for r in rows:
+                c = cats.setdefault(r["cat"], {"category": r["cat"], "total": 0, "count": 0, "months": {}})
+                c["total"] += r["total"]; c["count"] += r["n"]; c["months"][r["month"]] = r["total"]
+            months = sorted({r["month"] for r in rows})
+            return {"currency": currency, "months": months, "categories": sorted(cats.values(), key=lambda c: c["total"])}
+        finally:
+            store.close()
+
+    @router.get("/uncategorized")
+    def uncategorized(limit: int = Query(150, le=1000), _user: str = Depends(require_user)):
+        store = _store()
+        try:
+            return {"groups": rules.uncategorized(store, limit)}
+        finally:
+            store.close()
+
+    @router.get("/rules")
+    def list_rules(_user: str = Depends(require_user)):
+        store = _store()
+        try:
+            try:
+                rs = rules.load_rules(store)
+            except ValueError as exc:
+                return {"error": str(exc), "rules": []}
+            dry = rules.categorize(store, rs, dry_run=True)
+            return {"path": str(rules.rules_path(store)), "coverage": dry["coverage"], "transactions": dry["transactions"],
+                    "categorized": dry["categorized"], "manual": dry["manual"],
+                    "rules": [{"id": r.id, "priority": r.priority, "when": r.when, "category": r.then["category"],
+                               "hits": dry["hits"].get(r.id, 0)} for r in rs]}
+        finally:
+            store.close()
+
+    @router.get("/transfers")
+    def transfers(_user: str = Depends(require_user)):
+        store = _store()
+        try:
+            rows = store.db.execute(
+                "SELECT t.id, t.date, t.account_key, t.amount_cents, t.description FROM transactions t"
+                " JOIN annotations a ON a.anchor_key=t.anchor_key WHERE a.category = ?"
+                " AND t.id NOT IN (SELECT tx_a FROM transfer_pairs UNION SELECT tx_b FROM transfer_pairs) ORDER BY t.date",
+                (rules.INTERNAL,)).fetchall()
+            pairs = store.db.execute("SELECT count(*) FROM transfer_pairs").fetchone()[0]
+            return {"pairs": pairs, "unpaired": [dict(r) for r in rows]}
+        finally:
+            store.close()
+
+    @router.post("/tx/{tx_id}/category")
+    async def set_category(tx_id: int, body: CategoryIn, _user: str = Depends(require_user)):
+        cat = ":".join(p.strip().lower().replace(" ", "-") for p in body.category.split(":") if p.strip())
+        async with _lock:
+            def work():
+                store = _store()
+                try:
+                    row = store.db.execute("SELECT anchor_key FROM transactions WHERE id=?", (tx_id,)).fetchone()
+                    if not row:
+                        raise HTTPException(404, "transacao nao encontrada")
+                    if cat:
+                        store.db.execute("INSERT OR REPLACE INTO annotations VALUES (?,?,?,1,?)",
+                                         (row["anchor_key"], cat, "manual", now()))
+                    else:
+                        store.db.execute("DELETE FROM annotations WHERE anchor_key=?", (row["anchor_key"],))
+                    store.db.commit()
+                    res = rules.categorize(store)
+                    rules.pair_transfers(store)
+                    from src.finance.ledger import export
+                    export(store)
+                    return {"ok": True, "category": cat or None, "coverage": res["coverage"]}
+                finally:
+                    store.close()
+            return await asyncio.to_thread(work)
 
     return router

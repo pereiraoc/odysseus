@@ -19,7 +19,7 @@ const IMPORTER = {
   santander_csv: 'planilha', santander_fatura_pdf: 'PDF fatura', santander_cc_ocr: 'OCR extrato', pluggy: 'Open Finance',
 };
 
-const st = { cur: 'BRL', tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
+const st = { cur: 'BRL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
 let els = {};
 
 // ── util ────────────────────────────────────────────────────────────────
@@ -133,6 +133,7 @@ async function renderTransactions(pane) {
     <div class="fin-filters">
       <select class="fin-f-acc"><option value="">todas as contas</option>${opts}</select>
       <input class="fin-f-q" placeholder="buscar descrição" value="${esc(st.q)}">
+      <input class="fin-f-cat" placeholder="categoria (ou (sem))" value="${esc(st.category)}" list="fin-cat-list">
       <input type="date" class="fin-f-from" value="${st.from}"><span>→</span><input type="date" class="fin-f-to" value="${st.to}">
       <span class="fin-f-sum"></span>
     </div>
@@ -141,10 +142,11 @@ async function renderTransactions(pane) {
   pane.querySelector('.fin-f-acc').addEventListener('change', e => { st.account = e.target.value; reload(); });
   let t;
   pane.querySelector('.fin-f-q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { st.q = e.target.value; reload(); }, 250); });
+  pane.querySelector('.fin-f-cat').addEventListener('change', e => { st.category = e.target.value.trim(); reload(); });
   pane.querySelector('.fin-f-from').addEventListener('change', e => { st.from = e.target.value; reload(); });
   pane.querySelector('.fin-f-to').addEventListener('change', e => { st.to = e.target.value; reload(); });
   async function fill() {
-    const p = new URLSearchParams({ account: st.account, q: st.q, from: st.from, to: st.to, limit: '200', offset: String(st.offset) });
+    const p = new URLSearchParams({ account: st.account, q: st.q, category: st.category, from: st.from, to: st.to, limit: '200', offset: String(st.offset) });
     const d = await get(`/transactions?${p}`);
     const cur = st.account ? accByKey(st.account)?.currency || 'BRL' : 'BRL';
     pane.querySelector('.fin-f-sum').textContent = `${d.total} transações` + (st.account ? ` · soma ${money(d.sum, cur)}` : '');
@@ -152,19 +154,88 @@ async function renderTransactions(pane) {
       const a = accByKey(r.account_key);
       const src = r.sources.map(s => `<span class="fin-chip src" title="${esc(s.description)} (${day(s.date)})">${esc(IMPORTER[s.importer] || s.importer)}</span>`).join('');
       return `<tr><td class="nowrap">${day(r.date)}</td><td>${esc(a ? accLabel(a) : r.account_key)}</td><td class="desc">${esc(r.description)}</td>
-        <td>${r.category ? esc(r.category) : '<span class="fin-dim">—</span>'}</td><td>${src}</td>
+        <td class="fin-catcell" data-tx="${r.id}" title="${r.manual ? 'categoria manual' : r.rule ? esc(r.rule) : 'sem categoria'} — clique para mudar">${r.category ? esc(r.category) + (r.manual ? ' ✎' : '') : '<span class="fin-dim">—</span>'}</td><td>${src}</td>
         <td class="num ${r.amount_cents < 0 ? 'neg' : 'pos'}">${money(r.amount_cents, a?.currency || 'BRL')}</td></tr>`;
     }).join('');
     const more = d.total > st.offset + d.rows.length;
     pane.querySelector('.fin-tx').innerHTML = `<table class="fin-table"><thead><tr><th>Data</th><th>Conta</th><th>Descrição</th><th>Categoria</th><th>Fontes</th><th class="num">Valor</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="fin-empty">Nada encontrado.</td></tr>'}</tbody></table>
       <div class="fin-pager">${st.offset ? '<button data-p="-1">← anteriores</button>' : ''}${more ? '<button data-p="1">próximas →</button>' : ''}</div>`;
     pane.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { st.offset = Math.max(0, st.offset + Number(b.dataset.p) * 200); fill(); }));
+    pane.querySelectorAll('.fin-catcell').forEach(td => td.addEventListener('click', () => editCategory(td, fill)));
   }
   await fill();
 }
 
+let catNames = [];
+async function loadCatNames() {
+  const d = await get('/categories?currency=');
+  catNames = d.categories.map(c => c.category).filter(c => c !== '(sem)').sort();
+  let dl = document.getElementById('fin-cat-list');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'fin-cat-list'; document.body.append(dl); }
+  dl.innerHTML = catNames.map(c => `<option value="${esc(c)}">`).join('');
+}
+
+function editCategory(td, after) {
+  if (td.querySelector('input')) return;
+  const old = td.textContent.replace(' ✎', '').trim();
+  td.innerHTML = `<input class="fin-catedit" list="fin-cat-list" value="${esc(old === '—' ? '' : old)}" placeholder="grupo:sub (vazio = volta à regra)">`;
+  const inp = td.querySelector('input');
+  inp.focus();
+  let done = false;
+  const save = async () => {
+    if (done) return; done = true;
+    const r = await fetch(`${API}/tx/${td.dataset.tx}/category`, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: inp.value }) });
+    if (!r.ok) showError(`Finanças: ${(await r.text()).slice(0, 200)}`);
+    await loadCatNames();
+    after();
+  };
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { done = true; after(); } });
+  inp.addEventListener('blur', save);
+}
+
+async function renderCategories(pane) {
+  const periods = [['1', 'mês atual'], ['3', '3 meses'], ['12', '12 meses'], ['all', 'tudo']];
+  const end = new Date();
+  // dados param em 2024: "12 meses" a partir do ultimo dado, nao de hoje
+  const last = (st.meta.accounts.map(a => a.last).sort().pop() || '').slice(0, 10);
+  const anchor = last ? new Date(last + 'T12:00:00') : end;
+  const fromA = st.catPeriod === 'all' ? '' : new Date(anchor.getFullYear(), anchor.getMonth() - Number(st.catPeriod) + 1, 1).toISOString().slice(0, 10);
+  const [d, rl, un] = await Promise.all([get(`/categories?currency=${st.cur}&from=${fromA || ''}`), get('/rules'), get('/uncategorized?limit=40')]);
+  const isTransfer = c => c.startsWith('transferencias:') || c === 'financeiro:rotativo' || c === 'ajustes:pre-autorizacao';
+  const cats = d.categories.filter(c => st.withTransfers || !isTransfer(c.category));
+  const out = cats.filter(c => c.total < 0), inc = cats.filter(c => c.total > 0);
+  const maxOut = Math.max(1, ...out.map(c => -c.total)), maxIn = Math.max(1, ...inc.map(c => c.total));
+  const bar = (c, max, cls) => `<div class="fin-hbar" data-cat="${esc(c.category)}"><span class="fin-hbar-l">${esc(c.category)}</span>
+    <span class="fin-hbar-t"><i class="${cls}" style="width:${(Math.abs(c.total) / max * 100).toFixed(1)}%"></i></span>
+    <span class="fin-hbar-v">${money(c.total, st.cur)} <small>${c.count}</small></span></div>`;
+  const sumOut = out.reduce((a, c) => a + c.total, 0), sumIn = inc.reduce((a, c) => a + c.total, 0);
+  pane.innerHTML = `
+    <div class="fin-filters">${periods.map(([v, l]) => `<button class="fin-btn ${st.catPeriod === v ? 'active' : ''}" data-cp="${v}">${l}</button>`).join('')}
+      <select class="fin-cur2">${['BRL', 'USD', 'EUR', 'ILS', 'CHF', 'HUF', 'CZK', 'PLN', 'RON', 'GBP'].map(c => `<option ${c === st.cur ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <label><input type="checkbox" class="fin-wt" ${st.withTransfers ? 'checked' : ''}> incluir transferências</label>
+      <span class="fin-f-sum">${fromA ? 'desde ' + day(fromA) + ' (até o último dado)' : 'todo o histórico'} · entradas ${money(sumIn, st.cur)} · saídas ${money(sumOut, st.cur)}</span></div>
+    <div class="fin-grid2">
+      <div class="fin-card"><div class="fin-card-h">Saídas por categoria <span class="fin-hint">clique para ver as transações</span></div>${out.map(c => bar(c, maxOut, 'neg')).join('') || '<div class="fin-dim">nada</div>'}</div>
+      <div class="fin-card"><div class="fin-card-h">Entradas por categoria</div>${inc.map(c => bar(c, maxIn, 'pos')).join('') || '<div class="fin-dim">nada</div>'}</div>
+    </div>
+    <div class="fin-card"><div class="fin-card-h">Regras <span class="fin-hint">${esc(rl.path || '')}</span></div>
+      ${rl.error ? `<div class="fin-chip warn">${esc(rl.error)}</div>` : `<div>${rl.rules.length} regras · ${(rl.coverage * 100).toFixed(1)}% das ${rl.transactions} transações categorizadas · ${rl.manual} manuais</div>
+      <details><summary class="fin-dim">ver regras</summary><table class="fin-table"><thead><tr><th>Regra</th><th>Prioridade</th><th>Categoria</th><th class="num">Transações</th></tr></thead><tbody>
+      ${rl.rules.map(r => `<tr><td title="${esc(JSON.stringify(r.when))}">${esc(r.id)}</td><td>${r.priority}</td><td>${esc(r.category)}</td><td class="num">${r.hits}</td></tr>`).join('')}</tbody></table></details>`}</div>
+    <div class="fin-card"><div class="fin-card-h">Ainda sem categoria (por estabelecimento) <span class="fin-hint">vira regra na próxima rodada; ou clique na categoria de uma transação para definir à mão</span></div>
+      <table class="fin-table"><thead><tr><th>Estabelecimento</th><th>Conta</th><th class="num">Vezes</th><th class="num">Total</th><th>Exemplo</th></tr></thead><tbody>
+      ${un.groups.map(g => `<tr><td>${esc(g.merchant)}</td><td>${esc((INST[g.institution] || g.institution) + ' · ' + (KIND[g.kind] || g.kind))}</td><td class="num">${g.count}</td><td class="num">${money(g.sum_cents, g.currency)}</td><td class="desc fin-dim">${esc(g.examples[0])}</td></tr>`).join('')}</tbody></table></div>`;
+  pane.querySelectorAll('[data-cp]').forEach(b => b.addEventListener('click', () => { st.catPeriod = b.dataset.cp; render(); }));
+  pane.querySelector('.fin-cur2').addEventListener('change', e => { st.cur = e.target.value; render(); });
+  pane.querySelector('.fin-wt').addEventListener('change', e => { st.withTransfers = e.target.checked; render(); });
+  pane.querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => {
+    st.category = b.dataset.cat; st.account = ''; st.q = ''; st.from = fromA; st.to = ''; st.offset = 0; switchTab('transactions');
+  }));
+}
+
 async function renderAudit(pane) {
-  const d = await get('/audit');
+  const [d, tr] = await Promise.all([get('/audit'), get('/transfers')]);
   const accs = d.accounts.filter(a => a.transactions).map(a => {
     const acc = accByKey(a.account) || { institution: a.account, kind: '' };
     const cur = acc.currency || 'BRL';
@@ -194,6 +265,9 @@ async function renderAudit(pane) {
   pane.innerHTML = `${accs}
     <div class="fin-card"><div class="fin-card-h">Fila de revisão <span class="fin-hint">registros que não casaram com segurança — nada aqui entra no saldo até decidir</span></div>
       ${queue ? `<table class="fin-table"><thead><tr><th>Data</th><th>Fonte</th><th>Descrição</th><th class="num">Valor</th><th>Motivo</th><th></th></tr></thead><tbody>${queue}</tbody></table>` : '<div class="fin-dim">vazia</div>'}</div>
+    <div class="fin-card"><div class="fin-card-h">Transferências entre suas contas sem a outra ponta (${tr.unpaired.length})
+      <span class="fin-hint">${tr.pairs} pares casados · sem par = falta o extrato/fatura do outro lado nesse mês</span></div>
+      ${tr.unpaired.length ? `<details><summary class="fin-dim">ver lista</summary><table class="fin-table"><tbody>${tr.unpaired.map(t => `<tr><td class="nowrap">${day(t.date)}</td><td>${esc(accLabel(accByKey(t.account_key) || { institution: t.account_key, kind: '' }))}</td><td class="desc">${esc(t.description)}</td><td class="num">${money(t.amount_cents, accByKey(t.account_key)?.currency || 'BRL')}</td></tr>`).join('')}</tbody></table></details>` : '<div class="fin-dim">todas casadas</div>'}</div>
     <div class="fin-card"><div class="fin-card-h">Avisos de importação</div>${warns ? `<ul class="fin-list">${warns}</ul>` : '<div class="fin-dim">nenhum</div>'}</div>
     <div class="fin-card"><div class="fin-card-h">Arquivos que não entraram <span class="fin-hint">o original fica guardado; reprocessa quando o leitor existir</span></div>${errs ? `<ul class="fin-list">${errs}</ul>` : '<div class="fin-dim">nenhum</div>'}</div>`;
   const decide = async (id, body) => {
@@ -234,7 +308,7 @@ async function renderFiles(pane) {
   });
 }
 
-const TABS = { overview: ['Visão geral', renderOverview], transactions: ['Transações', renderTransactions], audit: ['Auditoria', renderAudit], files: ['Arquivos', renderFiles] };
+const TABS = { overview: ['Visão geral', renderOverview], categories: ['Categorias', renderCategories], transactions: ['Transações', renderTransactions], audit: ['Auditoria', renderAudit], files: ['Arquivos', renderFiles] };
 
 function switchTab(tab) { st.tab = tab; try { localStorage.setItem('odysseus-fin-tab', tab); } catch (_) {} render(); }
 
@@ -304,7 +378,7 @@ async function openPanel() {
   try {
     panel.style.setProperty('z-index', String(nextToolWindowZ({ exclude: panel, current: getComputedStyle(panel).zIndex, floor: 300 })), 'important');
   } catch (_) {}
-  try { await refreshMeta(); } catch (e) { showError(`Finanças: ${e.message}`); return; }
+  try { await refreshMeta(); loadCatNames().catch(() => {}); } catch (e) { showError(`Finanças: ${e.message}`); return; }
   render();
 }
 

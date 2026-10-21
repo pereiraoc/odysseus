@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS merge_decisions (
   -- chaves estaveis 'importer|account_key|native_key' (ids mudam em reparse; isto nao)
   record_key TEXT PRIMARY KEY, target_record_key TEXT, decided_at TEXT NOT NULL, note TEXT
 );
+CREATE TABLE IF NOT EXISTS transfer_pairs (tx_a INTEGER NOT NULL, tx_b INTEGER NOT NULL, PRIMARY KEY (tx_a, tx_b));
 CREATE TABLE IF NOT EXISTS annotations (
   anchor_key TEXT PRIMARY KEY, category TEXT, note TEXT, manual INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
 );
