@@ -22,6 +22,8 @@ Rotas (todas exigem usuario):
   GET  /api/finance/monthly        mes a mes: patrimonio, ganhos x gastos, salario, poupanca, reserva, grupos
   POST /api/finance/sync/pluggy    puxa Nubank/Santander/Wise do Meu Pluggy (tambem roda sozinho a cada 3h)
   GET  /api/finance/investments    posicao atual dos investimentos (ultimo snapshot)
+  GET  /api/finance/review         grupos com categoria incerta, ordenados pelo impacto em R$ (aba Revisar)
+  POST /api/finance/review/assign  categoria para um grupo inteiro -> regra sua (rules_user.json, vence as outras)
   GET  /api/finance/costs          custo mensal: essencial fixo x assinaturas x variavel (ultimos 3 meses fechados)
 """
 from __future__ import annotations
@@ -160,6 +162,12 @@ def _account_rows(store: Store) -> list[dict]:
 
 class CategoryIn(BaseModel):
     category: str = ""   # vazio = remove a categoria manual (volta para a regra)
+
+
+class ReviewAssign(BaseModel):
+    merchant: str
+    sign: str            # 'debit' (saida) | 'credit' (entrada)
+    category: str
 
 
 class Decision(BaseModel):
@@ -388,6 +396,38 @@ def setup_finance_routes() -> APIRouter:
             return {"investments": [dict(r) for r in rows]}
         finally:
             store.close()
+
+    @router.get("/review")
+    def review(months: int = Query(12, ge=0, le=600), limit: int = Query(100, le=500), _user: str = Depends(require_user)):
+        from datetime import date, timedelta
+        store = _store()
+        try:
+            since = (date.today() - timedelta(days=30 * months)).isoformat() if months else ""
+            out = rules.review_queue(store, since, limit)
+            out["since"] = since
+            out["categories"] = sorted({r[0] for r in store.db.execute("SELECT DISTINCT category FROM annotations WHERE category IS NOT NULL")})
+            return out
+        finally:
+            store.close()
+
+    @router.post("/review/assign")
+    async def review_assign(body: ReviewAssign, _user: str = Depends(require_user)):
+        cat = ":".join(p.strip().lower().replace(" ", "-") for p in body.category.split(":") if p.strip())
+        if not cat or body.sign not in ("debit", "credit") or not body.merchant.strip():
+            raise HTTPException(400, "merchant, sign (debit|credit) e category sao obrigatorios")
+        async with _lock:
+            def work():
+                store = _store()
+                try:
+                    rule = rules.add_user_rule(store, body.merchant.strip(), body.sign, cat)
+                    res = rules.categorize(store)
+                    rules.pair_transfers(store)
+                    from src.finance.ledger import export
+                    export(store)
+                    return {"ok": True, "rule": rule, "hits": res["hits"].get(rule["id"], 0), "coverage": res["coverage"]}
+                finally:
+                    store.close()
+            return await asyncio.to_thread(_locked, work)
 
     @router.get("/costs")
     def costs(currency: str = "ALL", months: int = Query(3, ge=1, le=12), _user: str = Depends(require_user)):

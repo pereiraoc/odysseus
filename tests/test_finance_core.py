@@ -460,3 +460,21 @@ def test_rounding_cent_merges_only_same_day_similar_text(store):
     stats = dedup.rebuild(store)
     # IOF 3,34 x 3,35 mesmo dia e mesmo texto: funde. 10,01 com texto diferente, ou com 2 dias de distancia: nao funde
     assert stats["auto_merged"] == 1 and tx_count(store, "nubank:checking") == 4
+
+
+def test_merchant_and_confidence_and_user_rule(store):
+    from src.finance import rules
+    assert rules.merchant("Transferência enviada pelo Pix|Márcia Steemburgo") == "marcia steemburgo"
+    assert rules.merchant("Transferência enviada pelo Pix - Márcia Steemburgo - •••.123.456-•• - NU PAGAMENTOS") == "marcia steemburgo"
+    assert rules.merchant("COMPRA CARTAO MAESTRO | 25/02 ZAFFARI LOJA 08") == "zaffari loja 08"
+    assert rules.confidence("transferencias:pessoas", "regra:pessoas", 0) == "baixa"
+    assert rules.confidence("alimentacao:mercado", "regra:of-alimentacao-mercado", 0) == "media"
+    assert rules.confidence("moradia:diarista", "regra:u-x-debit", 0) == "alta"
+    ingest_bytes(store, "a.ofx", ofx("5555-1", [("20240105", "-150.00", "a", "Transferência enviada pelo Pix - Márcia Steemburgo - x"),
+                                                ("20240106", "-30.00", "b", "Padaria")]))
+    dedup.rebuild(store)
+    q = rules.review_queue(store)
+    assert q["items"][0]["merchant"] == "marcia steemburgo" and q["items"][0]["impact"] == 15000
+    rules.add_user_rule(store, "marcia steemburgo", "debit", "moradia:diarista")
+    rules.categorize(store)
+    assert [i["merchant"] for i in rules.review_queue(store)["items"]] == ["padaria"]

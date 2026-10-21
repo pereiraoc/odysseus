@@ -116,11 +116,20 @@ async function renderCosts(host) {
     <div class="fin-card-h">Custo mensal <span class="fin-hint">média de ${monthShort(months[0])}–${monthShort(months[months.length - 1])} (últimos ${months.length} meses fechados) · todas as moedas em R$${c.incomplete_months?.length ? ` · ⚠ dados incompletos em ${c.incomplete_months.map(monthShort).join(', ')}` : ''}</span></div>
     <div class="fin-kpis">
       ${COST_CLASS.map(([k, label, color]) => `<div class="fin-kpi"><div class="fin-kpi-l"><i class="fin-sw" style="background:${color}"></i>${label}</div><div class="fin-kpi-v">${money(c.classes[k]?.avg || 0, cur)}</div><div class="fin-kpi-s">${pct(c.classes[k]?.avg || 0)} do total</div></div>`).join('')}
-      <div class="fin-kpi"><div class="fin-kpi-l">Total por mês</div><div class="fin-kpi-v">${money(c.total_avg, cur)}</div><div class="fin-kpi-s">${ofSal.replace(/^ · /, '')}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-l">Custo total por mês</div><div class="fin-kpi-v">${money(c.total_avg, cur)}</div><div class="fin-kpi-s">${ofSal.replace(/^ · /, '')}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-l"><i class="fin-sw" style="background:#c98500"></i>Guardado por mês</div><div class="fin-kpi-v">${money(c.savings?.avg || 0, cur)}</div><div class="fin-kpi-s">caixinhas/CDB/investimentos: aplicado − resgatado</div></div>
     </div>
-    <div class="fin-costbar">${bar}</div>
+    ${c.income_avg ? (() => {
+      const parts = [['essencial', c.classes.essencial?.avg || 0, SERIES_C(0)], ['assinaturas', c.classes.assinaturas?.avg || 0, SERIES_C(1)],
+        ['variável', c.classes.variavel?.avg || 0, SERIES_C(2)], ['guardado', Math.max(0, c.savings?.avg || 0), '#c98500'],
+        ['sobra', Math.max(0, c.leftover_avg || 0), '#898781']];
+      const base = Math.max(c.income_avg, parts.reduce((a, [, v]) => a + v, 0)) || 1;
+      return `<div class="fin-alloc"><b>Para onde vai o que entra</b> (ganhos médios ${money(c.income_avg, cur)}/mês):
+        ${parts.filter(([, v]) => v).map(([l, v]) => `${l} ${money(v, cur)}`).join(' · ')}${c.leftover_avg < 0 ? ` · <span class="neg">faltou ${money(-c.leftover_avg, cur)}/mês (saiu mais do que entrou)</span>` : ''}</div>
+        <div class="fin-costbar">${parts.filter(([, v]) => v).map(([l, v, col]) => `<i style="width:${(v / base * 100).toFixed(1)}%;background:${col}" title="${l}: ${money(v, cur)}"></i>`).join('')}</div>`;
+    })() : `<div class="fin-costbar">${bar}</div>`}
     <div class="fin-costgrid"><div>${table('essencial', 'Essencial fixo')}${table('assinaturas', 'Assinaturas')}${table('variavel', 'Variável (por grupo)')}</div>${futHtml}</div>
-    <div class="fin-dim fin-defs">Essencial fixo = moradia (aluguel, condomínio, luz, água, gás, internet/telefone), seguros e mensalidades; ajuste em <code>data/finance/ledger/cost_classes.json</code>. Pagamento feito no mês seguinte entra no mês a que pertence. Assinaturas = categorias assinaturas:*. Variável = todo o resto, sem transferências entre suas contas, câmbio e aplicações.</div>
+    <div class="fin-dim fin-defs">Guardado = aplicações menos resgates em caixinhas/CDB/RDB no período (não é custo). Essencial fixo = moradia (aluguel, condomínio, luz, água, gás, internet/telefone), seguros e mensalidades; ajuste em <code>data/finance/ledger/cost_classes.json</code>. Pagamento feito no mês seguinte entra no mês a que pertence. Assinaturas = categorias assinaturas:*. Variável = todo o resto, sem transferências entre suas contas, câmbio e aplicações.</div>
   </div>`;
 }
 
@@ -603,6 +612,69 @@ async function renderMonthly(pane) {
   }
 }
 
+
+// ── aba Revisar ─────────────────────────────────────────────────────────
+const QUICK = ['moradia:diarista', 'moradia:aluguel', 'presentes:pessoas', 'reembolso:recebido', 'reembolso:pago', 'divisao:contas-compartilhadas',
+  'transferencias:interna', 'renda:freelance', 'renda:outros', 'saude:consultas', 'educacao:cursos', 'impostos:taxas', 'alimentacao:restaurante',
+  'compras:geral', 'servicos:profissionais'];
+const CONF = { sem: ['sem categoria', 'warn'], baixa: ['genérica', 'warn'], media: ['do Open Finance', ''] };
+
+async function renderReview(pane) {
+  st.revMonths = st.revMonths ?? '12';
+  const d = await get(`/review?months=${st.revMonths}&limit=150`);
+  const cats = [...new Set([...QUICK, ...d.categories])].sort();
+  let dl = document.getElementById('fin-cat-list');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'fin-cat-list'; document.body.append(dl); }
+  dl.innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
+  const t = d.totals, sum = k => t[k]?.impact || 0;
+  // so o que precisa de categoria (transferencias entre suas contas ficam fora da conta)
+  const allMoving = Object.entries(t).filter(([k]) => k !== 'neutra').reduce((a, [, v]) => a + v.impact, 0) || 1;
+  const pct = k => `${((sum(k) / allMoving) * 100).toFixed(1)}%`;
+  pane.innerHTML = `
+    <div class="fin-filters">${[['3', '3 meses'], ['12', '12 meses'], ['36', '3 anos'], ['0', 'tudo']].map(([v, l]) => `<button class="fin-btn ${st.revMonths === v ? 'active' : ''}" data-rm="${v}">${l}</button>`).join('')}
+      <span class="fin-f-sum">${d.groups} grupos para revisar · maior impacto primeiro</span></div>
+    <div class="fin-kpis">
+      <div class="fin-kpi"><div class="fin-kpi-l">Confiável</div><div class="fin-kpi-v">${pct('alta')}</div><div class="fin-kpi-s">${t.alta?.count || 0} transações · regra específica ou sua</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-l">Genérica (Open Finance)</div><div class="fin-kpi-v">${pct('media')}</div><div class="fin-kpi-s">${t.media?.count || 0} transações · provável, não confirmado</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-l">Sem "para quê"</div><div class="fin-kpi-v">${pct('baixa')}</div><div class="fin-kpi-s">${t.baixa?.count || 0} transações · Pix p/ pessoas, boletos…</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-l">Sem categoria</div><div class="fin-kpi-v">${pct('sem')}</div><div class="fin-kpi-s">${t.sem?.count || 0} transações</div></div>
+    </div>
+    <div class="fin-dim fin-defs" style="margin-bottom:8px">Percentuais sobre o valor de ganhos e gastos no período (transferências entre suas contas, câmbio e aplicações ficam fora: não precisam de categoria).
+      Escolher uma categoria aqui vale para <b>todas</b> as transações dessa pessoa/estabelecimento nessa direção — passadas e futuras (vira regra sua em data/finance/ledger/rules_user.json).</div>
+    <div class="fin-rev">${d.items.map((i, n) => `
+      <div class="fin-rev-i" data-n="${n}">
+        <div class="fin-rev-h"><b>${esc(i.merchant || '(sem descrição)')}</b>
+          <span class="fin-chip">${i.sign === 'debit' ? 'saída' : 'entrada'}</span>
+          <span class="fin-chip ${CONF[i.confidence][1]}">${CONF[i.confidence][0]}${i.current ? ': ' + esc(i.current) : ''}</span>
+          <span class="fin-rev-v ${i.sign === 'debit' ? 'neg' : 'pos'}">${money(i.sign === 'debit' ? -i.impact : i.impact, 'BRL')}</span></div>
+        <div class="fin-dim">${i.count}× · ${day(i.first)} → ${day(i.last)} · ${esc(i.accounts.join(', '))}${i.provider_category ? ` · Open Finance diz: ${esc(i.provider_category)}` : ''}</div>
+        <div class="fin-dim fin-rev-ex">${i.examples.map(esc).join(' · ')}</div>
+        <div class="fin-rev-a">
+          <input class="fin-catedit" list="fin-cat-list" placeholder="grupo:sub — ex.: moradia:diarista" value="${esc(i.confidence === 'media' ? i.current : '')}">
+          <button class="fin-btn fin-rev-ok">aplicar a ${i.count === 1 ? 'esta' : 'todas (' + i.count + ')'}</button>
+          ${i.current && i.confidence !== 'sem' ? `<button class="fin-btn fin-rev-keep" title="a categoria atual está certa: confirma e tira da fila">confirmar ${esc(i.current)}</button>` : ''}
+        </div>
+      </div>`).join('') || '<div class="fin-empty">Nada para revisar nesse período 🎉</div>'}</div>`;
+  pane.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { st.revMonths = b.dataset.rm; render(); }));
+  const save = async (n, category, el) => {
+    const i = d.items[n];
+    if (!category.trim()) { showError('Escolha uma categoria (ex.: moradia:diarista)'); return; }
+    el.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    const r = await fetch(`${API}/review/assign`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ merchant: i.merchant, sign: i.sign, category }) });
+    if (!r.ok) { showError(`Finanças: ${(await r.text()).slice(0, 200)}`); el.querySelectorAll('button').forEach(b => { b.disabled = false; }); return; }
+    const res = await r.json();
+    el.classList.add('done');
+    el.querySelector('.fin-rev-a').innerHTML = `<span class="fin-chip ok">✓ ${esc(res.rule.then.category)} em ${res.hits} transações</span>`;
+  };
+  pane.querySelectorAll('.fin-rev-i').forEach(el => {
+    const n = Number(el.dataset.n);
+    el.querySelector('.fin-rev-ok')?.addEventListener('click', () => save(n, el.querySelector('input').value, el));
+    el.querySelector('input')?.addEventListener('keydown', e => { if (e.key === 'Enter') save(n, e.target.value, el); });
+    el.querySelector('.fin-rev-keep')?.addEventListener('click', () => save(n, d.items[n].current, el));
+  });
+}
+
 async function renderAudit(pane) {
   const [d, tr] = await Promise.all([get('/audit'), get('/transfers')]);
   const accs = d.accounts.filter(a => a.transactions).map(a => {
@@ -677,7 +749,7 @@ async function renderFiles(pane) {
   });
 }
 
-const TABS = { overview: ['Visão geral', renderOverview], monthly: ['Mensal', renderMonthly], categories: ['Categorias', renderCategories], transactions: ['Transações', renderTransactions], audit: ['Auditoria', renderAudit], files: ['Arquivos', renderFiles] };
+const TABS = { overview: ['Visão geral', renderOverview], monthly: ['Mensal', renderMonthly], review: ['Revisar', renderReview], categories: ['Categorias', renderCategories], transactions: ['Transações', renderTransactions], audit: ['Auditoria', renderAudit], files: ['Arquivos', renderFiles] };
 
 function switchTab(tab) { st.tab = tab; try { localStorage.setItem('odysseus-fin-tab', tab); } catch (_) {} render(); }
 

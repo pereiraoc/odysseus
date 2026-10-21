@@ -425,10 +425,23 @@ def cost_structure(store: Store, today: str | None = None, currency: str = "BRL"
         out["classes"][klass] = {"avg": sum(i["avg"] for i in items), "items": items}
     out["total_avg"] = sum(c["avg"] for c in out["classes"].values())
 
+    # economia: o que foi para caixinhas/CDB/RDB/corretora (aplicacoes - resgates) nos mesmos meses
+    sav = {mm: {"applied": 0, "redeemed": 0} for mm in closed}
+    for r in rows:
+        if r["cat"].startswith("transferencias:investimento") and r["date"][:7] in sav:
+            k = "applied" if r["amount_cents"] < 0 else "redeemed"
+            sav[r["date"][:7]][k] += abs(r["amount_cents"])
+    net = {mm: v["applied"] - v["redeemed"] for mm, v in sav.items()}
+    out["savings"] = {"months": net, "detail": sav, "avg": round(sum(net.values()) / len(closed))}
+
     # salario base medio dos mesmos meses (para %); vem da analise mensal
     mon = {p["period"]: p for p in monthly(store, currency)["periods"]}
     base = [mon[mm]["salary_base"] for mm in closed if mm in mon]
     out["salary_base_avg"] = round(sum(base) / len(base)) if base else None
+    inc = [mon[mm]["income"] for mm in closed if mm in mon]
+    out["income_avg"] = round(sum(inc) / len(closed)) if inc else None
+    if out["income_avg"] is not None:
+        out["leftover_avg"] = out["income_avg"] - out["total_avg"] - out["savings"]["avg"]
     out["incomplete_months"] = [mm for mm in closed if mm in mon and (mon[mm]["incomplete"] or mon[mm]["no_data"])]
     out["future_installments"] = future_installments(store, t.isoformat())
     out["open_bill"] = open_bill(store)

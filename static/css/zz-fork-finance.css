@@ -97,3 +97,14 @@ details.fin-card > summary { cursor: pointer; }
 .fin-costd > summary { cursor: pointer; padding: 3px 0; }
 .fin-costf { font-size: 12px; line-height: 1.6; }
 .fin-sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+.fin-alloc { font-size: 12px; margin: 2px 0 6px; line-height: 1.6; }
+.fin-alloc .neg { color: #f07178; }
+.fin-rev { display: flex; flex-direction: column; gap: 8px; }
+.fin-rev-i { border: 1px solid var(--border, rgba(128,128,128,0.22)); border-radius: 10px; padding: 8px 12px; font-size: 12px; }
+.fin-rev-i.done { opacity: 0.55; }
+.fin-rev-h { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fin-rev-v { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fin-rev-v.neg { color: #f07178; } .fin-rev-v.pos { color: #7fd962; }
+.fin-rev-ex { margin: 2px 0 6px; overflow-wrap: anywhere; }
+.fin-rev-a { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.fin-rev-a .fin-catedit { flex: 1; min-width: 220px; width: auto; }

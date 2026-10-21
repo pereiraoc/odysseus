@@ -52,8 +52,15 @@ _MERCHANT = [
 ]
 
 
+_GENERIC_HEAD = re.compile(r"^(transfer[eê]ncia|pix|pagamento|compra no d[eé]bito|compra cartao|ted|doc|estorno|dep[oó]sito)", re.I)
+
+
 def merchant(desc: str) -> str:
     d = " ".join((desc or "").split())
+    if "|" in d:  # Open Finance: 'Transferência enviada pelo Pix|Márcia Steemburgo', 'Pagamento efetuado|CIA ESTADUAL'
+        head, rest = d.split("|", 1)
+        if _GENERIC_HEAD.match(head.strip()) and rest.strip():
+            d = re.sub(r"^\d\d/\d\d\s+", "", rest.split("|", 1)[0].strip())  # '25/02 ZAFFARI' (Santander)
     for rx in _MERCHANT:
         m = rx.search(d)
         if m:
@@ -116,12 +123,42 @@ def rules_path(store: Store) -> Path:
     return store.root / "ledger" / "rules.json"
 
 
-def load_rules(store: Store) -> list[Rule]:
-    p = rules_path(store)
-    if not p.is_file():
+def user_rules_path(store: Store) -> Path:
+    """Regras criadas por voce na aba Revisar: vencem as minhas (prioridade 990+)."""
+    return store.root / "ledger" / "rules_user.json"
+
+
+# baldes que dizem "o que" mas nao "para que": aparecem na revisao como confianca baixa
+GENERIC = ("transferencias:pessoas", "contas:boletos", "servicos:outros", "compras:geral", "renda:outros", "outros:")
+NEUTRAL = ("transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo", "ajustes:")
+
+
+def confidence(category: str | None, note: str | None, manual: int | None) -> str:
+    """alta | media | baixa | sem | neutra"""
+    cat, note = category or "", note or ""
+    if manual or note.startswith("regra:u-"):
+        return "alta"
+    if not cat:
+        return "sem"
+    if cat.startswith(NEUTRAL):
+        return "neutra"
+    if cat.startswith(GENERIC):
+        return "baixa"
+    if note.startswith("regra:of-"):
+        return "media"
+    return "alta"
+
+
+def _read(path: Path) -> list[dict]:
+    if not path.is_file():
         return []
-    raw = json.loads(p.read_text(encoding="utf-8"))
-    rules = [Rule(r["id"], int(r.get("priority", 100)), r.get("when", {}), r["then"], i) for i, r in enumerate(raw.get("rules", raw))]
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return raw.get("rules", raw) if isinstance(raw, dict) else raw
+
+
+def load_rules(store: Store) -> list[Rule]:
+    raw = _read(user_rules_path(store)) + _read(rules_path(store))
+    rules = [Rule(r["id"], int(r.get("priority", 100)), r.get("when", {}), r["then"], i) for i, r in enumerate(raw)]
     ids = [r.id for r in rules]
     dup = {i for i in ids if ids.count(i) > 1}
     if dup:
@@ -227,3 +264,75 @@ def uncategorized(store: Store, limit: int = 200) -> list[dict]:
         if len(g["examples"]) < 3:
             g["examples"].append(tx["description"])
     return sorted(groups.values(), key=lambda g: (-g["count"], g["sum_cents"]))[:limit]
+
+
+def add_user_rule(store: Store, merchant_key: str, sign: str, category: str, institution: str | None = None) -> dict:
+    """Uma escolha na revisao vira regra permanente (vale para o passado e o futuro desse estabelecimento/pessoa)."""
+    path = user_rules_path(store)
+    rules = _read(path)
+    slug = re.sub(r"[^a-z0-9]+", "-", norm_desc(merchant_key))[:50].strip("-")
+    rid = f"u-{slug}-{sign}" + (f"-{institution}" if institution else "")
+    when = {"merchant_any": [merchant_key], "sign": sign}
+    if institution:
+        when["institution"] = institution
+    rule = {"id": rid, "priority": 990, "when": when, "then": {"category": category}, "created": now(), "origem": "revisao"}
+    rules = [r for r in rules if r["id"] != rid] + [rule]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"rules": rules}, ensure_ascii=False, indent=1), encoding="utf-8")
+    return rule
+
+
+def review_queue(store: Store, since: str = "", limit: int = 100) -> dict:
+    """Grupos (pessoa/estabelecimento x direcao) com categoria incerta, ordenados pelo impacto em R$."""
+    from collections import defaultdict
+    from src.finance.fx import Converter
+    conv = Converter(store)
+    groups: dict[tuple, dict] = defaultdict(lambda: {"count": 0, "impact": 0, "net": 0, "categories": defaultdict(int),
+                                                       "confidence": set(), "examples": [], "first": None, "last": None,
+                                                       "provider": defaultdict(int), "accounts": set()})
+    extras: dict[int, dict] = {}
+    for r in store.db.execute("SELECT l.tx_id, s.extra_json FROM tx_links l JOIN source_records s ON s.id=l.record_id"
+                              " WHERE s.extra_json LIKE '%category%'"):
+        e = json.loads(r["extra_json"])
+        if isinstance(e.get("category"), str):
+            extras.setdefault(r["tx_id"], e)
+    totals = defaultdict(lambda: [0, 0])
+    for r in store.db.execute(
+            "SELECT t.id, t.date, t.amount_cents, t.description, a.currency cur, a.institution inst, a.kind,"
+            " n.category, n.note, n.manual FROM transactions t JOIN accounts a ON a.key=t.account_key"
+            " LEFT JOIN annotations n ON n.anchor_key=t.anchor_key WHERE t.date >= ?", (since or "0000",)):
+        v = conv.to_brl(r["amount_cents"], r["cur"], r["date"])
+        if v is None:
+            continue
+        conf = confidence(r["category"], r["note"], r["manual"])
+        totals[conf][0] += 1
+        totals[conf][1] += abs(v)
+        if conf not in ("sem", "baixa", "media"):
+            continue
+        sign = "debit" if v < 0 else "credit"
+        key = merchant(r["description"]) or norm_desc(r["description"])
+        g = groups[(key, sign)]
+        g["count"] += 1
+        g["impact"] += abs(v)
+        g["net"] += v
+        g["categories"][r["category"] or ""] += 1
+        g["confidence"].add(conf)
+        g["accounts"].add(f"{r['inst']}/{r['kind']}")
+        g["first"] = min(g["first"] or r["date"], r["date"])
+        g["last"] = max(g["last"] or r["date"], r["date"])
+        if len(g["examples"]) < 3 and r["description"] not in g["examples"]:
+            g["examples"].append(r["description"])
+        if r["id"] in extras:
+            g["provider"][extras[r["id"]]["category"]] += 1
+    items = []
+    for (key, sign), g in groups.items():
+        cats = sorted(g["categories"].items(), key=lambda kv: -kv[1])
+        items.append({"merchant": key, "sign": sign, "count": g["count"], "impact": g["impact"], "net": g["net"],
+                      "current": cats[0][0] if cats else "", "categories": dict(cats),
+                      "confidence": "sem" if "sem" in g["confidence"] else ("baixa" if "baixa" in g["confidence"] else "media"),
+                      "examples": g["examples"], "first": g["first"], "last": g["last"], "accounts": sorted(g["accounts"]),
+                      "provider_category": max(g["provider"], key=g["provider"].get) if g["provider"] else None})
+    items.sort(key=lambda i: -i["impact"])
+    tot_all = sum(v[1] for v in totals.values()) or 1
+    return {"items": items[:limit], "groups": len(items),
+            "totals": {k: {"count": v[0], "impact": v[1], "share": round(v[1] / tot_all, 4)} for k, v in totals.items()}}

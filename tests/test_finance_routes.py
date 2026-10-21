@@ -74,3 +74,14 @@ def test_rules_categories_and_manual_override(client, tmp_path):
     assert r["category"] == "alimentacao:padaria" and r["coverage"] == 1.0
     tx = client.get("/api/finance/transactions", params={"category": "alimentacao"}).json()
     assert tx["total"] == 2
+
+
+def test_review_and_assign(client):
+    data = ofx("9-9", [("20260105", "-150.00", "a", "Transferência enviada pelo Pix - Márcia Steemburgo - x"),
+                       ("20260106", "-30.00", "b", "Padaria")], bal=("20260131", "0.00"))
+    client.post("/api/finance/import", files=[("files", ("jan.ofx", data, "x"))])
+    q = client.get("/api/finance/review", params={"months": 0}).json()
+    assert q["items"][0]["merchant"] == "marcia steemburgo" and q["items"][0]["sign"] == "debit"
+    r = client.post("/api/finance/review/assign", json={"merchant": "marcia steemburgo", "sign": "debit", "category": "Moradia: Diarista"}).json()
+    assert r["hits"] == 1 and r["rule"]["then"]["category"] == "moradia:diarista"
+    assert [i["merchant"] for i in client.get("/api/finance/review", params={"months": 0}).json()["items"]] == ["padaria"]
