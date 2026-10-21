@@ -81,13 +81,36 @@ def reconcile_bills(store: Store, account_key: str) -> dict:
         diff = cp.get("opening", 0) + items - cp.get("closing", 0)
         bills.append({"file": b["source_name"], "start": b["period_start"], "end": b["period_end"],
                       "opening": cp.get("opening"), "closing": cp.get("closing"), "diff": diff})
-    for prev, nxt in zip(bills, bills[1:]):
-        if prev["closing"] != nxt["opening"]:
+    # a mesma fatura pode vir de duas fontes (PDF e OFX): fechamentos com <= 5 dias de diferenca sao a
+    # mesma fatura -> conferem entre si (tem que ter o mesmo total) e nao entram no encadeamento
+    from datetime import date as _d
+    groups: list[list[dict]] = []
+    for b in bills:
+        if groups and b["end"] and groups[-1][0]["end"] and abs((_d.fromisoformat(b["end"]) - _d.fromisoformat(groups[-1][0]["end"])).days) <= 5:
+            groups[-1].append(b)
+        else:
+            groups.append([b])
+    ROUNDING = 10  # centavos: o Nubank arredonda IOF diferente no PDF e no OFX
+    duplicates, rounding = [], []
+    for g in groups:
+        spread = max(x["closing"] for x in g) - min(x["closing"] for x in g) if len(g) > 1 else 0
+        if 0 < spread <= ROUNDING:
+            rounding.append({"files": [x["file"] for x in g], "diff": spread, "hint": "mesma fatura, PDF x OFX"})
+        elif spread > ROUNDING:
+            duplicates.append({"files": [x["file"] for x in g], "closings": [x["closing"] for x in g],
+                               "hint": "a mesma fatura em duas fontes com totais diferentes"})
+    heads = [g[0] for g in groups]
+    for prev, nxt in zip(heads, heads[1:]):
+        gap = (nxt["opening"] or 0) - (prev["closing"] or 0)
+        if gap and abs(gap) <= ROUNDING:
+            rounding.append({"between": [prev["end"], nxt["start"]], "diff": gap, "hint": "arredondamento entre faturas"})
+        elif gap:
             problems.append({"between": [prev["end"], nxt["start"]], "prev_closing": prev["closing"],
                              "next_opening": nxt["opening"], "hint": "falta fatura no meio ou fatura alterada"})
     bad = [b for b in bills if abs(b["diff"]) > 2]
-    return {"account": account_key, "status": "ok" if not (bad or problems) else "divergente",
-            "bills": len(bills), "unbalanced": bad, "chain_breaks": problems}
+    return {"account": account_key, "status": "ok" if not (bad or problems or duplicates) else "divergente",
+            "bills": len(groups), "unbalanced": bad, "chain_breaks": problems, "same_bill_mismatch": duplicates,
+            "rounding": rounding}
 
 
 def coverage(store: Store, account_key: str) -> dict:

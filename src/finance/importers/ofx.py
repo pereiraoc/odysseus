@@ -1,4 +1,4 @@
-"""OFX 1.x (SGML) de conta corrente: Nubank e Santander ("Money 2000").
+"""OFX 1.x (SGML): extrato de conta (Nubank, Santander "Money 2000") e fatura de cartao (Nubank).
 
 Nubank: FITID e UUID unico, LEDGERBAL vira checkpoint de fechamento.
 Santander: FITID '000000' em todas as linhas -> native_id None (dedup por conteudo+seq).
@@ -11,7 +11,7 @@ from src.finance.importers.base import AccountRef, Checkpoint, ParsedFile, Parse
 from src.finance.money import parse_decimal
 
 NAME = "ofx"
-VERSION = 2
+VERSION = 4
 
 _TAG = re.compile(r"<(/?)([A-Z0-9.]+)>([^<]*)")
 _INSTITUTIONS = {"0260": "nubank", "260": "nubank", "0033": "santander", "033": "santander"}
@@ -65,15 +65,62 @@ def _first(text: str, tag: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+def _institution_from_org(text: str) -> str | None:
+    org = (_first(text, "ORG") or "").lower()
+    fid = _first(text, "FID") or ""
+    if "nu pagamentos" in org or fid == "260":
+        return "nubank"
+    if "santander" in org:
+        return "santander"
+    return None
+
+
+def parse_card(name: str, text: str) -> ParsedFile:
+    """Fatura de cartao (CREDITCARDMSGSRSV1). TRNAMT ja vem na visao do cartao: compra -, pagamento +.
+    LEDGERBAL = saldo da fatura no fechamento (divida, negativo). Abertura = fechamento - lancamentos,
+    e o encadeamento com a fatura anterior (reconcile_bills) e que prova que nada falta ou sobra."""
+    inst = _institution_from_org(text)
+    if not inst:
+        raise ParseError("fatura OFX de emissor desconhecido")
+    currency = _first(text, "CURDEF") or "BRL"
+    # um cartao por instituicao: mesma conta das faturas em PDF e do Open Finance (o numero do plastico muda)
+    account = AccountRef(inst, "credit_card", "principal", currency, f"{inst} cartao")
+    records = []
+    seen: dict[str, int] = {}
+    for tr in _blocks(text, "STMTTRN"):
+        fitid = tr.get("FITID", "")
+        date, amount = _date(tr["DTPOSTED"]), parse_decimal(tr["TRNAMT"])
+        native = None
+        if fitid and set(fitid) - {"0"}:
+            # Nubank repete o FITID da compra no IOF dela (e em parcelas): identidade = FITID + valor + data
+            ident = f"{fitid}:{amount}:{date}"
+            n = seen.get(ident, 0)
+            seen[ident] = n + 1
+            native = ident if n == 0 else f"{ident}#{n}"
+        records.append(Record(date, amount, " ".join((tr.get("MEMO") or tr.get("NAME") or "").split()),
+                              native, tr.get("TRNTYPE", ""), {"fitid": fitid} if fitid else {}))
+    start, end = _first(text, "DTSTART"), _first(text, "DTEND")
+    checkpoints = []
+    for bal in _blocks(text, "LEDGERBAL"):
+        if "BALAMT" in bal:
+            closing = parse_decimal(bal["BALAMT"])
+            when = _date(bal.get("DTASOF") or end)
+            checkpoints = [Checkpoint(_date(start) if start else when, closing - sum(r.amount_cents for r in records), "opening",
+                                      "abertura calculada (fechamento - lancamentos do OFX)"),
+                           Checkpoint(when, closing, "closing", "OFX LEDGERBAL da fatura")]
+    return ParsedFile(importer=NAME, parse_version=VERSION, account=account, records=records, checkpoints=checkpoints,
+                      period_start=_date(start) if start else None, period_end=_date(end) if end else None)
+
+
 def parse(name: str, data: bytes) -> ParsedFile:
     text = _decode(data)
+    if "<CCSTMTRS>" in text or "<CREDITCARDMSGSRSV1>" in text:
+        return parse_card(name, text)
     if "<BANKACCTFROM>" not in text:
-        raise ParseError("OFX sem BANKACCTFROM (fatura de cartao em OFX ainda nao suportada)")
+        raise ParseError("OFX sem BANKACCTFROM nem CCSTMTRS")
     bank = _first(text, "BANKID") or ""
     inst = _INSTITUTIONS.get(bank)
-    if not inst:
-        org = (_first(text, "ORG") or "").lower()
-        inst = "nubank" if "nu pagamentos" in org else "santander" if "santander" in org else None
+    inst = inst or _institution_from_org(text)
     if not inst:
         raise ParseError(f"banco OFX desconhecido: BANKID={bank!r}")
     acct = _first(text, "ACCTID") or ""

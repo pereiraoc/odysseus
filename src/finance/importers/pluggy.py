@@ -18,7 +18,7 @@ from src.finance.importers.base import AccountRef, Checkpoint, ParsedFile, Parse
 from src.finance.money import parse_decimal
 
 NAME = "pluggy"
-VERSION = 3
+VERSION = 4
 TZ = ZoneInfo("America/Sao_Paulo")
 
 
@@ -59,7 +59,14 @@ def parse_multi(name: str, data: bytes) -> list[ParsedFile]:
                 pending += 1
                 continue
             meta = t.get("creditCardMetadata") or {}
-            when = meta.get("purchaseDate") if credit and meta.get("purchaseDate") else t["date"]
+            # compra a vista: data da compra. Parcela: data em que cai na fatura (igual PDF/OFX), senao toda
+            # parcela de 12x apareceria no mes da compra original
+            parcel = (meta.get("totalInstallments") or 1) > 1
+            when = t["date"] if (not credit or parcel or not meta.get("purchaseDate")) else meta["purchaseDate"]
+            if credit and parcel and meta.get("purchaseDate"):
+                extra_purchase = local_date(meta["purchaseDate"])
+            else:
+                extra_purchase = None
             amount = cents(t["amount"])
             extra = {k: t[k] for k in ("providerId", "operationType", "category") if t.get(k)}
             if t.get("merchant"):
@@ -76,6 +83,8 @@ def parse_multi(name: str, data: bytes) -> list[ParsedFile]:
                 extra["counterparty_doc"] = "CNPJ" if len(other_doc) == 14 else "CPF"
                 if owner_doc and other_doc == owner_doc:
                     extra["self_transfer"] = 1  # de/para o seu proprio CPF: transferencia entre contas suas
+            if extra_purchase:
+                extra["purchase_date"] = extra_purchase
             if meta:
                 extra.update({k: meta[k] for k in ("cardNumber", "billId", "installmentNumber", "totalInstallments") if meta.get(k)})
                 if meta.get("installmentNumber"):

@@ -427,3 +427,36 @@ def test_salary_split_estimates_13th_and_extra(store):
     assert (p["2023-04"]["salary_base"], p["2023-04"]["salary_other"]) == (500000, 400000)   # pico fora de nov/dez = extra
     assert (p["2023-11"]["salary_base"], p["2023-11"]["salary_13"]) == (500000, 600000)      # nov/dez = 13o
     assert p["2023-06"]["salary_13"] == p["2023-06"]["salary_other"] == 0 and p["2023-06"]["salary_base"] == 500000
+
+
+def test_card_ofx_repeated_fitid_and_chain(store):
+    def card(rows, start, end, bal):
+        trn = "".join(f"<STMTTRN>\n<TRNTYPE>DEBIT</TRNTYPE>\n<DTPOSTED>{d}000000[-3:BRT]</DTPOSTED>\n<TRNAMT>{a}</TRNAMT>\n"
+                      f"<FITID>{fid}</FITID>\n<MEMO>{m}</MEMO>\n</STMTTRN>\n" for d, a, fid, m in rows)
+        return ("OFXHEADER:100\n<OFX>\n<SIGNONMSGSRSV1>\n<SONRS>\n<FI>\n<ORG>NU PAGAMENTOS S.A.</ORG>\n<FID>260</FID>\n</FI>\n</SONRS>\n"
+                "</SIGNONMSGSRSV1>\n<CREDITCARDMSGSRSV1>\n<CCSTMTTRNRS>\n<CCSTMTRS>\n<CURDEF>BRL</CURDEF>\n<CCACCTFROM>\n<ACCTID>x</ACCTID>\n"
+                f"</CCACCTFROM>\n<BANKTRANLIST>\n<DTSTART>{start}000000</DTSTART>\n<DTEND>{end}000000</DTEND>\n{trn}</BANKTRANLIST>\n"
+                f"<LEDGERBAL>\n<BALAMT>{bal}</BALAMT>\n<DTASOF>{end}000000</DTASOF>\n</LEDGERBAL>\n</CCSTMTRS>\n</CCSTMTTRNRS>\n"
+                "</CREDITCARDMSGSRSV1>\n</OFX>\n").encode()
+    jan = card([("20240101", "-62.18", "f1", "Patreon"), ("20240101", "-3.34", "f1", "IOF de Patreon")], "20231204", "20240104", "-65.52")
+    fev = card([("20240110", "65.52", "p1", "Pagamento"), ("20240120", "-10.00", "f2", "Loja")], "20240104", "20240204", "-10.00")
+    assert ingest_bytes(store, "jan.ofx", jan)["new_records"] == 2  # compra e IOF com o mesmo FITID: 2 registros
+    ingest_bytes(store, "fev.ofx", fev)
+    dedup.rebuild(store)
+    r = reconcile.reconcile_bills(store, "nubank:credit_card:principal:BRL")
+    assert r["status"] == "ok" and r["bills"] == 2 and not r["unbalanced"] and not r["chain_breaks"]
+
+
+def test_rounding_cent_merges_only_same_day_similar_text(store):
+    import json as _json
+    ingest_bytes(store, "a.ofx", ofx("5555-1", [("20240101", "-3.35", "x1", 'IOF de "Patreon"'), ("20240102", "-10.00", "x2", "Loja A")]))
+    blob = {"_source": "pluggy", "kind": "account", "item": "i", "institution": "nubank", "item_last_updated": "2024-01-03T12:00:00Z",
+            "account": {"id": "a", "type": "BANK", "currencyCode": "BRL", "number": "05555-1", "balance": 0},
+            "transactions": [
+                {"id": "p1", "type": "DEBIT", "amount": -3.34, "date": "2024-01-01T12:00:00Z", "description": 'IOF de "Patreon"', "status": "POSTED"},
+                {"id": "p2", "type": "DEBIT", "amount": -10.01, "date": "2024-01-02T12:00:00Z", "description": "Outra coisa", "status": "POSTED"},
+                {"id": "p3", "type": "DEBIT", "amount": -10.01, "date": "2024-01-04T12:00:00Z", "description": "Loja A", "status": "POSTED"}]}
+    ingest_bytes(store, "p.json", _json.dumps(blob, sort_keys=True).encode())
+    stats = dedup.rebuild(store)
+    # IOF 3,34 x 3,35 mesmo dia e mesmo texto: funde. 10,01 com texto diferente, ou com 2 dias de distancia: nao funde
+    assert stats["auto_merged"] == 1 and tx_count(store, "nubank:checking") == 4

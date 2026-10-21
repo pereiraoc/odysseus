@@ -17,6 +17,7 @@ from datetime import date as Date
 from src.finance.store import Store
 
 WINDOW_DAYS = 3
+ROUNDING_MIN_SIM = 0.6
 # ordem de processamento = precedencia da descricao canonica (fonte oficial primeiro)
 IMPORTER_RANK = {"pluggy": 0, "ofx": 1, "santander_cc_pdf": 1, "santander_cc_ocr": 1, "nubank_fatura_pdf": 1, "santander_fatura_pdf": 1, "wise_csv": 1, "santander_csv": 9}
 
@@ -83,6 +84,16 @@ def rebuild(store: Store) -> dict:
             d = _days(r["date"], tx_rows[tid]["date"])
             if d <= WINDOW_DAYS:
                 cands.append((d, -_sim(r["desc_norm"], tx_rows[tid]["desc_norm"]), tid))
+        if not cands:
+            # arredondamento entre fontes (IOF no PDF x OFX do Nubank): ate 2 centavos, so no MESMO dia e com
+            # descricao muito parecida -- fora disso valor diferente e transacao diferente
+            for delta in (-2, -1, 1, 2):
+                for tid in index.get((r["account_key"], r["amount_cents"] + delta), []):
+                    if r["importer"] in tx_importers[tid] or _days(r["date"], tx_rows[tid]["date"]) != 0:
+                        continue
+                    sim = _sim(r["desc_norm"], tx_rows[tid]["desc_norm"])
+                    if sim >= ROUNDING_MIN_SIM:
+                        cands.append((0, -sim, tid))
         cands.sort()  # empate exato = candidatos intercambiaveis (mesmo dia, valor e texto): vence o menor id
         if cands and (cands[0][0] == 0 or -cands[0][1] >= 0.2):
             d, negsim, tid = cands[0]
