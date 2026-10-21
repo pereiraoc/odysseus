@@ -182,6 +182,45 @@ Diretório: `data/finance/` (está no volume `./data`). Usa um SQLite próprio, 
 
 Wise entra na F1 (poller de saldo) e na F2 (CSV), não aqui.
 
+## Dados do governo (pesquisa de 2026-10-20)
+**Nenhuma** plataforma do governo tem API para pessoa física:
+- o Login Único gov.br é para serviços credenciados;
+- o Conecta gov.br é só entre órgãos;
+- o Open Finance não cobre dados do governo.
+
+O caminho é baixar à mão (PDF, às vezes assinado) e importar com um parser por tipo, pela mesma camada `raw/` imutável.
+
+| Prioridade | Fonte | O que dá | Formato | Cadência |
+|---|---|---|---|---|
+| 1 | Meu INSS: CNIS "relações previdenciárias **e remunerações**" | vínculos desde 1976, salário de contribuição mês a mês desde 1990 | PDF | semestral |
+| 1 | Receita e-CAC: cópia das declarações IRPF | o **.DEC** (único arquivo nativo legível por máquina) + recibo. Só ~5 exercícios ficam disponíveis | .DEC/.REC | anual, após entregar |
+| 1 | Registrato (BCB): **CCS** | toda conta que você já teve em qualquer instituição. Serve para checar se falta alguma conta no arquivo | PDF | semestral |
+| 1 | Registrato: SCR e **Câmbio** | empréstimos por instituição, mês a mês; operações de câmbio desde 1995 (casa com o Wise) | PDF | semestral |
+| 2 | FGTS (app) | extrato por contrato | PDF | semestral / ao trocar de emprego |
+| 2 | CTPS Digital | contratos e salário contratual (eSocial desde 2019; antes vem do CNIS) | PDF | ao mudar de emprego |
+| 2 | Registrato: Chaves Pix (completo) | chaves atuais e excluídas | relatório | semestral |
+| 3 | CDT: CNH e CRLV-e | documentos assinados (ICP-Brasil); infrações só aparecem na tela | PDF | anual |
+| 3 | Meu SUS Digital | certificado de vacinação | PDF | quando houver dose nova |
+| 3 | CIN, e-Título, CadÚnico | documentos | PDF | uma vez |
+
+- **Requisitos:** gov.br nível prata/ouro e 2FA. Sem automação headless: captcha e 2FA impedem, os termos de uso também, e ela quebra sem aviso.
+- **Semi-automação aceitável no futuro:** um navegador visível em que você mesmo faz o login, e o script só salva os PDFs/JSON. Não guarda senha nem contorna captcha.
+- **Destino:** `data/finance/raw/` (ou um irmão `data/personal/`) com o mesmo modelo de proveniência. Os parsers vêm depois dos bancos.
+- **Projetos de referência** (status variado): `MaioranoB/CNIS-reader`, `CheweeBR/Filter-CNIS-PDF-to-CSV`, `acassiovilasboas/parse-pdf-extrato-fgts`, `Halqq/carteira-assinada`.
+
+## Estado da implementação (2026-10-20)
+- **Pronto:**
+  - núcleo `src/finance/` (store, ingest, dedup, reconcile, ledger, cli) com 16 testes;
+  - import real de `/data/finances/finances.zip`: 230 arquivos, 6.344 registros, 6.125 transações canônicas;
+  - ledger com 411 asserções passando no hledger 1.52.4.
+- **Lacunas explícitas (no ledger como `ajustes:lacunas`):**
+  - Santander 06–11/2021 (PDFs em imagem: OCR pendente);
+  - Nubank conta 09–31/07/2023 (OFX parcial).
+- **Pendente:**
+  - PDFs de fatura do Santander (senha);
+  - 8 linhas das planilhas do Santander na fila de revisão;
+  - Pluggy, Wise API, painel e regras.
+
 ## Passos que dependem de você (o resto eu faço)
 Você faz isso uma vez, antes da F0, e me manda Client ID, Client Secret e os Item IDs. Eu coloco no `.env`, que é gitignored.
 1. Criar conta em **meu.pluggy.ai** e clicar em **"Conectar Minha Conta"**.

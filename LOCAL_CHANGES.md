@@ -217,3 +217,22 @@ em `/data/ai-usage/ai-usage.sqlite`. O painel só lê (`mode=ro`).
 
 O caminho do banco pode ser trocado pela env `AI_USAGE_DB`. Sem banco, o painel
 mostra só um aviso.
+
+## 7. Finanças — arquivo bancário vitalício  [feature local, em construção]
+
+Arquivo local de todo o histórico bancário (Nubank, Santander, Wise; Caixa só
+histórico), auditável e sem duplicatas entre fontes. Spec:
+`docs/superpowers/specs/2026-10-20-financas-design.md`.
+
+- Três camadas em `data/finance/` (gitignored, `chmod 700`): `raw/` (arquivo
+  importado exatamente como veio, por sha256), `finance.sqlite` (registros por
+  fonte + livro canônico reconstruível) e `ledger/` (export hledger em git local,
+  com asserções de saldo; `hledger check -s ordereddates` valida tudo).
+- Importadores: OFX (Nubank/Santander), CSV do Wise, PDF do extrato Santander,
+  PDF da fatura Nubank, CSVs categorizados do Santander (fonte secundária).
+  Cada parser confere saldo/total impresso pela própria fonte.
+- CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse`.
+
+**Arquivos novos (aditivos, nunca conflitam):** `src/finance/**`, `tests/test_finance_core.py`.
+
+**Hooks em arquivos do upstream:** nenhum ainda (rotas, poller Pluggy e painel vêm nas próximas fases).

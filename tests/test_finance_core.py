@@ -1,0 +1,260 @@
+"""Fork-local: nucleo do arquivo financeiro (src/finance). Dados sinteticos, nada pessoal."""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+
+import pytest
+
+from src.finance import dedup, reconcile
+from src.finance.importers import santander_csv
+from src.finance.importers.base import ParseError
+from src.finance.ingest import ingest_bytes
+from src.finance.ledger import export
+from src.finance.money import digits, norm_desc, parse_brl, parse_decimal
+from src.finance.store import Store
+
+
+def ofx(acct: str, rows: list[tuple], bank: str = "0260", bal: tuple | None = None, rendimento: str | None = None,
+        start: str = "20230101", end: str = "20230131") -> bytes:
+    trn = "".join(
+        f"<STMTTRN>\n<TRNTYPE>OTHER</TRNTYPE>\n<DTPOSTED>{d}000000[-3:BRT]</DTPOSTED>\n<TRNAMT>{a}</TRNAMT>\n"
+        f"<FITID>{fid}</FITID>\n<MEMO>{memo}</MEMO>\n</STMTTRN>\n" for d, a, fid, memo in rows)
+    ledger = f"<LEDGERBAL>\n<BALAMT>{bal[1]}</BALAMT>\n<DTASOF>{bal[0]}000000[-3:BRT]</DTASOF>\n</LEDGERBAL>\n" if bal else ""
+    ballist = (f"<BALLIST>\n<BAL>\n<NAME>RENDIMENTO LIQUIDO</NAME>\n<BALTYPE>NUMBER</BALTYPE>\n<VALUE>{rendimento}</VALUE>\n"
+               f"</BAL>\n</BALLIST>\n") if rendimento else ""
+    return ("OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\nENCODING:UTF-8\n\n<OFX>\n<BANKMSGSRSV1>\n<STMTTRNRS>\n<STMTRS>\n"
+            f"<CURDEF>BRL</CURDEF>\n<BANKACCTFROM>\n<BANKID>{bank}</BANKID>\n<ACCTID>{acct}</ACCTID>\n"
+            f"<ACCTTYPE>CHECKING</ACCTTYPE>\n</BANKACCTFROM>\n<BANKTRANLIST>\n<DTSTART>{start}000000[-3:BRT]</DTSTART>\n"
+            f"<DTEND>{end}000000[-3:BRT]</DTEND>\n{trn}</BANKTRANLIST>\n{ledger}{ballist}</STMTRS>\n</STMTTRNRS>\n"
+            "</BANKMSGSRSV1>\n</OFX>\n").encode()
+
+
+WISE_HEADER = ('"TransferWise ID",Date,Amount,Currency,Description,"Payment Reference","Running Balance","Exchange From",'
+               '"Exchange To","Exchange Rate","Payer Name","Payee Name","Payee Account Number",Merchant,'
+               '"Card Last Four Digits","Card Holder Full Name",Attachment,Note,"Total fees","Exchange To Amount"\n')
+
+
+def wise(rows: list[tuple]) -> bytes:
+    return (WISE_HEADER + "".join(f'{i},{d},{a},EUR,"{desc}",,{bal},,,,,,,,,,,,0.00,\n' for i, d, a, desc, bal in rows)).encode()
+
+
+@pytest.fixture
+def store(tmp_path):
+    s = Store(tmp_path / "finance")
+    yield s
+    s.close()
+
+
+def tx_count(store, account_prefix=""):
+    return store.db.execute("SELECT count(*) FROM transactions WHERE account_key LIKE ?", (account_prefix + "%",)).fetchone()[0]
+
+
+# --- valores -----------------------------------------------------------------
+
+def test_money_parsing():
+    assert parse_brl("1.234,56") == 123456
+    assert parse_brl("10,99-") == -1099
+    assert parse_brl("R$ 5,00") == 500
+    assert parse_decimal("-8.64") == -864
+    assert parse_decimal("1200.0") == 120000
+    with pytest.raises(ValueError):
+        parse_decimal("1.005")
+    assert digits("000010804931") == digits("01.080493-1") == "10804931"
+    assert norm_desc("Compra no débito - Café") == "compra no debito cafe"
+
+
+# --- ingestao idempotente ------------------------------------------------------
+
+def test_same_file_twice_is_noop(store):
+    data = ofx("1234-5", [("20230105", "-10.00", "u-1", "Padaria")], bal=("20230131", "90.00"))
+    first = ingest_bytes(store, "a.ofx", data)
+    second = ingest_bytes(store, "copia-com-outro-nome.ofx", data)
+    assert first["new_records"] == 1 and second["new_records"] == 0
+    assert second["new_blob"] is False
+    assert store.db.execute("SELECT count(*) FROM raw_blobs").fetchone()[0] == 1
+    assert store.db.execute("SELECT count(*) FROM blob_names").fetchone()[0] == 2
+
+
+def test_identical_rows_in_one_file_are_two_records(store):
+    rows = [("20230105", "-5.00", "000000", "CAFE"), ("20230105", "-5.00", "000000", "CAFE")]
+    ingest_bytes(store, "s.ofx", ofx("000012345678", rows, bank="0033"))
+    dedup.rebuild(store)
+    assert tx_count(store) == 2
+
+
+def test_overlapping_files_without_ids_do_not_duplicate(store):
+    a = ofx("000012345678", [("20230105", "-5.00", "000000", "CAFE"), ("20230105", "-5.00", "000000", "CAFE")], bank="0033")
+    b = ofx("000012345678", [("20230105", "-5.00", "000000", "CAFE"), ("20230105", "-5.00", "000000", "CAFE"),
+                             ("20230106", "-7.00", "000000", "PAO")], bank="0033", end="20230110")
+    ingest_bytes(store, "jan-1.ofx", a)
+    ingest_bytes(store, "jan-2.ofx", b)
+    dedup.rebuild(store)
+    assert tx_count(store) == 3
+
+
+def test_failed_parse_keeps_raw_blob(store):
+    res = ingest_bytes(store, "lixo.bin", b"nada reconhecivel")
+    assert res["status"] == "error"
+    row = store.db.execute("SELECT status, path FROM raw_blobs").fetchone()
+    assert row["status"] == "error" and (store.root / row["path"]).is_file()
+
+
+# --- dedup entre fontes --------------------------------------------------------
+
+def test_cross_source_merge_respects_multiplicity(store):
+    # mesma conta em OFX (com FITID) e em CSV secundario do mesmo mes: 2 cafes iguais + 1 pao
+    ingest_bytes(store, "n.ofx", ofx("000012345678", [
+        ("20230105", "-5.00", "000000", "COMPRA CAFE"), ("20230105", "-5.00", "000000", "COMPRA CAFE"),
+        ("20230107", "-7.00", "000000", "PADARIA")], bank="0033"))
+    csv = ("Descrição,Valor,Data,Categoria,Subcategoria,Conta\n"
+           "COMPRA CAFE,5.0,05/01/2023,Comida,Cafe,01.234567-8\nCOMPRA CAFE,5.0,05/01/2023,Comida,Cafe,01.234567-8\n"
+           "PADARIA,7.0,09/01/2023,Comida,Pao,01.234567-8\n")
+    ingest_bytes(store, "SANTANDER_2023_01_DESPESAS.csv", csv.encode())
+    stats = dedup.rebuild(store)
+    assert tx_count(store) == 3
+    assert stats["auto_merged"] == 3 and stats["queued"] == 0
+
+
+def test_secondary_without_pair_goes_to_queue_not_ledger(store):
+    ingest_bytes(store, "n.ofx", ofx("000012345678", [("20230105", "-5.00", "000000", "CAFE")], bank="0033"))
+    csv = "Data,Descrição,Valor\n20/01,ALGO QUE NAO EXISTE,99.0\n"
+    ingest_bytes(store, "SANTANDER_2023_01_DESPESAS.csv", csv.encode())
+    stats = dedup.rebuild(store)
+    assert tx_count(store) == 1 and stats["queued"] == 1
+    assert store.db.execute("SELECT reason FROM review_queue").fetchone()["reason"] == "secundaria_sem_par"
+
+
+def test_manual_decision_survives_rebuild(store):
+    ingest_bytes(store, "n.ofx", ofx("000012345678", [("20230105", "-5.00", "000000", "CAFE")], bank="0033"))
+    ingest_bytes(store, "SANTANDER_2023_01_DESPESAS.csv", "Data,Descrição,Valor\n20/01,OUTRA COISA,5.0\n".encode())
+    dedup.rebuild(store)
+    rows = {r["importer"]: r for r in store.db.execute("SELECT * FROM source_records")}
+    store.db.execute("INSERT INTO merge_decisions VALUES (?,?,datetime('now'),'teste')",
+                     (dedup.record_key(rows["santander_csv"]), dedup.record_key(rows["ofx"])))
+    for _ in range(2):
+        stats = dedup.rebuild(store)
+        assert stats["manual"] == 1 and stats["queued"] == 0 and tx_count(store) == 1
+
+
+def test_rebuild_is_deterministic(store):
+    ingest_bytes(store, "n.ofx", ofx("1", [("20230105", "-5.00", f"id-{i}", f"X{i}") for i in range(20)]))
+    dedup.rebuild(store)
+    snap1 = store.db.execute("SELECT anchor_key, date, amount_cents FROM transactions ORDER BY anchor_key").fetchall()
+    dedup.rebuild(store)
+    snap2 = store.db.execute("SELECT anchor_key, date, amount_cents FROM transactions ORDER BY anchor_key").fetchall()
+    assert [tuple(r) for r in snap1] == [tuple(r) for r in snap2]
+
+
+# --- importadores --------------------------------------------------------------
+
+def test_nubank_rendimento_becomes_record_and_balances(store):
+    ingest_bytes(store, "jan.ofx", ofx("5555-1", [("20230110", "-10.00", "u-1", "Compra")],
+                                       bal=("20230131", "100.00"), end="20230131"))
+    ingest_bytes(store, "fev.ofx", ofx("5555-1", [("20230210", "-20.00", "u-2", "Compra")],
+                                       bal=("20230228", "80.50"), rendimento="0.50", start="20230201", end="20230228"))
+    dedup.rebuild(store)
+    rep = reconcile.reconcile_balances(store, "nubank:checking:55551:BRL")
+    assert rep["status"] == "ok" and rep["checked"] == 2
+
+
+def test_wise_same_id_opposite_amounts_are_distinct(store):
+    y1 = wise([("CARD-1", "30-12-2022", "-10.00", "hold", "90.00")])
+    y2 = wise([("CARD-1", "02-01-2023", "10.00", "estorno", "100.00")])
+    ingest_bytes(store, "statement_77_EUR_2022-01-01_2022-12-31.csv", y1)
+    ingest_bytes(store, "statement_77_EUR_2023-01-01_2023-12-31.csv", y2)
+    dedup.rebuild(store)
+    assert tx_count(store, "wise:") == 2
+    assert reconcile.reconcile_balances(store, "wise:wallet:77:EUR")["status"] == "ok"
+
+
+def test_santander_csv_date_disambiguation():
+    assert santander_csv._date("2023-02-10", 2023, 10) == "2023-10-02"   # dia/mes trocados
+    assert santander_csv._date("05/04", 2023, 4) == "2023-04-05"         # sem ano
+    assert santander_csv._date("13/01/2023", 2023, 1) == "2023-01-13"
+    with pytest.raises(ParseError):
+        santander_csv._date("ontem", 2023, 1)
+
+
+# --- reconciliacao e ledger ----------------------------------------------------
+
+def test_gap_is_one_break_not_every_month(store):
+    ingest_bytes(store, "m1.ofx", ofx("9-9", [("20230110", "-10.00", "a", "x")], bal=("20230131", "90.00")))
+    # fevereiro faltando (saida de 30 nao importada); marco e abril ok a partir dai
+    ingest_bytes(store, "m3.ofx", ofx("9-9", [("20230310", "-5.00", "c", "z")], bal=("20230331", "55.00"),
+                                      start="20230301", end="20230331"))
+    ingest_bytes(store, "m4.ofx", ofx("9-9", [("20230410", "-5.00", "d", "w")], bal=("20230430", "50.00"),
+                                      start="20230401", end="20230430"))
+    dedup.rebuild(store)
+    rep = reconcile.reconcile_balances(store, "nubank:checking:99:BRL")
+    assert len(rep["breaks"]) == 1
+    assert rep["breaks"][0]["delta"] == 3000 and rep["breaks"][0]["after"] == "2023-01-31"
+
+
+def test_ledger_export_passes_hledger_check(store, tmp_path):
+    ingest_bytes(store, "m1.ofx", ofx("9-9", [("20230110", "-10.00", "a", "x; com ponto e virgula")],
+                                      bal=("20230131", "90.00")))
+    ingest_bytes(store, "m3.ofx", ofx("9-9", [("20230310", "-5.00", "c", "z")], bal=("20230331", "55.00"),
+                                      start="20230301", end="20230331"))
+    dedup.rebuild(store)
+    res = export(store, tmp_path / "ledger", commit=False)
+    assert res["gaps"] == 1 and res["assertions"] == 2
+    hledger = os.environ.get("HLEDGER") or shutil.which("hledger")
+    if not hledger:
+        pytest.skip("hledger nao instalado")
+    p = subprocess.run([hledger, "-f", str(tmp_path / "ledger" / "main.journal"), "check", "-s", "ordereddates"],
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+
+
+SANTANDER_TXT = """Extrato_PF_Inteligente - 1/1/2023
+                 Resumo - maio/2023
+       Agência                 Conta Corrente
+       1234                    01.234567-8
+               Conta Corrente
+       Movimentação
+       Data       Descrição                        Nº Documento   Movimento (R$)    Saldo (R$)
+                  SALDO EM 30/04                                                     1.000,00
+       02/05      COMPRA CARTAO MAESTRO               304174               10,99-
+                  01/05 PADARIA
+                  PIX RECEBIDO                          -                  100,00     1.089,01
+       03/05      TARIFA                                -                    9,01-
+                  SALDO EM 31/05                                                     1.080,00
+"""
+
+
+def test_santander_pdf_text_validates_balances():
+    from src.finance.importers import santander_cc_pdf
+    p = santander_cc_pdf.parse("x.pdf", b"", text=SANTANDER_TXT)
+    assert [r.amount_cents for r in p.records] == [-1099, 10000, -901]
+    assert p.records[0].description == "COMPRA CARTAO MAESTRO | 01/05 PADARIA"
+    assert p.records[0].date == "2023-05-02" and p.checkpoints[0].date == "2023-04-30"
+    with pytest.raises(ParseError):  # fechamento adulterado e rejeitado
+        santander_cc_pdf.parse("x.pdf", b"", text=SANTANDER_TXT.replace("1.080,00", "1.081,00"))
+
+
+NUBANK_TXT = """Nu Pagamentos S.A.
+FATURA 11 JAN 2023 EMISSÃO E ENVIO 04 JAN 2023
+RESUMO DA FATURA ATUAL                                   VALORES EM R$
+             Fatura anterior                                       100,00
+             Pagamento recebido                                    100,00
+             Total de compras, 04 DEZ a 04 JAN                      60,00
+             Total a pagar                                      R$ 50,00
+TRANSAÇÕES   DE 04 DEZ A 04 JAN                                VALORES EM R$
+             05 DEZ           Pagamento em 05 DEZ                  100,00
+             20 DEZ           Loja - 1/3                            40,00
+             02 JAN           Estorno de "Outra"                    10,00
+             03 JAN           Mercado                               20,00
+"""
+
+
+def test_nubank_fatura_text_signs_years_and_check():
+    from src.finance.importers import nubank_fatura_pdf
+    p = nubank_fatura_pdf.parse("f.pdf", b"", text=NUBANK_TXT)
+    assert [(r.date, r.amount_cents) for r in p.records] == [
+        ("2022-12-05", 10000), ("2022-12-20", -4000), ("2023-01-02", 1000), ("2023-01-03", -2000)]
+    assert p.records[1].extra == {"installment": 1, "installments": 3}
+    assert not p.warnings
+    bad = nubank_fatura_pdf.parse("f.pdf", b"", text=NUBANK_TXT.replace("R$ 50,00", "R$ 55,00"))
+    assert bad.warnings
