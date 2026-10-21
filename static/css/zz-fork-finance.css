@@ -1,4 +1,5 @@
 /* ══ Painel "Finanças" (fork-local; ver LOCAL_CHANGES.md §7) ══════════════ */
+.fin-content { --fin-surface: var(--panel, #1a1a19); --fin-ink2: #c3c2b7; }
 .fin-content { width: min(1180px, 96vw); height: 88vh; display: flex; flex-direction: column; padding: 0; position: relative; }
 .fin-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: move; border-bottom: 1px solid var(--border, rgba(128,128,128,0.25)); }
 .fin-titlebar { font-weight: 600; font-size: 14px; }
@@ -68,3 +69,20 @@
 .fin-catcell:hover { text-decoration: underline dotted; }
 .fin-catedit, .fin-f-cat { font-size: 12px; padding: 1px 4px; border-radius: 4px; border: 1px solid var(--border, rgba(128,128,128,0.4)); background: var(--panel, transparent); color: inherit; width: 100%; min-width: 140px; }
 .fin-f-cat { width: auto; }
+.fin-base { stroke: #383835; stroke-width: 1; }
+.fin-grid { stroke: #2c2c2a; }
+.fin-endlabel { fill: currentColor; font-size: 11px; font-weight: 600; }
+.fin-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.fin-kpi { border: 1px solid var(--border, rgba(128,128,128,0.22)); border-radius: 10px; padding: 8px 12px; min-width: 0; }
+.fin-kpi-l { font-size: 11px; opacity: 0.7; }
+.fin-kpi-v { font-size: 20px; font-weight: 700; margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fin-kpi-s { font-size: 10.5px; opacity: 0.55; }
+.fin-note { font-size: 11.5px; padding: 6px 10px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #ffb45455; }
+.fin-legend i.ln { height: 2px; width: 12px; vertical-align: middle; border-radius: 1px; }
+.fin-tip { position: fixed; z-index: 100000; display: none; pointer-events: none; font-size: 11.5px; line-height: 1.5; padding: 6px 9px; border-radius: 7px; background: var(--bg, #111); border: 1px solid var(--border, rgba(128,128,128,0.35)); box-shadow: 0 4px 14px rgba(0,0,0,0.35); max-width: 320px; }
+.fin-tip-h { opacity: 0.7; margin-bottom: 3px; }
+.fin-tip-r { display: flex; align-items: center; gap: 6px; }
+.fin-tip-r i { display: inline-block; width: 10px; height: 2px; border-radius: 1px; }
+.fin-tip-r span { opacity: 0.7; }
+.fin-defs { margin-top: 6px; line-height: 1.5; }
+details.fin-card > summary { cursor: pointer; }

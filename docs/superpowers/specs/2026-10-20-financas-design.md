@@ -221,6 +221,24 @@ O caminho é baixar à mão (PDF, às vezes assinado) e importar com um parser p
   - 8 linhas das planilhas do Santander na fila de revisão;
   - Pluggy, Wise API, painel e regras.
 
+## Estado (2026-10-21): categorização e análise mensal
+- **Regras:**
+  - motor em `src/finance/rules.py`; as regras ficam em `data/finance/ledger/rules.json` (dados do usuário, fora do repo);
+  - 55 regras, 89% das transações categorizadas;
+  - categoria manual pela UI vence qualquer regra.
+- **Transferências entre contas próprias:** viram pares (`transfer_pairs`). Uma transferência sem par indica extrato ou fatura faltando do outro lado.
+- **Aba Mensal** (`src/finance/analytics.py`):
+  - KPIs: patrimônio, ganhos e gastos por mês, taxa de poupança, salário e reserva em meses;
+  - gráficos: ganhos × gastos com saldo, patrimônio (+ aplicado estimado), salário, gastos por grupo empilhados, taxa de poupança;
+  - tabela e CSV;
+  - filtros: período, mês/trimestre/ano, moeda e Pix com pessoas;
+  - meses com dados incompletos e o mês parcial aparecem apagados e ficam fora dos KPIs.
+- **Próximos:**
+  - patrimônio multimoeda via PTAX do Banco Central (grátis);
+  - saldo real de investimentos via Open Finance;
+  - orçamento/metas por categoria;
+  - comparação ano a ano.
+
 ## Passos que dependem de você (o resto eu faço)
 Você faz isso uma vez, antes da F0, e me manda Client ID, Client Secret e os Item IDs. Eu coloco no `.env`, que é gitignored.
 1. Criar conta em **meu.pluggy.ai** e clicar em **"Conectar Minha Conta"**.

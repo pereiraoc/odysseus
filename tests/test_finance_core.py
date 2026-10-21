@@ -338,3 +338,27 @@ def test_rules_priority_manual_and_transfer_pairs(store):
     assert store.db.execute("SELECT category FROM annotations WHERE anchor_key=?", (anchor,)).fetchone()[0] == "viagem:taxi"
     assert rules.merchant("COMPRA CARTAO MAESTRO | 25/02 ZAFFARI LOJA 08") == "zaffari loja 08"
     assert rules.merchant("Transação por cartão de 5.00 EUR emitida por Loja X") == "loja x"
+
+
+def test_monthly_income_expenses_neutral_and_networth(store):
+    import json as _json
+    from src.finance import rules
+    from src.finance.analytics import monthly
+    ingest_bytes(store, "jan.ofx", ofx("5555-1", [
+        ("20230105", "1000.00", "a", "Credito de salario"), ("20230110", "-300.00", "b", "Compra no débito - Mercado"),
+        ("20230115", "-200.00", "c", "Aplicação RDB"), ("20230120", "-50.00", "d", "Transferência enviada pelo Pix - Fulano")],
+        bal=("20230131", "450.00")))
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "sal", "when": {"text_any": ["salario"]}, "then": {"category": "renda:salario"}},
+        {"id": "merc", "when": {"text_any": ["mercado"]}, "then": {"category": "alimentacao:mercado"}},
+        {"id": "rdb", "when": {"text_any": ["aplicacao rdb"]}, "then": {"category": "transferencias:investimento"}},
+        {"id": "pix", "when": {"text_any": ["pix"]}, "then": {"category": "transferencias:pessoas"}}]}))
+    rules.categorize(store)
+    p = monthly(store)["periods"][0]
+    assert (p["income"], p["salary"], p["expenses"], p["net"]) == (100000, 100000, 35000, 65000)
+    assert p["savings_rate"] == 0.65 and p["net_worth"] == 45000 and p["invested"] == 20000 and p["nw_plus"] == 65000
+    assert p["by_group"] == {"alimentacao": 30000, "pessoas": 5000}
+    q = monthly(store, people=False)["periods"][0]
+    assert q["expenses"] == 30000 and q["people_out"] == -5000

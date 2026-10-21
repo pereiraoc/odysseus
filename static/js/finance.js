@@ -19,7 +19,7 @@ const IMPORTER = {
   santander_csv: 'planilha', santander_fatura_pdf: 'PDF fatura', santander_cc_ocr: 'OCR extrato', pluggy: 'Open Finance',
 };
 
-const st = { cur: 'BRL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
+const st = { mPeriod: '24', mGroup: 'month', mPeople: true, cur: 'BRL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
 let els = {};
 
 // ── util ────────────────────────────────────────────────────────────────
@@ -234,6 +234,232 @@ async function renderCategories(pane) {
   }));
 }
 
+
+// ── aba Mensal ───────────────────────────────────────────────────────────
+// paleta categorica validada (dataviz/references/palette.md, passos do modo escuro), ordem fixa
+const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+const OTHER = '#898781';
+let tipEl = null;
+function tip(e, html) {
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'fin-tip'; document.body.append(tipEl); }
+  if (!html) { tipEl.style.display = 'none'; return; }
+  tipEl.innerHTML = html;
+  tipEl.style.display = 'block';
+  const x = Math.min(e.clientX + 14, window.innerWidth - tipEl.offsetWidth - 8);
+  tipEl.style.left = `${x}px`;
+  tipEl.style.top = `${e.clientY + 14}px`;
+}
+function compact(cents) {
+  const v = cents / 100, a = Math.abs(v);
+  if (a >= 1e6) return (v / 1e6).toFixed(1).replace('.', ',') + ' mi';
+  if (a >= 1e3) return (v / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace('.', ',') + ' mil';
+  return v.toFixed(0);
+}
+function niceTicks(min, max, n = 4) {
+  if (min === max) max = min + 1;
+  const raw = (max - min) / n, mag = 10 ** Math.floor(Math.log10(raw)), step = [1, 2, 2.5, 5, 10].map(k => k * mag).find(k => k >= raw);
+  const t = [];
+  let v = Math.floor(min / step) * step;
+  t.push(v);
+  while (v < max - step * 0.001) { v += step; t.push(v); }  // ultimo tick sempre >= max (nada estoura o topo)
+  return t;
+}
+function periodLabel(p, group) {
+  if (group !== 'month') return p;
+  const m = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(p.slice(5, 7)) - 1];
+  return `${m}/${p.slice(2, 4)}`;
+}
+function axisFrame(host, periods, vmin, vmax, { H = 230, fmt = compact } = {}) {
+  const W = Math.max(host.clientWidth || 900, 360), P = { l: 64, r: 12, t: 10, b: 26 };
+  const ticks = niceTicks(Math.min(0, vmin), Math.max(0, vmax));
+  const lo = ticks[0], hi = ticks[ticks.length - 1];
+  const y = v => P.t + (1 - (v - lo) / (hi - lo || 1)) * (H - P.t - P.b);
+  const band = (W - P.l - P.r) / Math.max(periods.length, 1);
+  const xc = i => P.l + band * (i + 0.5);
+  const svg = svgEl('svg', { width: W, height: H, class: 'fin-svg' });
+  ticks.forEach(v => {
+    svg.append(svgEl('line', { x1: P.l, x2: W - P.r, y1: y(v), y2: y(v), class: v === 0 ? 'fin-base' : 'fin-grid' }));
+    svg.append(svgEl('text', { x: P.l - 6, y: y(v) + 3, 'text-anchor': 'end', class: 'fin-axis' }, fmt(v)));
+  });
+  const step = Math.max(1, Math.ceil(periods.length / Math.floor((W - P.l) / 52)));
+  periods.forEach((p, i) => { if (i % step === 0) svg.append(svgEl('text', { x: xc(i), y: H - 8, 'text-anchor': 'middle', class: 'fin-axis' }, periodLabel(p.period, st.mGroup))); });
+  return { svg, y, xc, band, W, H, P };
+}
+function roundedBar(x, w, y0, y1, color, cls) {
+  // 4px arredondado na ponta do dado, reto na linha de base
+  const top = Math.min(y0, y1), h = Math.abs(y1 - y0), r = Math.min(4, h, w / 2), up = y1 < y0;
+  const d = up
+    ? `M${x},${y0} V${top + r} Q${x},${top} ${x + r},${top} H${x + w - r} Q${x + w},${top} ${x + w},${top + r} V${y0} Z`
+    : `M${x},${y0} V${top + h - r} Q${x},${top + h} ${x + r},${top + h} H${x + w - r} Q${x + w},${top + h} ${x + w},${top + h - r} V${y0} Z`;
+  return svgEl('path', { d, fill: color, class: cls || 'fin-bar' });
+}
+function legend(items) {
+  return `<div class="fin-legend">${items.map(([label, color, kind]) => `<span><i class="${kind === 'line' ? 'ln' : ''}" style="background:${color}"></i>${esc(label)}</span>`).join('')}</div>`;
+}
+function hitColumns(svg, f, periods, onTip) {
+  periods.forEach((p, i) => {
+    const r = svgEl('rect', { x: f.xc(i) - f.band / 2, y: f.P.t, width: f.band, height: f.H - f.P.t - f.P.b, fill: 'transparent', tabindex: 0 });
+    r.addEventListener('pointermove', e => tip(e, onTip(p)));
+    r.addEventListener('pointerleave', () => tip(null));
+    r.addEventListener('focus', e => { const b = r.getBoundingClientRect(); tip({ clientX: b.x + b.width / 2, clientY: b.y + 20 }, onTip(p)); });
+    r.addEventListener('blur', () => tip(null));
+    svg.append(r);
+  });
+}
+const tipRow = (label, value, color) => `<div class="fin-tip-r">${color ? `<i style="background:${color}"></i>` : ''}<b>${value}</b><span>${esc(label)}</span></div>`;
+const tipHead = p => `<div class="fin-tip-h">${esc(periodLabel(p.period, st.mGroup))}${p.partial ? ' · parcial (dados até ' + day(p.last_date) + ')' : ''}${p.incomplete ? ' · ⚠ dados incompletos' : ''}</div>`;
+
+function chartIncomeExpense(host, periods, cur) {
+  const vals = periods.flatMap(p => [p.income, p.expenses, p.net]);
+  const f = axisFrame(host, periods, Math.min(...vals), Math.max(...vals));
+  const bw = Math.min(24, (f.band - 8) / 2 - 1);
+  periods.forEach((p, i) => {
+    const op = p.incomplete || p.partial ? 0.45 : 1;
+    [[p.income, SERIES[0], -1], [p.expenses, SERIES[1], 1]].forEach(([v, c, side]) => {
+      if (!v) return;
+      const x = side < 0 ? f.xc(i) - bw - 1 : f.xc(i) + 1;
+      const b = roundedBar(x, bw, f.y(0), f.y(v), c); b.setAttribute('opacity', op); f.svg.append(b);
+    });
+  });
+  const pts = periods.map((p, i) => `${f.xc(i).toFixed(1)},${f.y(p.net).toFixed(1)}`).join(' ');
+  f.svg.append(svgEl('polyline', { points: pts, fill: 'none', stroke: 'var(--fin-ink2)', 'stroke-width': 2, 'stroke-linejoin': 'round' }));
+  hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow('ganhos', money(p.income, cur), SERIES[0]) + tipRow('gastos', money(p.expenses, cur), SERIES[1])
+    + tipRow('saldo do período', money(p.net, cur)) + (p.savings_rate !== null ? tipRow('taxa de poupança', (p.savings_rate * 100).toFixed(0) + '%') : ''));
+  host.innerHTML = '';
+  host.append(f.svg);
+  host.insertAdjacentHTML('beforeend', legend([['Ganhos', SERIES[0]], ['Gastos', SERIES[1]], ['Saldo (ganhos − gastos)', 'var(--fin-ink2)', 'line']]));
+}
+
+function chartLine(host, periods, key, color, cur, { label, fmt = compact, extra, area = true } = {}) {
+  const pts = periods.map((p, i) => [i, p[key]]).filter(([, v]) => v !== null && v !== undefined);
+  if (!pts.length) { host.innerHTML = '<div class="fin-empty">Sem dados no período.</div>'; return; }
+  const vals = pts.map(([, v]) => v).concat(extra ? periods.map(p => p[extra.key]).filter(v => v !== null) : []);
+  const f = axisFrame(host, periods, Math.min(...vals), Math.max(...vals), { fmt });
+  const line = pts.map(([i, v]) => `${f.xc(i).toFixed(1)},${f.y(v).toFixed(1)}`).join(' ');
+  if (area) f.svg.append(svgEl('polygon', { points: `${f.xc(pts[0][0])},${f.y(0)} ${line} ${f.xc(pts[pts.length - 1][0])},${f.y(0)}`, fill: color, opacity: 0.1 }));
+  if (extra) {
+    const ep = periods.map((p, i) => [i, p[extra.key]]).filter(([, v]) => v !== null);
+    f.svg.append(svgEl('polyline', { points: ep.map(([i, v]) => `${f.xc(i).toFixed(1)},${f.y(v).toFixed(1)}`).join(' '), fill: 'none', stroke: extra.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }));
+  }
+  f.svg.append(svgEl('polyline', { points: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  const [li, lv] = pts[pts.length - 1];
+  f.svg.append(svgEl('circle', { cx: f.xc(li), cy: f.y(lv), r: 4, fill: color, stroke: 'var(--fin-surface)', 'stroke-width': 2 }));
+  f.svg.append(svgEl('text', { x: Math.min(f.xc(li) + 7, f.W - 4), y: f.y(lv) - 7, 'text-anchor': f.xc(li) > f.W - 80 ? 'end' : 'start', class: 'fin-endlabel' }, fmt(lv)));
+  hitColumns(f.svg, f, periods, p => tipHead(p) + tipRow(label, p[key] === null ? '—' : (key === 'savings_rate' ? (p[key] * 100).toFixed(0) + '%' : money(p[key], cur)), color)
+    + (extra && p[extra.key] !== null ? tipRow(extra.label, extra.fmtTip(p[extra.key]), extra.color) : ''));
+  host.innerHTML = '';
+  host.append(f.svg);
+  if (extra) host.insertAdjacentHTML('beforeend', legend([[label, color, 'line'], [extra.label, extra.color, 'line']]));
+}
+
+function chartStacked(host, periods, groups, cur) {
+  const top = groups.slice(0, 7), colorOf = g => top.includes(g) ? SERIES[top.indexOf(g)] : OTHER;
+  const segs = periods.map(p => {
+    const rows = top.map(g => [g, Math.max(0, p.by_group[g] || 0)]);
+    const other = Object.entries(p.by_group).filter(([g]) => !top.includes(g)).reduce((a, [, v]) => a + Math.max(0, v), 0);
+    return other ? rows.concat([['outros', other]]) : rows;
+  });
+  const f = axisFrame(host, periods, 0, Math.max(1, ...segs.map(r => r.reduce((a, [, v]) => a + v, 0))));
+  const bw = Math.min(24, f.band - 6);
+  segs.forEach((rows, i) => {
+    let acc = 0;
+    const live = rows.filter(([, v]) => v > 0);
+    live.forEach(([g, v], k) => {
+      const y0 = f.y(acc), y1 = f.y(acc + v);
+      const isTop = k === live.length - 1;
+      const el = isTop ? roundedBar(f.xc(i) - bw / 2, bw, y0, y1 + 0, colorOf(g)) : svgEl('rect', { x: f.xc(i) - bw / 2, y: y1, width: bw, height: Math.max(0, y0 - y1 - 2), fill: colorOf(g) });
+      if (periods[i].incomplete || periods[i].partial) el.setAttribute('opacity', 0.45);
+      f.svg.append(el);
+      acc += v;
+    });
+  });
+  hitColumns(f.svg, f, periods, p => {
+    const i = periods.indexOf(p);
+    return tipHead(p) + segs[i].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([g, v]) => tipRow(g, money(v, cur), colorOf(g))).join('');
+  });
+  host.innerHTML = '';
+  host.append(f.svg);
+  host.insertAdjacentHTML('beforeend', legend(top.map(g => [g, colorOf(g)]).concat(groups.length > 7 ? [['outros', OTHER]] : [])));
+}
+
+function kpi(label, value, sub) {
+  return `<div class="fin-kpi"><div class="fin-kpi-l">${esc(label)}</div><div class="fin-kpi-v">${value}</div><div class="fin-kpi-s">${sub || ''}</div></div>`;
+}
+
+async function renderMonthly(pane) {
+  const last = (st.meta.accounts.filter(a => a.currency === st.cur).map(a => a.last).sort().pop() || new Date().toISOString()).slice(0, 10);
+  const an = new Date(last + 'T12:00:00');
+  const from = st.mPeriod === 'all' ? '' : new Date(an.getFullYear(), an.getMonth() - Number(st.mPeriod) + 1, 1).toISOString().slice(0, 10);
+  const q = new URLSearchParams({ currency: st.cur, from, group: st.mGroup, people: st.mPeople ? 'true' : 'false' });
+  const d = await get(`/monthly?${q}`);
+  const P = d.periods, cur = st.cur;
+  const periods = [['12', '12 meses'], ['24', '24 meses'], ['36', '3 anos'], ['60', '5 anos'], ['all', 'tudo']];
+  const curs = [...new Set(st.meta.accounts.map(a => a.currency))].sort((a, b) => (a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b)));
+  const filters = `<div class="fin-filters">${periods.map(([v, l]) => `<button class="fin-btn ${st.mPeriod === v ? 'active' : ''}" data-mp="${v}">${l}</button>`).join('')}
+      <select class="fin-mg"><option value="month" ${st.mGroup === 'month' ? 'selected' : ''}>por mês</option><option value="quarter" ${st.mGroup === 'quarter' ? 'selected' : ''}>por trimestre</option><option value="year" ${st.mGroup === 'year' ? 'selected' : ''}>por ano</option></select>
+      <select class="fin-mc">${curs.map(c => `<option ${c === cur ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      <label title="Pix/TED/DOC com pessoas (transferencias:pessoas): enviados contam como gasto, recebidos como ganho"><input type="checkbox" class="fin-mpp" ${st.mPeople ? 'checked' : ''}> contar Pix/TED com pessoas</label>
+      <span class="fin-f-sum">${from ? 'desde ' + day(from) : 'todo o histórico'} até o último dado (${day(last)})</span></div>`;
+  if (!P.length) { pane.innerHTML = filters + '<div class="fin-empty">Sem dados nessa moeda/período.</div>'; bindM(); return; }
+  // KPIs usam so periodos completos (o ultimo mes costuma ter poucos dias de dado)
+  const full = P.filter(p => !p.partial).length ? P.filter(p => !p.partial) : P;
+  const lastP = full[full.length - 1], window12 = full.slice(-Math.min(full.length, st.mGroup === 'month' ? 12 : st.mGroup === 'quarter' ? 4 : 1));
+  const sum = k => window12.reduce((a, p) => a + (p[k] || 0), 0);
+  const months12 = window12.reduce((a, p) => a + p.months, 0) || 1;
+  const nwStart = P.find(p => p.net_worth !== null);
+  const incomeAvg = sum('income') / months12, expAvg = sum('expenses') / months12, sr = sum('income') > 0 ? (sum('income') - sum('expenses')) / sum('income') : null;
+  const nwLast = lastP.net_worth, nwDelta = nwStart && nwLast !== null ? nwLast - nwStart.net_worth : null;
+  const incompleteN = P.filter(p => p.incomplete).length;
+  const kpis = `<div class="fin-kpis">
+    ${kpi('Patrimônio (contas − cartão)', money(nwLast, cur), nwDelta !== null ? `${nwDelta >= 0 ? '▲' : '▼'} ${money(Math.abs(nwDelta), cur)} no período · + ${money(lastP.invested, cur)} aplicado*` : '')}
+    ${kpi('Ganhos / mês', money(Math.round(incomeAvg), cur), `média dos últimos ${months12} meses`)}
+    ${kpi('Gastos / mês', money(Math.round(expAvg), cur), `média dos últimos ${months12} meses`)}
+    ${kpi('Taxa de poupança', sr === null ? '—' : (sr * 100).toFixed(0) + '%', 'referência comum: 15–20%')}
+    ${kpi('Salário', money(lastP.salary, cur), `${esc(periodLabel(lastP.period, st.mGroup))} · média ${money(Math.round(sum('salary') / months12), cur)}/mês`)}
+    ${kpi('Reserva', lastP.reserve_months === null ? '—' : lastP.reserve_months.toFixed(1).replace('.', ',') + ' meses', '(patrimônio + aplicado) / gasto médio de 6 meses · ref. 3–6')}
+  </div>`;
+  const warn = incompleteN ? `<div class="fin-note">⚠ ${incompleteN} período(s) com dados incompletos (barras apagadas): houve transferência entre suas contas sem o extrato/fatura do outro lado — o gasto de cartão desses meses pode estar faltando. Ver Auditoria.</div>` : '';
+  const table = `<details class="fin-card"><summary class="fin-card-h">Tabela (${P.length} períodos) <button class="fin-btn fin-csv">baixar CSV</button></summary>
+    <table class="fin-table"><thead><tr><th>Período</th><th class="num">Ganhos</th><th class="num">Salário</th><th class="num">Gastos</th><th class="num">fixos</th><th class="num">variáveis</th><th class="num">Saldo</th><th class="num">Poupança</th><th class="num">Patrimônio</th><th class="num">Aplicado*</th><th class="num">Reserva</th><th></th></tr></thead><tbody>
+    ${P.slice().reverse().map(p => `<tr><td>${esc(periodLabel(p.period, st.mGroup))}</td><td class="num">${money(p.income, cur)}</td><td class="num">${money(p.salary, cur)}</td><td class="num">${money(p.expenses, cur)}</td><td class="num">${money(p.fixed, cur)}</td><td class="num">${money(p.variable, cur)}</td><td class="num ${p.net < 0 ? 'neg' : ''}">${money(p.net, cur)}</td><td class="num">${p.savings_rate === null ? '—' : (p.savings_rate * 100).toFixed(0) + '%'}</td><td class="num">${money(p.net_worth, cur)}</td><td class="num">${money(p.invested, cur)}</td><td class="num">${p.reserve_months === null ? '—' : p.reserve_months.toFixed(1)}</td><td>${p.partial ? '<span title="período parcial">½</span> ' : ''}${p.incomplete ? '⚠' : ''}${p.card_known ? '' : ' <span title="sem fatura de cartão recente: dívida do cartão desconhecida">💳?</span>'}</td></tr>`).join('')}</tbody></table></details>`;
+  pane.innerHTML = `${filters}${kpis}${warn}
+    <div class="fin-card"><div class="fin-card-h">Ganhos × gastos <span class="fin-hint">transferências entre suas contas, câmbio e aplicações não contam</span></div><div class="fin-ch-ie"></div></div>
+    <div class="fin-grid2">
+      <div class="fin-card"><div class="fin-card-h">Patrimônio <span class="fin-hint">saldo das contas − cartão, fim do período</span></div><div class="fin-ch-nw"></div></div>
+      <div class="fin-card"><div class="fin-card-h">Salário</div><div class="fin-ch-sal"></div></div>
+    </div>
+    <div class="fin-grid2">
+      <div class="fin-card"><div class="fin-card-h">Gastos por grupo</div><div class="fin-ch-st"></div></div>
+      <div class="fin-card"><div class="fin-card-h">Taxa de poupança <span class="fin-hint">(ganhos − gastos) ÷ ganhos</span></div><div class="fin-ch-sr"></div></div>
+    </div>
+    ${table}
+    <div class="fin-dim fin-defs">* <b>Aplicado</b> = soma do que foi para caixinhas/RDB/IPO, sem rendimento (estimativa até os saldos de investimento chegarem pelo Open Finance). Patrimônio soma só contas na moeda escolhida: dinheiro convertido para o Wise sai do total em BRL e aparece na moeda dele.</div>`;
+  chartIncomeExpense(pane.querySelector('.fin-ch-ie'), P, cur);
+  chartLine(pane.querySelector('.fin-ch-nw'), P, 'net_worth', SERIES[0], cur, { label: 'patrimônio',
+    extra: { key: 'nw_plus', label: 'patrimônio + aplicado*', color: SERIES[2], fmtTip: v => money(v, cur) } });
+  chartLine(pane.querySelector('.fin-ch-sal'), P, 'salary', SERIES[0], cur, { label: 'salário', area: false });
+  chartStacked(pane.querySelector('.fin-ch-st'), P, d.groups, cur);
+  chartLine(pane.querySelector('.fin-ch-sr'), P.map(p => ({ ...p, sr100: p.savings_rate === null ? null : Math.round(p.savings_rate * 10000) })), 'sr100', SERIES[0], cur,
+    { label: 'taxa de poupança', fmt: v => (v / 100).toFixed(0) + '%', area: false });
+  pane.querySelector('.fin-csv').addEventListener('click', e => {
+    e.preventDefault();
+    const head = ['periodo', 'ganhos', 'salario', 'gastos', 'fixos', 'variaveis', 'saldo', 'taxa_poupanca', 'patrimonio', 'aplicado', 'reserva_meses', 'incompleto'];
+    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary, p.expenses, p.fixed, p.variable, p.net, p.savings_rate ?? '', p.net_worth ?? '', p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
+      .map((v, i) => (i >= 1 && i <= 6) || i === 8 || i === 9 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+    a.download = `financas-${cur}-${st.mGroup}.csv`;
+    a.click();
+  });
+  bindM();
+  function bindM() {
+    pane.querySelectorAll('[data-mp]').forEach(b => b.addEventListener('click', () => { st.mPeriod = b.dataset.mp; render(); }));
+    pane.querySelector('.fin-mg')?.addEventListener('change', e => { st.mGroup = e.target.value; render(); });
+    pane.querySelector('.fin-mc')?.addEventListener('change', e => { st.cur = e.target.value; render(); });
+    pane.querySelector('.fin-mpp')?.addEventListener('change', e => { st.mPeople = e.target.checked; render(); });
+  }
+}
+
 async function renderAudit(pane) {
   const [d, tr] = await Promise.all([get('/audit'), get('/transfers')]);
   const accs = d.accounts.filter(a => a.transactions).map(a => {
@@ -308,7 +534,7 @@ async function renderFiles(pane) {
   });
 }
 
-const TABS = { overview: ['Visão geral', renderOverview], categories: ['Categorias', renderCategories], transactions: ['Transações', renderTransactions], audit: ['Auditoria', renderAudit], files: ['Arquivos', renderFiles] };
+const TABS = { overview: ['Visão geral', renderOverview], monthly: ['Mensal', renderMonthly], categories: ['Categorias', renderCategories], transactions: ['Transações', renderTransactions], audit: ['Auditoria', renderAudit], files: ['Arquivos', renderFiles] };
 
 function switchTab(tab) { st.tab = tab; try { localStorage.setItem('odysseus-fin-tab', tab); } catch (_) {} render(); }
 

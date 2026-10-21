@@ -19,6 +19,7 @@ Rotas (todas exigem usuario):
   GET  /api/finance/rules          regras (data/finance/ledger/rules.json) + quantas transacoes cada uma pega
   GET  /api/finance/transfers      transferencias internas sem par (indicam extrato/fatura faltando)
   POST /api/finance/tx/{id}/category   categoria manual (vence qualquer regra)
+  GET  /api/finance/monthly        mes a mes: patrimonio, ganhos x gastos, salario, poupanca, reserva, grupos
 """
 from __future__ import annotations
 
@@ -300,6 +301,17 @@ def setup_finance_routes() -> APIRouter:
                 return await asyncio.to_thread(work)
             except RuntimeError as exc:
                 raise HTTPException(502, str(exc)) from exc
+
+    @router.get("/monthly")
+    def monthly_view(currency: str = "BRL", date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
+                     group: str = Query("month", pattern="^(month|quarter|year)$"), people: bool = True,
+                     _user: str = Depends(require_user)):
+        from src.finance.analytics import monthly
+        store = _store()
+        try:
+            return monthly(store, currency, date_from, date_to, group, people)
+        finally:
+            store.close()
 
     @router.get("/categories")
     def categories(date_from: str = Query("", alias="from"), date_to: str = Query("", alias="to"),
