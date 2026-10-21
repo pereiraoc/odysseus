@@ -116,10 +116,56 @@ Diretório: `data/finance/` (está no volume `./data`). Usa um SQLite próprio, 
 - **Volume do ledger:** `data/finance/ledger` precisa de git dentro do container. Verificar se a imagem já tem git; o painel de Vaults usa.
 - Testes, depois rebuild da imagem, depois o primeiro sync real.
 
-**F2: importação de arquivos.**
-- Interface `Importer` (arquivo → registros de origem + checkpoints) e um importador OFX genérico, que cobre Nubank conta/fatura e Santander "Money 2000".
-- Nubank CSV de conta e de fatura.
-- Os importadores do histórico antigo (Caixa, planilhas suas) ficam **para quando você mandar a lista**. A reconciliação vai conta a conta até todas as âncoras baterem.
+**F2: importação de arquivos** (inventário real abaixo).
+- Interface `Importer` (arquivo → registros de origem + checkpoints).
+- Importadores, por ordem de valor:
+
+| # | Importador | Arquivos | Checkpoint de saldo | Dificuldade |
+|---|---|---|---|---|
+| 1 | `ofx_nubank` | Nubank conta, 55 OFX, 06/2019–12/2023 | `LEDGERBAL` de cada mês | baixa: FITID é UUID único |
+| 2 | `wise_csv` | Wise, 20 CSVs, 10 moedas, 2022–2023 | coluna `Running Balance` | baixa: id `TransferWise ID`; câmbio gera 2 pernas |
+| 3 | `pdf_santander_cc` | Santander conta, 78 PDFs com texto, 01/2017–12/2023, mais o "Extrato consolidado" de 05/2023 | saldo inicial e final do "Resumo" mensal | média: layout Compart estável, mudou um pouco em 2023 |
+| 4 | `pdf_nubank_fatura` | Nubank cartão, 40 PDFs, 10/2019–01/2024 | total da fatura | média: parcelas "n/m" e IOF/internacional |
+| 5 | `csv_santander_categorizado` | Santander, 34 CSVs `*_DESPESAS/RECEITAS`, 2022-01..05 e 2023-01..12 | — | baixa. São sem sinal (sinal vem do nome do arquivo) e repetem as transações dos PDFs, então são **origem secundária**: só dão dedup e uma dica de categoria. |
+| 6 | `ofx_santander` | 1 OFX de 01–08/06/2023, duplicado com dois nomes (`extratoCC.ofx` e `2021_from_01-01-2021...`, mesmo md5; o nome mente) | — | `FITID=000000` em todas as linhas, então dedup por (data, valor, memo, seq) |
+| 7 | `pdf_santander_fatura` | Santander cartão, 28 PDFs **protegidos por senha** | total da fatura | precisa da senha (normalmente derivada do CPF) |
+| 8 | OCR | Santander conta 06–11/2021: 6 PDFs "Microsoft Print to PDF" **sem texto** (imagem) | Resumo mensal | tesseract/ocrmypdf (grátis), não instalado; os valores precisam fechar com o checkpoint |
+
+- `fin_raw_blobs` deduplica por sha256, então o OFX de nome errado entra uma vez só.
+- Antes de importar, eu gero o relatório de cobertura e de checkpoints (abaixo). A importação de cada fonte só é aceita quando a soma das transações do mês fecha com o saldo inicial e final daquele mês.
+
+**Inventário de `/data/finances/finances.zip` (2026-10-20), 300 arquivos**
+
+| Fonte | Cobre | Buracos |
+|---|---|---|
+| Santander conta | 01/2017–12/2023 | nenhum (06–11/2021 só como imagem) |
+| Nubank conta | 06/2019–12/2023 | 07/2023 vai só até 08/07 (OFX parcial) |
+| Nubank cartão | 10/2019–01/2024 | 03–08/2020, 10–12/2020, 02–04/2021 |
+| Santander cartão | 10/2019–01/2024 | 02–12/2021, **2022 inteiro** (pasta vazia), 01/2023 |
+| Wise | 2022–2023 | antes de 2022 e depois de 2023 |
+| Caixa | — | **nenhum arquivo no zip** |
+| Santander conta 2024 | — | pasta vazia |
+| `Santander/230837725.txt` | — | arquivo vazio |
+
+- **Buraco crítico: ~01/2024 até ~10/2025.** Os arquivos acabam em 12/2023 ou 01/2024, e a primeira sincronização da Pluggy só volta até ~10/2025. Esses ~21 meses só se recuperam exportando agora:
+  - Nubank conta: OFX mês a mês pelo app;
+  - Nubank faturas: CSV/OFX/PDF;
+  - Santander conta e cartão: PDF ou OFX;
+  - Wise: CSV de 2024 e 2025.
+
+  Os bancos podem limitar até quando dá para voltar, então **quanto antes, melhor**.
+
+**Wise** (conferido em 2026-10-20)
+- O Wise Brasil está no diretório OFB **só com APIs de pagamento**, sem compartilhamento de dados, então não dá para conectar via Pluggy.
+- **API pessoal:** é grátis, com token pessoal "read only".
+  - `GET /v4/profiles/{id}/balances` (saldos atuais por moeda) e `/v1/transfers` funcionam.
+  - **Extratos (balance statements) com token pessoal estão bloqueados**, exceto para perfis de US, CA, AU, NZ, SG e MY. Para UK/EEA o bloqueio é por PSD2. O fluxo de assinatura SCA foi aposentado para contas pessoais.
+  - Fontes: https://docs.wise.com/guides/product/kyc/partner-accounts, https://github.com/newmancu/sure/issues/382
+- **Plano:**
+  - poller Wise: snapshot de saldo por moeda (checkpoint) e transfers;
+  - transações de cartão e câmbio: CSV de extrato exportado periodicamente, com o mesmo formato dos arquivos de 2022–2023 (importador 2);
+  - o spike confirma, com o seu token, quais endpoints respondem (por exemplo `/v1/profiles/{id}/activities`).
+- **Multimoeda:** o canônico guarda moeda e valor original. A conversão para BRL é só para exibir (taxa da própria transação de câmbio Wise quando houver). No hledger, cada moeda vira commodity (`USD`, `EUR`, `ILS`…).
 
 **F3: regras de categorização.**
 - Motor determinístico: condições → ações, por prioridade, e `manual_override` nunca é sobrescrito.
@@ -134,6 +180,8 @@ Diretório: `data/finance/` (está no volume `./data`). Usa um SQLite próprio, 
 
 **F6:** Splitwise, com API key pessoal grátis.
 
+Wise entra na F1 (poller de saldo) e na F2 (CSV), não aqui.
+
 ## Passos que dependem de você (o resto eu faço)
 Você faz isso uma vez, antes da F0, e me manda Client ID, Client Secret e os Item IDs. Eu coloco no `.env`, que é gitignored.
 1. Criar conta em **meu.pluggy.ai** e clicar em **"Conectar Minha Conta"**.
@@ -147,7 +195,17 @@ Você faz isso uma vez, antes da F0, e me manda Client ID, Client Secret e os It
 5. Na página **Demo** (Connected Items), menu ⋮ → **"Copiar Item ID"**, uma vez por banco.
 6. **Anualmente:** quando eu avisar que o consentimento está vencendo, refaça o login MeuPluggy pelo Dashboard e me passe o itemId novo, se mudar.
 7. **Sempre que quiser o dado de agora:** no app do Nubank, peça o extrato ou a fatura em OFX/CSV por e-mail e importe no painel.
-8. **Depois:** me mande a lista dos seus arquivos antigos (Caixa, planilhas etc.).
+8. **Fechar o buraco 01/2024 → hoje.** Exportar e colocar em `/data/finances/`:
+   - Nubank conta: OFX de cada mês;
+   - Nubank faturas: CSV, ou OFX, ou PDF;
+   - Santander conta: PDF ou OFX;
+   - Santander faturas;
+   - Wise: CSV por moeda, de 2024 até hoje.
+
+   Também completar os meses faltantes do inventário, se o banco ainda deixar.
+9. **Senha dos PDFs de fatura do Santander:** me diga qual é (ou o padrão, por exemplo os primeiros dígitos do CPF). Ela fica só no `.env`.
+10. **Caixa:** colocar os arquivos que você tiver em `/data/finances/Caixa/`. O zip não tem nenhum.
+11. **Wise:** em wise.com → Configurações → API tokens, criar um token **Read only** e me passar.
 
 ## Criptografia: mapa para o futuro (não entra no v1)
 1. **Já, recomendado:**
