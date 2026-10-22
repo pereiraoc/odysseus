@@ -49,6 +49,7 @@ _MERCHANT = [
     re.compile(r"^enviou dinheiro para (.+)$", re.I),
     re.compile(r"^recebeu dinheiro de (.+?)(?: com a refer.*)?$", re.I),
     re.compile(r'^iof de "(.+)"$', re.I),
+    re.compile(r"^iof de volta de (.+)$", re.I),
 ]
 
 

@@ -61,7 +61,7 @@ const PRECACHE = [
   '/static/css/email-calendar-notes-tasks.css?v=20260929csssplit',
   '/static/css/cookbook-research-memory-settings.css?v=20260929csssplit',
   '/static/css/zz-fork-vaults.css?v=20260929csssplit',  // fork-local
-  '/static/css/zz-fork-finance.css?v=20261021fin15',  // fork-local
+  '/static/css/zz-fork-finance.css?v=20261021fin17',  // fork-local
   '/static/app.js?v=20260929csssplit',
   '/static/js/storage.js',
   '/static/js/appConfig.js',

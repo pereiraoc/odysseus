@@ -88,6 +88,16 @@ const COST_LABEL = {
   'moradia:telefone-internet': 'Internet e telefone', 'moradia:contas': 'Outras contas da casa', 'financeiro:seguros': 'Seguros',
   'saude:plano': 'Plano de saúde', 'educacao:mensalidade': 'Mensalidade (educação)',
 };
+const SUB_GROUP = { 'assinaturas:ia': 'IA', 'assinaturas:streaming': 'Streaming', 'assinaturas:rpg': 'RPG', 'assinaturas:armazenamento': 'Armazenamento',
+  'assinaturas:workout': 'Workout', 'assinaturas:outros': 'Outros' };
+const SUB_LABEL = {
+  'anthropic claude sub': 'Claude (Anthropic)', 'openai chatgpt subscr': 'ChatGPT', 'github inc': 'GitHub', 'cursor ai powered ide': 'Cursor',
+  'google globoplay': 'Globoplay', 'amazon prime canais': 'Prime Video Canais', 'amazonprimebr': 'Amazon Prime', 'spotify': 'Spotify',
+  'google youtubepremium': 'YouTube Premium', 'supabase': 'Supabase', 'patreon membership': 'Patreon', 'google pocket bard': 'Pocket Bard',
+  'herofrg subscription': 'Hero Forge', 'dropbox': 'Dropbox', 'google one': 'Google One', 'google workout traine': 'Workout Trainer',
+  'google linkedin commu': 'LinkedIn', 'discord nitromonthly': 'Discord Nitro', 'paddle net nexusmods': 'Nexus Mods',
+  'paddle net adblckplus': 'Adblock Plus', 'obsidian': 'Obsidian',
+};
 const COST_CLASS = [['essencial', 'Essencial fixo', SERIES_C(0)], ['assinaturas', 'Assinaturas', SERIES_C(1)], ['variavel', 'Variável', SERIES_C(2)]];
 function SERIES_C(i) { return ['#3987e5', '#d95926', '#199e70'][i]; }
 function monthShort(m) { return `${['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`; }
@@ -99,11 +109,18 @@ async function renderCosts(host) {
   const pct = v => `${Math.round((v / tot) * 100)}%`;
   const ofSal = c.salary_base_avg ? ` · ${Math.round((c.total_avg / c.salary_base_avg) * 100)}% do salário base médio (${money(c.salary_base_avg, cur)})` : '';
   const bar = COST_CLASS.map(([k, , color]) => `<i style="width:${((c.classes[k]?.avg || 0) / tot * 100).toFixed(1)}%;background:${color}" title="${k}"></i>`).join('');
+  const row = i => `<tr><td>${esc(COST_LABEL[i.key] || SUB_LABEL[i.key] || i.key)}${i.shifted?.length ? ` <span class="fin-chip" title="pagamento do mês seguinte atribuído ao mês anterior: ${esc(i.shifted.join(', '))}">ajustado</span>` : ''}${i.annual ? ` <span class="fin-chip" title="cobrança anual de ${money(i.annual.last_amount, cur)} em ${day(i.annual.last_charge)}, dividida por 12">anual</span>` : ''}</td>
+      ${months.map(m => `<td class="num">${i.months[m] ? money(i.months[m], cur) : '<span class="fin-dim">—</span>'}</td>`).join('')}<td class="num"><b>${money(i.avg, cur)}</b></td></tr>`;
   const table = (k, label) => {
     const items = (c.classes[k]?.items || []).filter(i => i.avg || i.payments);
     if (!items.length) return '';
-    const rows = items.map(i => `<tr><td>${esc(COST_LABEL[i.key] || i.key)}${i.shifted?.length ? ` <span class="fin-chip" title="pagamento do mês seguinte atribuído ao mês anterior: ${esc(i.shifted.join(', '))}">ajustado</span>` : ''}</td>
-      ${months.map(m => `<td class="num">${i.months[m] ? money(i.months[m], cur) : '<span class="fin-dim">—</span>'}</td>`).join('')}<td class="num"><b>${money(i.avg, cur)}</b></td></tr>`).join('');
+    let rows;
+    if (k === 'assinaturas') {  // agrupado: IA, Streaming, RPG, Armazenamento, Workout, Outros
+      const by = {};
+      items.forEach(i => { (by[i.category || 'assinaturas:outros'] ||= []).push(i); });
+      rows = Object.entries(c.classes[k].groups || {}).filter(([g]) => by[g]).map(([g, v]) =>
+        `<tr class="fin-subh"><td colspan="${months.length + 1}">${esc(SUB_GROUP[g] || g.split(':').pop())}</td><td class="num"><b>${money(v, cur)}</b></td></tr>${by[g].map(row).join('')}`).join('');
+    } else rows = items.map(row).join('');
     return `<details class="fin-costd" ${k === 'essencial' ? 'open' : ''}><summary>${esc(label)} · <b>${money(c.classes[k].avg, cur)}</b>/mês</summary>
       <table class="fin-table"><thead><tr><th></th>${months.map(m => `<th class="num">${monthShort(m)}</th>`).join('')}<th class="num">média</th></tr></thead><tbody>${rows}</tbody></table></details>`;
   };

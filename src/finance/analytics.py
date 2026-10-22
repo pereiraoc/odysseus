@@ -371,6 +371,27 @@ def _shift_late(per_month: dict[str, list], months: list[str]) -> list[str]:
     return moved
 
 
+def _sub_key(description: str) -> str:
+    """Chave estavel de uma assinatura: sem parcela e sem o codigo aleatorio que muda a cada cobranca
+    ('Dropbox X3kj1h5v5m6d' e 'Dropbox Bqnxq2zb5h66' sao o mesmo Dropbox)."""
+    import re
+    from src.finance.rules import merchant
+    k = re.sub(r"\s*(parc\s*\d+|\d+/\d+)$", "", merchant(description))
+    k = " ".join(w for w in k.split() if not (len(w) >= 6 and any(ch.isdigit() for ch in w)))
+    for alias, canon in SUB_ALIASES.items():  # o banco corta/troca o nome da mesma assinatura entre meses
+        if k == alias or k.startswith(alias + " "):
+            return canon
+    return k
+
+
+SUB_ALIASES = {"dl google google": "google one", "google storage": "google one", "dl google youtub": "google youtubepremium",
+               "google youtube premium": "google youtubepremium", "ebn spotify": "spotify", "claude ai subscription": "anthropic claude sub",
+               "obsidian md": "obsidian"}
+
+
+ANNUAL_GAP_DAYS = (300, 430)  # cobrancas a cada 10-14 meses = anual
+
+
 def cost_structure(store: Store, today: str | None = None, currency: str = "BRL", n_months: int = 3) -> dict:
     import re
     from datetime import date as _date
@@ -407,12 +428,54 @@ def cost_structure(store: Store, today: str | None = None, currency: str = "BRL"
         if klass == "essencial":
             key = r["cat"]
         elif klass == "assinaturas":
-            key = re.sub(r"\s*(parc\s*\d+|\d+/\d+)$", "", merchant(r["description"])) or r["cat"]
+            key = _sub_key(r["description"]) or r["cat"]
         else:
             key = (r["cat"].split(":")[0] if r["cat"] else "sem categoria")
             if r["cat"].startswith("transferencias:pessoas"):
                 key = "pix/ted para pessoas"
         buckets[klass].setdefault(key, {}).setdefault(r["date"][:7], []).append(dict(r))
+
+    # IOF de compra no exterior de uma assinatura conta na propria assinatura (e custo dela)
+    subs = buckets["assinaturas"]
+    for grp_key in list(buckets["variavel"]):
+        if grp_key != "impostos":
+            continue
+        for mm, txs in list(buckets["variavel"][grp_key].items()):
+            keep = []
+            for x in txs:
+                k = _sub_key(x["description"])
+                if x["cat"].startswith("impostos:iof") and k in subs:
+                    subs[k].setdefault(mm, []).append(x)
+                else:
+                    keep.append(x)
+            buckets["variavel"][grp_key][mm] = keep
+
+    # assinatura ANUAL (ex.: Dropbox em fevereiro): vale 1/12 da ultima cobranca por mes, por 12 meses
+    annual: dict[str, dict] = {}
+    hist: dict[str, list] = {}
+    for r in store.db.execute(
+            "SELECT t.date, t.amount_cents, t.description, c.currency cur, coalesce(a.category,'') cat FROM transactions t"
+            " JOIN accounts c ON c.key=t.account_key JOIN annotations a ON a.anchor_key=t.anchor_key"
+            f" WHERE {where} AND (a.category LIKE 'assinaturas:%' OR a.category LIKE 'impostos:iof%') AND t.date >= ?",
+            (*wargs, (t - timedelta(days=800)).isoformat())):
+        k = _sub_key(r["description"])
+        v = conv(r["amount_cents"], r["cur"], r["date"])
+        if v is None or (r["cat"].startswith("impostos:iof") and k not in subs and k not in hist):
+            continue
+        hist.setdefault(k, []).append((r["date"], v, r["cat"]))
+    for k, h in hist.items():
+        charges = sorted({d for d, v, c in h if c.startswith("assinaturas:") and v < 0})
+        if not charges:
+            continue
+        gaps = [(_date.fromisoformat(b) - _date.fromisoformat(a)).days for a, b in zip(charges, charges[1:])]
+        last = charges[-1]
+        yearly = len(charges) >= 2 and all(ANNUAL_GAP_DAYS[0] <= g <= ANNUAL_GAP_DAYS[1] for g in gaps)
+        if yearly or (len(charges) == 1 and k in classes.get("anuais", [])):
+            age = (t - _date.fromisoformat(last)).days
+            amount = -sum(v for d, v, c in h if d == last or (c.startswith("impostos:iof") and abs((_date.fromisoformat(d) - _date.fromisoformat(last)).days) <= 25))
+            annual[k] = {"last_charge": last, "last_amount": amount, "monthly": round(amount / 12) if age <= 366 else 0,
+                         "category": next(c for d, v, c in h if c.startswith("assinaturas:"))}
+            subs.setdefault(k, {})
 
     out: dict = {"months": closed, "open_month": open_month, "currency": currency,
                  "display_currency": "BRL" if currency == ALL else currency, "classes": {}}
@@ -422,13 +485,23 @@ def cost_structure(store: Store, today: str | None = None, currency: str = "BRL"
             moved = _shift_late(per_month, window) if klass != "variavel" else []
             vals = {mm: -sum(x["amount_cents"] for x in per_month.get(mm, [])) for mm in closed}
             total = sum(vals.values())
+            ann = annual.get(key) if klass == "assinaturas" else None
+            if ann:
+                vals = {mm: ann["monthly"] for mm in closed}  # anual: 1/12 por mes, nao o mes da cobranca
+                total = ann["monthly"] * len(closed)
             if total <= 0 and klass != "variavel":
                 continue
+            cat = ann["category"] if ann else next((x["cat"] for mm in closed for x in per_month.get(mm, [])
+                                                    if not x["cat"].startswith("impostos:")), "")
             items.append({"key": key, "months": vals, "avg": round(total / len(closed)),
                           "payments": sum(len(per_month.get(mm, [])) for mm in closed), "shifted": moved,
-                          "category": next((x["cat"] for mm in closed for x in per_month.get(mm, [])), "")})
+                          "category": cat, "annual": ann})
         items.sort(key=lambda i: -i["avg"])
-        out["classes"][klass] = {"avg": sum(i["avg"] for i in items), "items": items}
+        groups: dict[str, int] = {}
+        for i in items:
+            groups[i["category"] or "outros"] = groups.get(i["category"] or "outros", 0) + i["avg"]
+        out["classes"][klass] = {"avg": sum(i["avg"] for i in items), "items": items,
+                                 "groups": dict(sorted(groups.items(), key=lambda kv: -kv[1]))}
     out["total_avg"] = sum(c["avg"] for c in out["classes"].values())
 
     # economia: o que foi para caixinhas/CDB/RDB/corretora (aplicacoes - resgates) nos mesmos meses

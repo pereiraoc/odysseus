@@ -108,3 +108,4 @@ details.fin-card > summary { cursor: pointer; }
 .fin-rev-ex { margin: 2px 0 6px; overflow-wrap: anywhere; }
 .fin-rev-a { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .fin-rev-a .fin-catedit { flex: 1; min-width: 220px; width: auto; }
+.fin-table tr.fin-subh td { padding-top: 8px; font-weight: 600; opacity: 0.85; border-bottom: 1px solid var(--border, rgba(128,128,128,0.3)); }

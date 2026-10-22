@@ -478,3 +478,24 @@ def test_merchant_and_confidence_and_user_rule(store):
     rules.add_user_rule(store, "marcia steemburgo", "debit", "moradia:diarista")
     rules.categorize(store)
     assert [i["merchant"] for i in rules.review_queue(store)["items"]] == ["padaria"]
+
+
+def test_annual_subscription_amortized_and_aliases(store):
+    import json as _json
+    from src.finance import rules
+    from src.finance.analytics import _sub_key, cost_structure
+    assert _sub_key("Dropbox X3kj1h5v5m6d") == _sub_key("Dropbox Bqnxq2zb5h66") == "dropbox"
+    assert _sub_key("Dl*Google Google") == "google one" and _sub_key("Dl*Google Youtub") == "google youtubepremium"
+    rows = [("20240205", "-616.78", "d1", "Dropbox X3kj1h5v5m6d"), ("20250205", "-722.21", "d2", "Dropbox Bqnxq2zb5h66"),
+            ("20260227", "-638.93", "d3", "Dropbox Ggsj4b29tfj4")]
+    rows += [(f"2026{m:02d}03", "-14.99", f"g{m}", "Google One" if m % 2 else "Dl*Google Google") for m in range(1, 10)]
+    ingest_bytes(store, "a.ofx", ofx("5555-1", rows))
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "arm", "priority": 650, "when": {"text_any": ["dropbox", "google one", "dl google google"]}, "then": {"category": "assinaturas:armazenamento"}}]}))
+    rules.categorize(store)
+    a = cost_structure(store, today="2026-10-21")["classes"]["assinaturas"]
+    items = {i["key"]: i for i in a["items"]}
+    assert items["dropbox"]["annual"] and items["dropbox"]["avg"] == round(63893 / 12)
+    assert items["google one"]["avg"] == 1499 and a["groups"]["assinaturas:armazenamento"] == round(63893 / 12) + 1499
