@@ -121,7 +121,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         unpaired_sum[r["date"][:7]] += abs(conv(r["amount_cents"], r["cur"], r["date"]) or 0)
     unpaired = {m for m, v in unpaired_sum.items() if v > INCOMPLETE_MIN_CENTS}
 
-    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
+    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_bonus": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
                                "fixed": 0, "variable": 0, "uncategorized": 0, "by_group": defaultdict(int), "n": 0})
     cambio_net: dict[str, int] = defaultdict(int)
     for r in rows:
@@ -151,6 +151,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
                 p["salary"] += v
             elif cat.startswith("renda:adicional"):
                 p["salary_extra"] += v
+            elif cat.startswith("renda:bonus"):  # bonus/PLR confirmado (splits.json): fora da estimativa
+                p["salary_bonus"] += v
             if not cat:
                 p["uncategorized"] += v
             continue
@@ -199,6 +201,18 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
                 p["salary_13"] = total - round(base)
             else:
                 p["salary_other"] = total - round(base)
+    # 13o liquido ~ um salario base (ate 1,2x; nov + dez). O que passar disso em dezembro sao as ferias coletivas
+    # (pagamento avulso ~dia 20 e salario de janeiro baixo): vai para ferias/outros
+    for y in sorted({m[:4] for m in per}):
+        nov, dec = per.get(f"{y}-11"), per.get(f"{y}-12")
+        got = (nov["salary_13"] if nov else 0) + (dec["salary_13"] if dec else 0)
+        cap = round(1.2 * max((x["salary_base"] for x in (nov, dec) if x), default=0))  # 1a parcela sai sem descontos
+        for x in (dec, nov):
+            if x and got > cap:
+                move = min(x["salary_13"], got - cap)
+                x["salary_13"] -= move
+                x["salary_other"] += move
+                got -= move
 
     # patrimonio de fim de mes (contas + carteiras na moeda; cartao = -ultima fatura recente)
     accs = db.execute(f"SELECT key, kind, currency FROM accounts c WHERE {where}", wargs).fetchall()
@@ -253,7 +267,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if (date_from and m < date_from[:7]) or (date_to and m > date_to[:7]):
             continue
         k = _bucket(m, group)
-        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0,
+        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_bonus": 0,
                                    "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0,
                                    "people_out": 0, "fixed": 0, "variable": 0, "uncategorized": 0,
                                    "by_group": defaultdict(int), "incomplete": False, "card_known": True,
@@ -263,7 +277,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if p is None or not p["n"]:
             continue
         b["data_months"] += 1
-        for f in ("income", "expenses", "salary", "salary_extra", "salary_base", "salary_13", "salary_other", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
+        for f in ("income", "expenses", "salary", "salary_extra", "salary_bonus", "salary_base", "salary_13", "salary_other", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
             b[f] += p[f]
         for g, v in p["by_group"].items():
             b["by_group"][g] += v

@@ -426,6 +426,8 @@ def test_salary_split_estimates_13th_and_extra(store):
     p = {x["period"]: x for x in monthly(store)["periods"]}
     assert (p["2023-04"]["salary_base"], p["2023-04"]["salary_other"]) == (500000, 400000)   # pico fora de nov/dez = extra
     assert (p["2023-11"]["salary_base"], p["2023-11"]["salary_13"]) == (500000, 600000)      # nov/dez = 13o
+    # 13o passa de 1,2 salario no ano: o excesso de dezembro e ferias coletivas
+    assert (p["2023-12"]["salary_13"], p["2023-12"]["salary_other"]) == (0, 700000)
     assert p["2023-06"]["salary_13"] == p["2023-06"]["salary_other"] == 0 and p["2023-06"]["salary_base"] == 500000
 
 
