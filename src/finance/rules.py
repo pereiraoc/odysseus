@@ -133,7 +133,7 @@ def user_rules_path(store: Store) -> Path:
 # baldes que dizem "o que" mas nao "para que": aparecem na revisao como confianca baixa
 GENERIC = ("transferencias:pessoas", "contas:boletos", "servicos:outros", "compras:geral", "renda:outros", "outros:")
 NEUTRAL = ("transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo", "ajustes:",
-           "emprestimos:")
+           "emprestimos:", "patrimonio:")
 
 
 def confidence(category: str | None, note: str | None, manual: int | None) -> str:

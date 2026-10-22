@@ -572,3 +572,19 @@ def test_split_monthly_first_then_rest_loans_and_ledger(store, tmp_path):
     if hl:
         r = subprocess.run([hl, "-f", str(tmp_path / "led" / "main.journal"), "check"], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
+
+
+def test_asset_purchase_is_neutral_and_listed(store):
+    import json as _json
+    from src.finance import rules
+    from src.finance.analytics import assets, monthly
+    ingest_bytes(store, "a.ofx", ofx("5555-1", [("20241220", "-35000.00", "c1", "Transferência enviada pelo Pix - Vendedor - x"),
+                                                ("20241221", "-50.00", "c2", "Padaria")]))
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "carro", "priority": 995, "when": {"merchant_any": ["vendedor"], "min": 34999, "max": 35001},
+         "then": {"category": "patrimonio:veiculo"}}]}))
+    rules.categorize(store)
+    assert assets(store)[0]["paid"] == 3500000
+    assert {p["period"]: p for p in monthly(store, "BRL")["periods"]}["2024-12"]["expenses"] == 5000

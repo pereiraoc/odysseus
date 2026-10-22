@@ -33,7 +33,7 @@ from src.finance.rules import INTERNAL
 from src.finance.store import Store
 
 NEUTRAL_PREFIXES = ("transferencias:interna", "transferencias:cambio", "transferencias:investimento",
-                    "financeiro:rotativo", "ajustes:", "emprestimos:")  # emprestimo dado/devolvido: nem gasto nem renda
+                    "financeiro:rotativo", "ajustes:", "emprestimos:", "patrimonio:")  # emprestimo dado/devolvido e compra de bem (carro): nem gasto nem renda
 PEOPLE = "transferencias:pessoas"
 FIXED_PREFIXES = ("moradia:", "assinaturas:", "financeiro:tarifas", "contas:")
 CARD_STALE_DAYS = 45
@@ -329,7 +329,7 @@ DEFAULT_COST_CLASSES = {
                   "educacao:mensalidade"],
     "assinaturas": ["assinaturas:"],
     "ignorar": ["transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo",
-                "ajustes:", "renda:", "emprestimos:"],
+                "ajustes:", "renda:", "emprestimos:", "patrimonio:"],
 }
 
 
@@ -620,3 +620,21 @@ def loans(store: Store) -> list[dict]:
     for o in out.values():
         o["outstanding"] = o["lent"] - o["repaid"]
     return sorted(out.values(), key=lambda o: -o["outstanding"])
+
+
+def assets(store: Store) -> list[dict]:
+    """Bens comprados (categoria patrimonio:<bem>): valor pago (compra - venda), sem depreciacao."""
+    _, _, conv, _ = _amounts(store, ALL)
+    out: dict[str, dict] = {}
+    for r in store.db.execute(
+            "SELECT t.category cat, t.date, t.amount_cents, t.description, c.currency cur FROM tx_lines t"
+            " JOIN accounts c ON c.key=t.account_key WHERE t.category LIKE 'patrimonio:%' ORDER BY t.date"):
+        v = conv(r["amount_cents"], r["cur"], r["date"])
+        if v is None:
+            continue
+        o = out.setdefault(r["cat"], {"category": r["cat"], "what": r["cat"].split(":", 1)[1], "paid": 0,
+                                      "first": r["date"], "last": r["date"], "n": 0})
+        o["paid"] -= v
+        o["last"] = r["date"]
+        o["n"] += 1
+    return sorted(out.values(), key=lambda o: -o["paid"])

@@ -189,6 +189,11 @@ async function renderOverview(pane) {
       <div class="fin-acc-h">A receber · ${esc(cap(l.who))}</div>
       <div class="fin-acc-v ${l.outstanding < 0 ? 'neg' : ''}">${money(l.outstanding, 'BRL')}</div>
       <div class="fin-acc-s">emprestado ${money(l.lent, 'BRL')} · devolvido ${money(l.repaid, 'BRL')} · ${day(l.first)} → ${day(l.last)}</div>
+    </div>`).join('') + (m.assets || []).filter(a => a.paid).map(a => `
+    <div class="fin-acc" title="categoria ${esc(a.category)}: fica fora de gasto e renda (é patrimônio)">
+      <div class="fin-acc-h">Bem · ${esc(cap(a.what))}</div>
+      <div class="fin-acc-v">${money(a.paid, 'BRL')}</div>
+      <div class="fin-acc-s">valor pago, sem depreciação · ${a.n} pagamento(s) · ${day(a.first)}${a.last !== a.first ? ` → ${day(a.last)}` : ''}</div>
     </div>`).join('');
   pane.innerHTML = `${conn}<div class="fin-costs"><div class="fin-empty">Calculando custo mensal…</div></div><div class="fin-accs">${invCards}${loanCards}${cards}</div><div class="fin-invlist"></div>
     <div class="fin-card"><div class="fin-card-h">Saldo no fim de cada mês <select class="fin-cur"></select><span class="fin-hint">uma moeda por vez; lacunas conhecidas já ajustadas</span></div><div class="fin-chart"></div></div>`;

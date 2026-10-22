@@ -182,7 +182,7 @@ def setup_finance_routes() -> APIRouter:
 
     @router.get("/meta")
     def meta(_user: str = Depends(require_user)):
-        from src.finance.analytics import loans
+        from src.finance.analytics import assets, loans
         store = _store()
         try:
             accounts = _account_rows(store)
@@ -198,7 +198,7 @@ def setup_finance_routes() -> APIRouter:
                         " FROM investments i JOIN investment_snapshots s ON s.investment_id=i.id"
                         " WHERE s.date = (SELECT max(date) FROM investment_snapshots WHERE investment_id=i.id)"
                         " GROUP BY i.institution, i.currency")],
-                    "loans": loans(store),
+                    "loans": loans(store), "assets": assets(store),
                     "wise_configured": bool(os.environ.get("WISE_API_TOKEN"))}
         finally:
             store.close()
