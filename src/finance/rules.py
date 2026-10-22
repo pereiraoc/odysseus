@@ -45,6 +45,7 @@ _MERCHANT = [
     re.compile(r"^compra no d[eé]bito(?: via nupay)? - (.+)$", re.I),
     re.compile(r"^transfer[eê]ncia (?:enviada|recebida)(?: pelo pix)? - (.+?)(?: - .*)?$", re.I),
     re.compile(r"^(?:pix enviado|pix recebido)[^|]*\| (.+)$", re.I),
+    re.compile(r"^pix (?:enviado|recebido)(?: outra inst)?(?: -? ?(?:dif tit|mesma tit|mesmatit))?\s+(?!\|)(.+)$", re.I),  # 'PIX RECEBIDO Suelen Valentini' (Santander antigo)
     re.compile(r"^(?:ted|doc|transferencia|a doc|emissao de doc)[^|]*\| (.+)$", re.I),
     re.compile(r"^enviou dinheiro para (.+)$", re.I),
     re.compile(r"^recebeu dinheiro de (.+?)(?: com a refer.*)?$", re.I),
@@ -267,16 +268,77 @@ def uncategorized(store: Store, limit: int = 200) -> list[dict]:
     return sorted(groups.values(), key=lambda g: (-g["count"], g["sum_cents"]))[:limit]
 
 
-def add_user_rule(store: Store, merchant_key: str, sign: str, category: str, institution: str | None = None) -> dict:
+RECUR_MIN_COUNT, RECUR_MIN_MONTHS = 3, 3
+
+
+def recurring_clusters(txs: list[tuple[str, int]]) -> tuple[list[dict], list[int]]:
+    """txs = [(data, valor absoluto em centavos)]. Agrupa valores iguais ou parecidos (ate 10% ou R$ 5) que se
+    repetem em >= 3 meses diferentes. Retorna (clusters, indices que sobraram = valores avulsos)."""
+    from statistics import median
+    order = sorted(range(len(txs)), key=lambda i: txs[i][1])
+    groups: list[list[int]] = []
+    for i in order:
+        v = txs[i][1]
+        if groups:
+            med = median(txs[j][1] for j in groups[-1])
+            if abs(v - med) <= max(500, 0.10 * med):
+                groups[-1].append(i)
+                continue
+        groups.append([i])
+    # valores vizinhos que se sobrepoem (R$ 53 e R$ 60 com tolerancia) sao o mesmo recorrente: junta
+    merged: list[list[int]] = []
+    for g in groups:
+        if merged:
+            prev = merged[-1]
+            pmax = max(txs[i][1] for i in prev)
+            pmed = median(txs[i][1] for i in prev)
+            gmin = min(txs[i][1] for i in g)
+            if gmin - pmax <= max(500, 0.10 * pmed) and len(prev) >= 2 and len(g) >= 2:
+                prev.extend(g)
+                continue
+        merged.append(list(g))
+    groups = merged
+    clusters, rest = [], []
+    for g in groups:
+        months = {txs[i][0][:7] for i in g}
+        if len(g) >= RECUR_MIN_COUNT and len(months) >= RECUR_MIN_MONTHS:
+            vals = sorted(txs[i][1] for i in g)
+            med = median(vals)
+            tol = max(500, round(0.10 * med))
+            span = (len({m for m in months}))
+            first, last = min(txs[i][0] for i in g), max(txs[i][0] for i in g)
+            n_months = max(1, (int(last[:4]) - int(first[:4])) * 12 + int(last[5:7]) - int(first[5:7]) + 1)
+            freq = "mensal" if 0.6 <= span / n_months and len(g) <= n_months * 1.5 else ("varias por mes" if len(g) > n_months * 1.5 else "irregular")
+            clusters.append({"members": g, "typical": round(med), "min": max(0, vals[0] - tol), "max": vals[-1] + tol,
+                             "months": span, "frequency": freq})
+        else:
+            rest.extend(g)
+    # faixas vizinhas nunca se sobrepoem: corta no meio entre os valores reais (um valor = uma regra)
+    clusters.sort(key=lambda c: c["typical"])
+    for a, b in zip(clusters, clusters[1:]):
+        if a["max"] >= b["min"]:
+            hi_a = max(txs[i][1] for i in a["members"])
+            lo_b = min(txs[i][1] for i in b["members"])
+            cut = (hi_a + lo_b) // 2
+            a["max"], b["min"] = cut, cut + 1
+    return clusters, rest
+
+
+def add_user_rule(store: Store, merchant_key: str, sign: str, category: str, institution: str | None = None,
+                  amount_min: int | None = None, amount_max: int | None = None) -> dict:
     """Uma escolha na revisao vira regra permanente (vale para o passado e o futuro desse estabelecimento/pessoa)."""
     path = user_rules_path(store)
     rules = _read(path)
     slug = re.sub(r"[^a-z0-9]+", "-", norm_desc(merchant_key))[:50].strip("-")
-    rid = f"u-{slug}-{sign}" + (f"-{institution}" if institution else "")
+    band = amount_min is not None and amount_max is not None
+    rid = f"u-{slug}-{sign}" + (f"-{institution}" if institution else "") + (f"-{amount_min}-{amount_max}" if band else "")
     when = {"merchant_any": [merchant_key], "sign": sign}
     if institution:
         when["institution"] = institution
-    rule = {"id": rid, "priority": 990, "when": when, "then": {"category": category}, "created": now(), "origem": "revisao"}
+    if band:  # so esse valor recorrente (ex.: futebol R$ 150); outros Pix para a mesma pessoa ficam de fora
+        when["min"], when["max"] = amount_min / 100, amount_max / 100
+    rule = {"id": rid, "priority": 995 if band else 990, "when": when, "then": {"category": category}, "created": now(),
+            "origem": "revisao"}
     rules = [r for r in rules if r["id"] != rid] + [rule]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"rules": rules}, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -313,6 +375,7 @@ def review_queue(store: Store, since: str = "", limit: int = 100) -> dict:
         sign = "debit" if v < 0 else "credit"
         key = merchant(r["description"]) or norm_desc(r["description"])
         g = groups[(key, sign)]
+        g.setdefault("txs", []).append((r["date"], abs(v), r["category"] or "", r["description"]))
         g["count"] += 1
         g["impact"] += abs(v)
         g["net"] += v
@@ -326,13 +389,36 @@ def review_queue(store: Store, since: str = "", limit: int = 100) -> dict:
         if r["id"] in extras:
             g["provider"][extras[r["id"]]["category"]] += 1
     items = []
+
+    def make(key, sign, g, txs, extra=None):
+        cats: dict[str, int] = defaultdict(int)
+        for t in txs:
+            cats[t[2]] += 1
+        cats_s = sorted(cats.items(), key=lambda kv: -kv[1])
+        ex = []
+        for t in txs:
+            if t[3] not in ex and len(ex) < 3:
+                ex.append(t[3])
+        return {"merchant": key, "sign": sign, "count": len(txs), "impact": sum(t[1] for t in txs),
+                "net": sum(t[1] for t in txs) * (-1 if sign == "debit" else 1),
+                "current": cats_s[0][0] if cats_s else "", "categories": dict(cats_s),
+                "confidence": "sem" if "sem" in g["confidence"] else ("baixa" if "baixa" in g["confidence"] else "media"),
+                "examples": ex, "first": min(t[0] for t in txs), "last": max(t[0] for t in txs), "accounts": sorted(g["accounts"]),
+                "provider_category": max(g["provider"], key=g["provider"].get) if g["provider"] else None, **(extra or {})}
+
     for (key, sign), g in groups.items():
-        cats = sorted(g["categories"].items(), key=lambda kv: -kv[1])
-        items.append({"merchant": key, "sign": sign, "count": g["count"], "impact": g["impact"], "net": g["net"],
-                      "current": cats[0][0] if cats else "", "categories": dict(cats),
-                      "confidence": "sem" if "sem" in g["confidence"] else ("baixa" if "baixa" in g["confidence"] else "media"),
-                      "examples": g["examples"], "first": g["first"], "last": g["last"], "accounts": sorted(g["accounts"]),
-                      "provider_category": max(g["provider"], key=g["provider"].get) if g["provider"] else None})
+        txs = g["txs"]
+        # pessoa (Pix/TED): separa o valor recorrente (mesmo valor todo mes) dos envios avulsos
+        if any(t[2].startswith("transferencias:pessoas") or not t[2] for t in txs) and len(txs) >= RECUR_MIN_COUNT:
+            clusters, rest = recurring_clusters([(t[0], t[1]) for t in txs])
+            for c in clusters:
+                items.append(make(key, sign, g, [txs[i] for i in c["members"]],
+                                  {"band": {"min": c["min"], "max": c["max"], "typical": c["typical"]},
+                                   "recurring": {"months": c["months"], "frequency": c["frequency"]}}))
+            if rest:
+                items.append(make(key, sign, g, [txs[i] for i in rest], {"rest_of_recurring": bool(clusters)}))
+            continue
+        items.append(make(key, sign, g, txs))
     items.sort(key=lambda i: -i["impact"])
     tot_all = sum(v[1] for v in totals.values()) or 1
     return {"items": items[:limit], "groups": len(items),

@@ -85,3 +85,20 @@ def test_review_and_assign(client):
     r = client.post("/api/finance/review/assign", json={"merchant": "marcia steemburgo", "sign": "debit", "category": "Moradia: Diarista"}).json()
     assert r["hits"] == 1 and r["rule"]["then"]["category"] == "moradia:diarista"
     assert [i["merchant"] for i in client.get("/api/finance/review", params={"months": 0}).json()["items"]] == ["padaria"]
+
+
+def test_review_assign_band(client):
+    rows = [(f"2026{m:02d}10", "-150.00", f"f{m}", "Transferência enviada pelo Pix - Cristieli Santos - x") for m in range(1, 5)]
+    rows += [("20260322", "-999.00", "o1", "Transferência enviada pelo Pix - Cristieli Santos - x")]
+    client.post("/api/finance/import", files=[("files", ("a.ofx", ofx("9-9", rows, bal=("20260430", "0.00")), "x"))])
+    import routes.finance_routes  # noqa: F401
+    from src.finance.store import Store
+    st = Store()
+    (st.root / "ledger").mkdir(exist_ok=True)
+    (st.root / "ledger" / "rules.json").write_text('{"rules": [{"id": "p", "priority": 100, "when": {"text_any": ["pix"]}, "then": {"category": "transferencias:pessoas"}}]}')
+    st.close()
+    client.post("/api/finance/import", files=[("files", ("a.ofx", ofx("9-9", rows, bal=("20260430", "0.00")), "x"))])
+    rec = [i for i in client.get("/api/finance/review", params={"months": 0}).json()["items"] if i.get("band")][0]
+    r = client.post("/api/finance/review/assign", json={"merchant": rec["merchant"], "sign": "debit", "category": "lazer:futebol",
+                                                         "amount_min": rec["band"]["min"], "amount_max": rec["band"]["max"]}).json()
+    assert r["hits"] == 4  # o avulso de R$ 999 nao entra

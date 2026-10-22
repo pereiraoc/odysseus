@@ -168,6 +168,8 @@ class ReviewAssign(BaseModel):
     merchant: str
     sign: str            # 'debit' (saida) | 'credit' (entrada)
     category: str
+    amount_min: Optional[int] = None   # centavos: so o valor recorrente dessa faixa (ex.: futebol R$ 150)
+    amount_max: Optional[int] = None
 
 
 class Decision(BaseModel):
@@ -419,7 +421,8 @@ def setup_finance_routes() -> APIRouter:
             def work():
                 store = _store()
                 try:
-                    rule = rules.add_user_rule(store, body.merchant.strip(), body.sign, cat)
+                    rule = rules.add_user_rule(store, body.merchant.strip(), body.sign, cat,
+                                               amount_min=body.amount_min, amount_max=body.amount_max)
                     res = rules.categorize(store)
                     rules.pair_transfers(store)
                     from src.finance.ledger import export

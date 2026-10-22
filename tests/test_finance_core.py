@@ -499,3 +499,29 @@ def test_annual_subscription_amortized_and_aliases(store):
     items = {i["key"]: i for i in a["items"]}
     assert items["dropbox"]["annual"] and items["dropbox"]["avg"] == round(63893 / 12)
     assert items["google one"]["avg"] == 1499 and a["groups"]["assinaturas:armazenamento"] == round(63893 / 12) + 1499
+
+
+def test_recurring_transfer_cluster_gets_own_rule(store):
+    from src.finance import rules
+    rows = [(f"2026{m:02d}10", "-150.00", f"f{m}", "Transferência enviada pelo Pix - Cristieli Santos - x") for m in range(1, 6)]
+    rows += [("20260320", "-37.00", "o1", "Transferência enviada pelo Pix - Cristieli Santos - x"),
+             ("20260325", "-1200.00", "o2", "Transferência enviada pelo Pix - Cristieli Santos - x")]
+    ingest_bytes(store, "a.ofx", ofx("5555-1", rows))
+    dedup.rebuild(store)
+    (store.root / "ledger").mkdir(exist_ok=True)
+    (store.root / "ledger" / "rules.json").write_text('{"rules": [{"id": "pessoas", "priority": 100, "when": {"text_any": ["pix"]}, "then": {"category": "transferencias:pessoas"}}]}')
+    rules.categorize(store)
+    items = rules.review_queue(store)["items"]
+    rec = [i for i in items if i.get("band")]
+    assert len(rec) == 1 and rec[0]["count"] == 5 and rec[0]["band"]["typical"] == 15000 and rec[0]["recurring"]["frequency"] == "mensal"
+    assert any(i.get("rest_of_recurring") and i["count"] == 2 for i in items)
+    b = rec[0]["band"]
+    rules.add_user_rule(store, "cristieli santos", "debit", "lazer:futebol", amount_min=b["min"], amount_max=b["max"])
+    rules.categorize(store)
+    cats = [r[0] for r in store.db.execute("SELECT n.category FROM transactions t JOIN annotations n USING (anchor_key) ORDER BY t.date")]
+    assert cats.count("lazer:futebol") == 5 and cats.count("transferencias:pessoas") == 2  # avulsos ficam de fora
+
+
+def test_merchant_old_santander_pix_without_separator():
+    from src.finance import rules
+    assert rules.merchant("PIX RECEBIDO Suelen Valentini") == rules.merchant("Transferência Recebida|Suélen Valentini") == "suelen valentini"

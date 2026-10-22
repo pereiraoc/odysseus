@@ -631,7 +631,7 @@ async function renderMonthly(pane) {
 
 
 // ── aba Revisar ─────────────────────────────────────────────────────────
-const QUICK = ['moradia:diarista', 'moradia:aluguel', 'presentes:pessoas', 'reembolso:recebido', 'reembolso:pago', 'divisao:contas-compartilhadas',
+const QUICK = ['lazer:futebol', 'lazer:esporte', 'moradia:diarista', 'moradia:divisao-aluguel', 'moradia:aluguel', 'presentes:pessoas', 'reembolso:recebido', 'reembolso:pago', 'divisao:contas-compartilhadas',
   'transferencias:interna', 'renda:freelance', 'renda:outros', 'saude:consultas', 'educacao:cursos', 'impostos:taxas', 'alimentacao:restaurante',
   'compras:geral', 'servicos:profissionais'];
 const CONF = { sem: ['sem categoria', 'warn'], baixa: ['genérica', 'warn'], media: ['do Open Finance', ''] };
@@ -657,18 +657,20 @@ async function renderReview(pane) {
       <div class="fin-kpi"><div class="fin-kpi-l">Sem categoria</div><div class="fin-kpi-v">${pct('sem')}</div><div class="fin-kpi-s">${t.sem?.count || 0} transações</div></div>
     </div>
     <div class="fin-dim fin-defs" style="margin-bottom:8px">Percentuais sobre o valor de ganhos e gastos no período (transferências entre suas contas, câmbio e aplicações ficam fora: não precisam de categoria).
-      Escolher uma categoria aqui vale para <b>todas</b> as transações dessa pessoa/estabelecimento nessa direção — passadas e futuras (vira regra sua em data/finance/ledger/rules_user.json).</div>
+      Escolher uma categoria aqui vale para <b>todas</b> as transações do item, passadas e futuras (vira regra sua em data/finance/ledger/rules_user.json). Valores <b>recorrentes</b> de uma pessoa (mesmo valor em vários meses, ex.: futebol R$ 150) são um item à parte: a categoria vale só para aquela faixa de valor, e outros Pix para a mesma pessoa continuam separados.</div>
     <div class="fin-rev">${d.items.map((i, n) => `
       <div class="fin-rev-i" data-n="${n}">
         <div class="fin-rev-h"><b>${esc(i.merchant || '(sem descrição)')}</b>
           <span class="fin-chip">${i.sign === 'debit' ? 'saída' : 'entrada'}</span>
+          ${i.band ? `<span class="fin-chip ok" title="mesmo valor (ou parecido) se repetindo: a categoria vale só para valores entre ${money(i.band.min, 'BRL')} e ${money(i.band.max, 'BRL')}">recorrente ~${money(i.band.typical, 'BRL')}${i.recurring.frequency === 'mensal' ? '/mês' : ''} · ${i.recurring.months} meses</span>` : ''}
+          ${i.rest_of_recurring ? '<span class="fin-chip" title="os valores recorrentes dessa pessoa estão em itens separados">outros valores (avulsos)</span>' : ''}
           <span class="fin-chip ${CONF[i.confidence][1]}">${CONF[i.confidence][0]}${i.current ? ': ' + esc(i.current) : ''}</span>
           <span class="fin-rev-v ${i.sign === 'debit' ? 'neg' : 'pos'}">${money(i.sign === 'debit' ? -i.impact : i.impact, 'BRL')}</span></div>
         <div class="fin-dim">${i.count}× · ${day(i.first)} → ${day(i.last)} · ${esc(i.accounts.join(', '))}${i.provider_category ? ` · Open Finance diz: ${esc(i.provider_category)}` : ''}</div>
         <div class="fin-dim fin-rev-ex">${i.examples.map(esc).join(' · ')}</div>
         <div class="fin-rev-a">
           <input class="fin-catedit" list="fin-cat-list" placeholder="grupo:sub — ex.: moradia:diarista" value="${esc(i.confidence === 'media' ? i.current : '')}">
-          <button class="fin-btn fin-rev-ok">aplicar a ${i.count === 1 ? 'esta' : 'todas (' + i.count + ')'}</button>
+          <button class="fin-btn fin-rev-ok">${i.band ? `aplicar a esse valor (${i.count}× e futuras)` : i.rest_of_recurring ? `aplicar aos avulsos (${i.count})` : `aplicar a ${i.count === 1 ? 'esta' : 'todas (' + i.count + ')'}`}</button>
           ${i.current && i.confidence !== 'sem' ? `<button class="fin-btn fin-rev-keep" title="a categoria atual está certa: confirma e tira da fila">confirmar ${esc(i.current)}</button>` : ''}
         </div>
       </div>`).join('') || '<div class="fin-empty">Nada para revisar nesse período 🎉</div>'}</div>`;
@@ -678,7 +680,7 @@ async function renderReview(pane) {
     if (!category.trim()) { showError('Escolha uma categoria (ex.: moradia:diarista)'); return; }
     el.querySelectorAll('button').forEach(b => { b.disabled = true; });
     const r = await fetch(`${API}/review/assign`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ merchant: i.merchant, sign: i.sign, category }) });
+      body: JSON.stringify({ merchant: i.merchant, sign: i.sign, category, ...(i.band ? { amount_min: i.band.min, amount_max: i.band.max } : {}) }) });
     if (!r.ok) { showError(`Finanças: ${(await r.text()).slice(0, 200)}`); el.querySelectorAll('button').forEach(b => { b.disabled = false; }); return; }
     const res = await r.json();
     el.classList.add('done');
