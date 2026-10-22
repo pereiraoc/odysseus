@@ -33,7 +33,7 @@ from src.finance.rules import INTERNAL
 from src.finance.store import Store
 
 NEUTRAL_PREFIXES = ("transferencias:interna", "transferencias:cambio", "transferencias:investimento",
-                    "financeiro:rotativo", "ajustes:")
+                    "financeiro:rotativo", "ajustes:", "emprestimos:")  # emprestimo dado/devolvido: nem gasto nem renda
 PEOPLE = "transferencias:pessoas"
 FIXED_PREFIXES = ("moradia:", "assinaturas:", "financeiro:tarifas", "contas:")
 CARD_STALE_DAYS = 45
@@ -102,9 +102,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
     db = store.db
     where, wargs, conv, converter = _amounts(store, currency)
     raw_rows = db.execute(
-        "SELECT t.id, t.date, t.amount_cents, coalesce(a.category, '') cat, c.currency cur FROM transactions t"
-        " JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
-        f" WHERE {where}", wargs).fetchall()
+        "SELECT t.id, t.date, t.amount_cents, coalesce(t.category, '') cat, c.currency cur FROM tx_lines t"
+        f" JOIN accounts c ON c.key=t.account_key WHERE {where}", wargs).fetchall()
     rows, unconverted = [], 0
     for r in raw_rows:
         v = conv(r["amount_cents"], r["cur"], r["date"])
@@ -326,10 +325,11 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
 # custo mensal: essencial fixo x assinaturas x variavel (media dos ultimos 3 meses FECHADOS)
 DEFAULT_COST_CLASSES = {
     "essencial": ["moradia:aluguel", "moradia:condominio", "moradia:energia", "moradia:agua", "moradia:gas",
-                  "moradia:telefone-internet", "moradia:contas", "financeiro:seguros", "saude:plano", "educacao:mensalidade"],
+                  "moradia:telefone-internet", "moradia:contas", "moradia:rateio", "financeiro:seguros", "saude:plano",
+                  "educacao:mensalidade"],
     "assinaturas": ["assinaturas:"],
     "ignorar": ["transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo",
-                "ajustes:", "renda:"],
+                "ajustes:", "renda:", "emprestimos:"],
 }
 
 
@@ -410,9 +410,8 @@ def cost_structure(store: Store, today: str | None = None, currency: str = "BRL"
     where, wargs, conv, _ = _amounts(store, currency)
     rows = []
     for r in store.db.execute(
-            "SELECT t.id, t.date, t.amount_cents, t.description, coalesce(a.category, '') cat, c.currency cur FROM transactions t"
-            " JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
-            f" WHERE {where} AND t.date >= ? AND t.date < ?",
+            "SELECT t.id, t.date, t.amount_cents, t.description, coalesce(t.category, '') cat, c.currency cur FROM tx_lines t"
+            f" JOIN accounts c ON c.key=t.account_key WHERE {where} AND t.date >= ? AND t.date < ?",
             (*wargs, closed[0] + "-01", _month_ends(open_month, open_month)[0] + "T")).fetchall():
         v = conv(r["amount_cents"], r["cur"], r["date"])
         if v is not None:
@@ -489,8 +488,8 @@ def cost_structure(store: Store, today: str | None = None, currency: str = "BRL"
             if ann:
                 vals = {mm: ann["monthly"] for mm in closed}  # anual: 1/12 por mes, nao o mes da cobranca
                 total = ann["monthly"] * len(closed)
-            if total <= 0 and klass != "variavel":
-                continue
+            if total == 0 or (total < 0 and klass == "assinaturas"):
+                continue  # essencial negativo fica: e abatimento (ex.: moradia:rateio, a parte que outra pessoa paga)
             cat = ann["category"] if ann else next((x["cat"] for mm in closed for x in per_month.get(mm, [])
                                                     if not x["cat"].startswith("impostos:")), "")
             items.append({"key": key, "months": vals, "avg": round(total / len(closed)),
@@ -601,3 +600,23 @@ def open_bill(store: Store) -> list[dict]:
         out.append({"account": account_ref(doc["institution"], doc["account"]).key, "as_of": doc.get("item_last_updated"),
                     "purchases": purchases, "credits": credits, "count": len(pend)})
     return out
+
+
+def loans(store: Store) -> list[dict]:
+    """Emprestimos que voce fez (categoria emprestimos:<pessoa>): saiu (-) = emprestado, entrou (+) = devolvido."""
+    _, _, conv, _ = _amounts(store, ALL)
+    out: dict[str, dict] = {}
+    for r in store.db.execute(
+            "SELECT t.category cat, t.date, t.amount_cents, c.currency cur FROM tx_lines t JOIN accounts c ON c.key=t.account_key"
+            " WHERE t.category LIKE 'emprestimos:%' ORDER BY t.date"):
+        v = conv(r["amount_cents"], r["cur"], r["date"])
+        if v is None:
+            continue
+        o = out.setdefault(r["cat"], {"category": r["cat"], "who": r["cat"].split(":", 1)[1], "lent": 0, "repaid": 0,
+                                      "first": r["date"], "last": r["date"], "n": 0})
+        o["lent" if v < 0 else "repaid"] += abs(v)
+        o["last"] = r["date"]
+        o["n"] += 1
+    for o in out.values():
+        o["outstanding"] = o["lent"] - o["repaid"]
+    return sorted(out.values(), key=lambda o: -o["outstanding"])

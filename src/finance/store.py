@@ -7,6 +7,7 @@ Camadas:
   transactions/tx_links livro canonico DERIVADO: dedup.rebuild() recria do zero
   merge_decisions       decisoes manuais da fila de revisao (sobrevivem ao rebuild)
   annotations           categoria/nota por anchor_key estavel (sobrevive ao rebuild)
+  splits / tx_lines     transacao dividida em varias categorias (ex.: parte moradia, parte emprestimo)
 """
 from __future__ import annotations
 
@@ -72,6 +73,20 @@ CREATE TABLE IF NOT EXISTS transfer_pairs (tx_a INTEGER NOT NULL, tx_b INTEGER N
 CREATE TABLE IF NOT EXISTS annotations (
   anchor_key TEXT PRIMARY KEY, category TEXT, note TEXT, manual INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
 );
+-- transacao dividida em categorias (splits.py; derivado de ledger/splits.json, recriado a cada categorize)
+CREATE TABLE IF NOT EXISTS splits (
+  anchor_key TEXT NOT NULL, seq INTEGER NOT NULL, category TEXT NOT NULL, amount_cents INTEGER NOT NULL, note TEXT,
+  PRIMARY KEY (anchor_key, seq)
+);
+-- uma linha por (transacao x categoria): para somar por categoria. Categoria manual vence a divisao.
+CREATE VIEW IF NOT EXISTS tx_lines AS
+  SELECT t.id, t.anchor_key, t.account_key, t.date, t.amount_cents, t.description, a.category, a.note, a.manual
+  FROM transactions t LEFT JOIN annotations a ON a.anchor_key=t.anchor_key
+  WHERE coalesce(a.manual, 0)=1 OR NOT EXISTS (SELECT 1 FROM splits s WHERE s.anchor_key=t.anchor_key)
+  UNION ALL
+  SELECT t.id, t.anchor_key, t.account_key, t.date, s.amount_cents, t.description, s.category, s.note, 0
+  FROM transactions t JOIN splits s ON s.anchor_key=t.anchor_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key
+  WHERE coalesce(a.manual, 0)=0;
 """
 
 

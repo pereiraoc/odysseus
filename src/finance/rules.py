@@ -68,7 +68,7 @@ def merchant(desc: str) -> str:
         if m:
             d = m.group(1)
             break
-    d = re.sub(r"\s-\s\d{1,2}/\d{1,2}$", "", d)          # parcela ' - 3/10'
+    d = re.sub(r"\s(?:-\s)?\d{1,2}/\d{1,2}$", "", d)    # parcela ' - 3/10' / ' 3/10'
     d = re.sub(r"^antecipada - ", "", d, flags=re.I)
     return norm_desc(d)
 
@@ -132,7 +132,8 @@ def user_rules_path(store: Store) -> Path:
 
 # baldes que dizem "o que" mas nao "para que": aparecem na revisao como confianca baixa
 GENERIC = ("transferencias:pessoas", "contas:boletos", "servicos:outros", "compras:geral", "renda:outros", "outros:")
-NEUTRAL = ("transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo", "ajustes:")
+NEUTRAL = ("transferencias:interna", "transferencias:cambio", "transferencias:investimento", "financeiro:rotativo", "ajustes:",
+           "emprestimos:")
 
 
 def confidence(category: str | None, note: str | None, manual: int | None) -> str:
@@ -216,6 +217,8 @@ def categorize(store: Store, rules: list[Rule] | None = None, dry_run: bool = Fa
         db.executemany("INSERT INTO annotations (anchor_key, category, note, manual, updated_at) VALUES (?,?,?,0,?)",
                        [(a, c, f"regra:{rid}", now()) for a, c, rid in results if c])
         db.commit()
+        from src.finance import splits
+        splits.apply(store)  # divisoes (ledger/splits.json) por cima das regras
     total = len(results) + len(manual)
     done = sum(1 for _, c, _ in results if c) + len(manual)
     return {"transactions": total, "categorized": done, "manual": len(manual),

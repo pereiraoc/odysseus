@@ -47,12 +47,15 @@ def export(store: Store, out_dir: Path | None = None, commit: bool = True) -> di
                         " FROM transactions t ORDER BY t.date, t.id"):
         acc = accounts[t["account_key"]]
         cur = acc["currency"]
-        ann = db.execute("SELECT category FROM annotations WHERE anchor_key=?", (t["anchor_key"],)).fetchone()
-        other = f"categorias:{ann['category']}" if ann and ann["category"] else "categorias:a-categorizar"
+        lines = db.execute("SELECT category, amount_cents FROM tx_lines WHERE anchor_key=? ORDER BY amount_cents",
+                           (t["anchor_key"],)).fetchall()
         text = (f"{t['date']} {_clean(t['description'])}\n"
                 f"    ; src:{(t['src'] or '').replace(' ', ',')}\n"
-                f"    {account_name(acc)}    {fmt_cents(t['amount_cents'])} {cur}\n"
-                f"    {other}\n")
+                f"    {account_name(acc)}    {fmt_cents(t['amount_cents'])} {cur}\n")
+        if len(lines) > 1:  # dividida (splits.json): uma postagem por parte
+            text += "".join(f"    categorias:{ln['category']}    {fmt_cents(-ln['amount_cents'])} {cur}\n" for ln in lines)
+        else:
+            text += f"    categorias:{lines[0]['category']}\n" if lines and lines[0]["category"] else "    categorias:a-categorizar\n"
         entries[t["date"][:4]].append((t["date"], 0, text))
 
     gaps = 0
@@ -89,7 +92,7 @@ def export(store: Store, out_dir: Path | None = None, commit: bool = True) -> di
     used_accounts = {"ajustes:lacunas", "patrimonio:saldo-inicial", "categorias:a-categorizar"}
     used_accounts |= {account_name(a) for a in accounts.values()}
     used_accounts |= {f"categorias:{r['category']}" for r in db.execute(
-        "SELECT DISTINCT category FROM annotations WHERE category IS NOT NULL")}
+        "SELECT DISTINCT category FROM tx_lines WHERE category IS NOT NULL")}
     currencies = sorted({a["currency"] for a in accounts.values()})
     decls = "".join(f"commodity 1000.00 {c}\n" for c in currencies) + "".join(f"account {a}\n" for a in sorted(used_accounts))
     for y in years:

@@ -182,6 +182,7 @@ def setup_finance_routes() -> APIRouter:
 
     @router.get("/meta")
     def meta(_user: str = Depends(require_user)):
+        from src.finance.analytics import loans
         store = _store()
         try:
             accounts = _account_rows(store)
@@ -197,6 +198,7 @@ def setup_finance_routes() -> APIRouter:
                         " FROM investments i JOIN investment_snapshots s ON s.investment_id=i.id"
                         " WHERE s.date = (SELECT max(date) FROM investment_snapshots WHERE investment_id=i.id)"
                         " GROUP BY i.institution, i.currency")],
+                    "loans": loans(store),
                     "wise_configured": bool(os.environ.get("WISE_API_TOKEN"))}
         finally:
             store.close()
@@ -455,9 +457,8 @@ def setup_finance_routes() -> APIRouter:
                 where += " AND t.date <= ?"; args.append(date_to)
             cats: dict[str, dict] = {}
             for r in store.db.execute(
-                    "SELECT coalesce(a.category, '(sem)') cat, t.date, t.amount_cents, c.currency cur FROM transactions t"
-                    " JOIN accounts c ON c.key=t.account_key LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
-                    f" WHERE {where}", args):
+                    "SELECT coalesce(t.category, '(sem)') cat, t.date, t.amount_cents, c.currency cur FROM tx_lines t"
+                    f" JOIN accounts c ON c.key=t.account_key WHERE {where}", args):
                 v = conv(r["amount_cents"], r["cur"], r["date"]) if currency else r["amount_cents"]
                 if v is None:
                     continue

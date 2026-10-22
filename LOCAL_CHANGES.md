@@ -239,6 +239,9 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
   Poller em thread própria (a cada 3h, `FINANCE_POLL_SECONDS`; desliga com `FINANCE_POLLER=0`), só baixa quando
   o banco atualizou (`lastUpdatedAt`); leitura completa semanal. Investimentos viram `investment_snapshots`.
   Spike/diagnóstico: `./venv/bin/python -m src.finance.pluggy_probe`.
+- Categorias: regras em `data/finance/ledger/rules.json` + `rules_user.json` (aba Revisar); divisão de uma
+  transação em categorias (`splits.py`, `ledger/splits.json`, view `tx_lines`), p.ex. parte moradia + parte
+  devolução de empréstimo; `emprestimos:<pessoa>` é neutro (nem gasto nem renda) e vira "A receber".
 - CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse|wise-sync|uncategorized`.
 - **Reprocessar tudo (`reparse`) só dentro do container** (`docker exec -u 1000 odysseus-odysseus-1 ...`): o host
   não tem tesseract; arquivos que falham só por ambiente mantêm o estado anterior.

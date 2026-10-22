@@ -525,3 +525,50 @@ def test_recurring_transfer_cluster_gets_own_rule(store):
 def test_merchant_old_santander_pix_without_separator():
     from src.finance import rules
     assert rules.merchant("PIX RECEBIDO Suelen Valentini") == rules.merchant("Transferência Recebida|Suélen Valentini") == "suelen valentini"
+
+
+def test_split_monthly_first_then_rest_loans_and_ledger(store, tmp_path):
+    import json as _json
+    from src.finance import rules
+    from src.finance.analytics import loans, monthly
+    assert rules.merchant("Eskine Industria e Com 5/6") == "eskine industria e com"
+    rows = [("20240710", "1800.00", "s1", "Transferência recebida pelo Pix - Fulana Tal - x"),
+            ("20240805", "700.00", "s2", "Transferência recebida pelo Pix - Fulana Tal - x"),
+            ("20240818", "800.00", "s3", "Transferência recebida pelo Pix - Fulana Tal - x"),
+            ("20240601", "5000.00", "s0", "Transferência recebida pelo Pix - Fulana Tal - x"),  # antes do date_from
+            ("20240702", "-3000.00", "e1", "Transferência enviada pelo Pix - Fulana Tal - x")]
+    ingest_bytes(store, "a.ofx", ofx("5555-1", rows))
+    dedup.rebuild(store)
+    led = store.root / "ledger"
+    led.mkdir(exist_ok=True)
+    (led / "rules.json").write_text(_json.dumps({"rules": [
+        {"id": "pessoas", "priority": 10, "when": {"text_any": ["pelo pix"]}, "then": {"category": "transferencias:pessoas"}},
+        {"id": "u-emp", "priority": 990, "when": {"merchant_any": ["fulana tal"], "sign": "debit"},
+         "then": {"category": "emprestimos:fulana"}}]}))
+    (led / "splits.json").write_text(_json.dumps({"splits": [
+        {"id": "f-moradia", "when": {"merchant_any": ["fulana tal"], "sign": "credit", "date_from": "2024-07"},
+         "monthly_first": {"category": "moradia:rateio", "amount": 1000}, "rest": "emprestimos:fulana"}]}))
+    rules.categorize(store)
+    lines = {(r["anchor_key"][-2:], r["category"]): r["amount_cents"] for r in store.db.execute(
+        "SELECT t.anchor_key, s.category, s.amount_cents FROM splits s JOIN transactions t ON t.anchor_key=s.anchor_key")}
+    got = sorted((r["category"], r["amount_cents"]) for r in store.db.execute("SELECT category, amount_cents FROM splits"))
+    # julho: 1000 + 800; agosto: 700 (todo rateio) e 800 = 300 rateio + 500 devolucao
+    assert got == sorted([("moradia:rateio", 100000), ("emprestimos:fulana", 80000), ("moradia:rateio", 70000),
+                          ("moradia:rateio", 30000), ("emprestimos:fulana", 50000)]), lines
+    lo = loans(store)
+    assert lo[0]["lent"] == 300000 and lo[0]["repaid"] == 130000 and lo[0]["outstanding"] == 170000
+    per = {p["period"]: p for p in monthly(store, "BRL")["periods"]}
+    assert per["2024-07"]["income"] == 0 and per["2024-07"]["expenses"] == -100000  # rateio abate gasto; emprestimo neutro
+    assert per["2024-06"]["income"] == 500000  # fora da divisao: continua Pix de pessoa
+    # manual vence a divisao
+    ak = store.db.execute("SELECT anchor_key FROM transactions WHERE amount_cents=180000").fetchone()[0]
+    store.db.execute("INSERT OR REPLACE INTO annotations VALUES (?, 'renda:outros', NULL, 1, 'x')", (ak,))
+    rules.categorize(store)
+    assert [r[0] for r in store.db.execute("SELECT category FROM tx_lines WHERE anchor_key=?", (ak,))] == ["renda:outros"]
+    out = export(store, out_dir=tmp_path / "led", commit=False)
+    text = "".join(p.read_text() for p in (tmp_path / "led").glob("2024.journal"))
+    assert "categorias:moradia:rateio    -300.00 BRL" in text and "categorias:emprestimos:fulana    -500.00 BRL" in text
+    hl = shutil.which("hledger")
+    if hl:
+        r = subprocess.run([hl, "-f", str(tmp_path / "led" / "main.journal"), "check"], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr

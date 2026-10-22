@@ -87,6 +87,7 @@ const COST_LABEL = {
   'moradia:aluguel': 'Aluguel', 'moradia:condominio': 'Condomínio', 'moradia:energia': 'Luz', 'moradia:agua': 'Água', 'moradia:gas': 'Gás',
   'moradia:telefone-internet': 'Internet e telefone', 'moradia:contas': 'Outras contas da casa', 'financeiro:seguros': 'Seguros',
   'saude:plano': 'Plano de saúde', 'educacao:mensalidade': 'Mensalidade (educação)',
+  'moradia:rateio': 'Rateio (parte que outra pessoa paga)',
 };
 const SUB_GROUP = { 'assinaturas:ia': 'IA', 'assinaturas:streaming': 'Streaming', 'assinaturas:rpg': 'RPG', 'assinaturas:armazenamento': 'Armazenamento',
   'assinaturas:workout': 'Workout', 'assinaturas:outros': 'Outros' };
@@ -182,7 +183,14 @@ async function renderOverview(pane) {
       <div class="fin-acc-v">${money(iv.total, iv.currency)}</div>
       <div class="fin-acc-s">${iv.n} posições · em ${day(iv.date)} (Open Finance)</div>
     </div>`).join('');
-  pane.innerHTML = `${conn}<div class="fin-costs"><div class="fin-empty">Calculando custo mensal…</div></div><div class="fin-accs">${invCards}${cards}</div><div class="fin-invlist"></div>
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const loanCards = (m.loans || []).filter(l => l.outstanding).map(l => `
+    <div class="fin-acc" title="emprestado ${money(l.lent, 'BRL')} − devolvido ${money(l.repaid, 'BRL')} (categoria ${esc(l.category)}; divisão em data/finance/ledger/splits.json)">
+      <div class="fin-acc-h">A receber · ${esc(cap(l.who))}</div>
+      <div class="fin-acc-v ${l.outstanding < 0 ? 'neg' : ''}">${money(l.outstanding, 'BRL')}</div>
+      <div class="fin-acc-s">emprestado ${money(l.lent, 'BRL')} · devolvido ${money(l.repaid, 'BRL')} · ${day(l.first)} → ${day(l.last)}</div>
+    </div>`).join('');
+  pane.innerHTML = `${conn}<div class="fin-costs"><div class="fin-empty">Calculando custo mensal…</div></div><div class="fin-accs">${invCards}${loanCards}${cards}</div><div class="fin-invlist"></div>
     <div class="fin-card"><div class="fin-card-h">Saldo no fim de cada mês <select class="fin-cur"></select><span class="fin-hint">uma moeda por vez; lacunas conhecidas já ajustadas</span></div><div class="fin-chart"></div></div>`;
   pane.querySelector('.fin-sync-pluggy')?.addEventListener('click', async e => {
     e.target.disabled = true;
