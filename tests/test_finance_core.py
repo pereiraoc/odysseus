@@ -595,3 +595,32 @@ def test_asset_purchase_is_neutral_and_listed(store):
     rules.categorize(store)
     assert assets(store)[0]["paid"] == 3500000
     assert {p["period"]: p for p in monthly(store, "BRL")["periods"]}["2024-12"]["expenses"] == 5000
+
+
+def test_refunds_match_full_partial_iof_and_people():
+    from src.finance import refunds
+    r = lambda i, d, v, desc, cat, acc="card": {"id": i, "account_key": acc, "date": d, "amount_cents": v,
+                                                "description": desc, "category": cat}
+    rows = [
+        r(1, "2024-10-29", -157800, "Mp *Kubaaudio", "compras:eletronicos"),
+        r(2, "2025-03-22", 157800, 'Estorno de "Mp *Kubaaudio"', "compras:eletronicos"),       # total, 144 dias depois
+        r(3, "2024-08-24", -12752, "Mercadolivre*Atropuz", "compras:online"),
+        r(4, "2024-09-16", 6762, 'Estorno de "Mercadolivre*Atropuz"', "compras:online"),       # dois parciais = total
+        r(5, "2024-09-16", 5990, 'Estorno de "Mercadolivre*Atropuz"', "compras:online"),
+        r(6, "2026-04-16", -45774, "Claude.Ai Subscription", "assinaturas:ia"),
+        r(7, "2026-04-16", 1602, "IOF de volta de Claude.Ai Subscription", "impostos:iof-exterior"),  # abate a compra
+        r(8, "2025-12-29", 2398, "Estorno de Uber - NuPay", "transporte:app"),                 # estorno 1 dia antes
+        r(9, "2025-12-30", -2398, "Uber", "transporte:app"),
+        r(10, "2023-10-16", -8873, "PIX ENVIADO Shannon David Cabral", "transferencias:pessoas", "acc"),
+        r(11, "2023-10-16", 8873, "PIX RECEBIDO Shannon David Cabral", "transferencias:pessoas", "acc"),
+        r(12, "2024-01-05", 500000, "Salario", "renda:salario", "acc"),                         # renda nunca casa
+        r(13, "2024-01-01", -500000, "Salario", "transporte:app", "acc"),
+        r(14, "2024-03-01", -5000, "Loja X", "compras:geral"),
+        r(15, "2024-03-02", 2000, "Loja X", "compras:geral"),                                    # parcial sem cara de estorno: nao
+        r(16, "2024-03-02", 9999, 'Estorno de "Loja Y"', "compras:geral"),                       # outra loja: nao
+    ]
+    got = {c: (d, a) for c, d, a in refunds.match(rows)}
+    assert got == {2: (1, 157800), 4: (3, 6762), 5: (3, 5990), 7: (6, 1602), 8: (9, 2398), 11: (10, 8873)}
+    adj = {x["id"]: x["amount_cents"] for x in refunds.adjust([dict(x) for x in rows], refunds.match(rows))}
+    assert 1 not in adj and 2 not in adj and 3 not in adj and 4 not in adj and 9 not in adj and 10 not in adj
+    assert adj[6] == -45774 + 1602 and 7 not in adj and adj[15] == 2000 and adj[16] == 9999

@@ -250,6 +250,8 @@ def pair_transfers(store: Store) -> dict:
     db.executemany("INSERT INTO transfer_pairs VALUES (?, ?)", pairs)
     db.commit()
     unpaired = [r for r in rows if r["id"] not in used]
+    from src.finance import refunds
+    refunds.pair(store)  # estornos/reembolsos x compra original (fora dos graficos)
     return {"internal": len(rows), "pairs": len(pairs), "unpaired": len(unpaired)}
 
 

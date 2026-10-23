@@ -239,7 +239,9 @@ def setup_finance_routes() -> APIRouter:
             j = "FROM transactions t LEFT JOIN annotations a ON a.anchor_key=t.anchor_key"
             total = store.db.execute(f"SELECT count(*), coalesce(sum(t.amount_cents),0) {j} {w}", args).fetchone()
             rows = store.db.execute(
-                f"SELECT t.*, a.category, a.manual, a.note AS rule {j} {w}"
+                f"SELECT t.*, a.category, a.manual, a.note AS rule,"
+                " (SELECT debit_id FROM refund_pairs WHERE credit_id=t.id) refund_of,"
+                f" (SELECT sum(amount_cents) FROM refund_pairs WHERE debit_id=t.id) refunded {j} {w}"
                 " ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?", [*args, limit, offset]).fetchall()
             ids = [r["id"] for r in rows]
             sources: dict[int, list] = {}
@@ -455,13 +457,17 @@ def setup_finance_routes() -> APIRouter:
                 where += " AND t.date >= ?"; args.append(date_from)
             if date_to:
                 where += " AND t.date <= ?"; args.append(date_to)
-            cats: dict[str, dict] = {}
+            from src.finance import refunds
+            rows = []
             for r in store.db.execute(
-                    "SELECT coalesce(t.category, '(sem)') cat, t.date, t.amount_cents, c.currency cur FROM tx_lines t"
+                    "SELECT t.id, coalesce(t.category, '(sem)') cat, t.date, t.amount_cents, c.currency cur FROM tx_lines t"
                     f" JOIN accounts c ON c.key=t.account_key WHERE {where}", args):
                 v = conv(r["amount_cents"], r["cur"], r["date"]) if currency else r["amount_cents"]
-                if v is None:
-                    continue
+                if v is not None:
+                    rows.append({"id": r["id"], "cat": r["cat"], "date": r["date"], "amount_cents": v, "raw_cents": r["amount_cents"]})
+            cats: dict[str, dict] = {}
+            for r in refunds.adjust(rows, refunds.load(store)):  # estorno casado com a compra some dos totais
+                v = r["amount_cents"]
                 c = cats.setdefault(r["cat"], {"category": r["cat"], "total": 0, "count": 0, "months": {}})
                 c["total"] += v
                 c["count"] += 1

@@ -3,6 +3,8 @@
 Definicoes (documentadas tambem na UI):
   ganhos      categorias renda:* (+ entradas sem categoria; + Pix/TED recebidos de pessoas se people=True)
   gastos      tudo que sai e nao e movimento entre contas proprias (- estornos da mesma categoria)
+  estornos    estorno/reembolso casado com a compra original (refunds.py) some dos graficos: total -> as duas pontas
+              somem; parcial -> a compra fica so com a diferenca, no mes e na categoria dela
   neutros     transferencias:interna/cambio/investimento, financeiro:rotativo, ajustes:* -- nao contam
   salario     renda:salario (base); mesada = renda:mesada (aparece no grafico do salario, fora da base); adicional = renda:adicional:* (ex.: expatriacao) conta como ganho, nao como salario
   13o/extra   ESTIMADOS (o extrato nao traz a quebra do holerite): base = mediana do salario dos ate 6 meses
@@ -28,7 +30,7 @@ from bisect import bisect_right
 from collections import defaultdict
 from datetime import date as Date, timedelta
 
-from src.finance import reconcile
+from src.finance import reconcile, refunds
 from src.finance.rules import INTERNAL
 from src.finance.store import Store
 
@@ -110,7 +112,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if v is None:
             unconverted += 1
             continue
-        rows.append({"id": r["id"], "date": r["date"], "amount_cents": v, "cat": r["cat"]})
+        rows.append({"id": r["id"], "date": r["date"], "amount_cents": v, "raw_cents": r["amount_cents"], "cat": r["cat"]})
+    rows = refunds.adjust(rows, refunds.load(store))
     # mes "incompleto": transferencia entre contas suas sem a outra ponta somando > R$ 50 no mes
     # (pagamento de fatura de R$ 5,40 de anuidade num cartao sem fatura baixada nao torna o mes suspeito)
     unpaired_sum: dict[str, int] = defaultdict(int)
@@ -431,7 +434,8 @@ def cost_structure(store: Store, today: str | None = None, currency: str = "BRL"
             (*wargs, closed[0] + "-01", _month_ends(open_month, open_month)[0] + "T")).fetchall():
         v = conv(r["amount_cents"], r["cur"], r["date"])
         if v is not None:
-            rows.append({**dict(r), "amount_cents": v})
+            rows.append({**dict(r), "amount_cents": v, "raw_cents": r["amount_cents"]})
+    rows = refunds.adjust(rows, refunds.load(store))
 
     buckets: dict[str, dict[str, dict[str, list]]] = {"essencial": {}, "assinaturas": {}, "variavel": {}}
     for r in rows:

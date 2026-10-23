@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS investment_snapshots (
   status TEXT, sha256 TEXT NOT NULL, PRIMARY KEY (investment_id, date)
 );
 CREATE TABLE IF NOT EXISTS transfer_pairs (tx_a INTEGER NOT NULL, tx_b INTEGER NOT NULL, PRIMARY KEY (tx_a, tx_b));
+-- estorno/reembolso casado com o gasto original (refunds.py; recriado junto com transfer_pairs)
+CREATE TABLE IF NOT EXISTS refund_pairs (credit_id INTEGER PRIMARY KEY, debit_id INTEGER NOT NULL, amount_cents INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS annotations (
   anchor_key TEXT PRIMARY KEY, category TEXT, note TEXT, manual INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
 );

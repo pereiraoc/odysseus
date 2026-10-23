@@ -269,7 +269,7 @@ async function renderTransactions(pane) {
     const rows = d.rows.map(r => {
       const a = accByKey(r.account_key);
       const src = r.sources.map(s => `<span class="fin-chip src" title="${esc(s.description)} (${day(s.date)})">${esc(IMPORTER[s.importer] || s.importer)}</span>`).join('');
-      return `<tr><td class="nowrap">${day(r.date)}</td><td>${esc(a ? accLabel(a) : r.account_key)}</td><td class="desc">${esc(r.description)}</td>
+      return `<tr><td class="nowrap">${day(r.date)}</td><td>${esc(a ? accLabel(a) : r.account_key)}</td><td class="desc">${esc(r.description)}${r.refund_of ? ' <span class="fin-chip" title="estorno/reembolso casado com a compra original: os dois ficam fora dos gráficos">estorno</span>' : ''}${r.refunded ? ` <span class="fin-chip" title="compra com ${money(r.refunded, a?.currency || 'BRL')} estornado/reembolsado: nos gráficos conta só a diferença">${r.refunded >= -r.amount_cents ? 'estornada' : 'estorno parcial'}</span>` : ''}</td>
         <td class="fin-catcell" data-tx="${r.id}" title="${r.manual ? 'categoria manual' : r.rule ? esc(r.rule) : 'sem categoria'} — clique para mudar">${r.category ? esc(r.category) + (r.manual ? ' ✎' : '') : '<span class="fin-dim">—</span>'}</td><td>${src}</td>
         <td class="num ${r.amount_cents < 0 ? 'neg' : 'pos'}">${money(r.amount_cents, a?.currency || 'BRL')}</td></tr>`;
     }).join('');
@@ -318,7 +318,7 @@ async function renderCategories(pane) {
   const anchor = last ? new Date(last + 'T12:00:00') : end;
   const fromA = st.catPeriod === 'all' ? '' : new Date(anchor.getFullYear(), anchor.getMonth() - Number(st.catPeriod) + 1, 1).toISOString().slice(0, 10);
   const [d, rl, un] = await Promise.all([get(`/categories?currency=${st.cur}&from=${fromA || ''}`), get('/rules'), get('/uncategorized?limit=40')]);
-  const isTransfer = c => c.startsWith('transferencias:') || c === 'financeiro:rotativo' || c === 'ajustes:pre-autorizacao';
+  const isTransfer = c => c.startsWith('transferencias:') || c.startsWith('emprestimos:') || c.startsWith('patrimonio:') || c === 'financeiro:rotativo' || c === 'ajustes:pre-autorizacao';
   const cats = d.categories.filter(c => st.withTransfers || !isTransfer(c.category));
   const out = cats.filter(c => c.total < 0), inc = cats.filter(c => c.total > 0);
   const maxOut = Math.max(1, ...out.map(c => -c.total)), maxIn = Math.max(1, ...inc.map(c => c.total));
@@ -329,7 +329,7 @@ async function renderCategories(pane) {
   pane.innerHTML = `
     <div class="fin-filters">${periods.map(([v, l]) => `<button class="fin-btn ${st.catPeriod === v ? 'active' : ''}" data-cp="${v}">${l}</button>`).join('')}
       <select class="fin-cur2">${['ALL', 'BRL', 'USD', 'EUR', 'ILS', 'CHF', 'HUF', 'CZK', 'PLN', 'RON', 'GBP'].map(c => `<option value="${c}" ${c === st.cur ? 'selected' : ''}>${c === 'ALL' ? 'Todas (em R$)' : c}</option>`).join('')}</select>
-      <label><input type="checkbox" class="fin-wt" ${st.withTransfers ? 'checked' : ''}> incluir transferências</label>
+      <label><input type="checkbox" class="fin-wt" ${st.withTransfers ? 'checked' : ''}> incluir transferências, empréstimos e bens</label>
       <span class="fin-f-sum">${fromA ? 'desde ' + day(fromA) + ' (até o último dado)' : 'todo o histórico'} · entradas ${money(sumIn, st.cur)} · saídas ${money(sumOut, st.cur)}</span></div>
     <div class="fin-grid2">
       <div class="fin-card"><div class="fin-card-h">Saídas por categoria <span class="fin-hint">clique para ver as transações</span></div>${out.map(c => bar(c, maxOut, 'neg')).join('') || '<div class="fin-dim">nada</div>'}</div>

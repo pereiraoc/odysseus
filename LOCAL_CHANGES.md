@@ -242,6 +242,9 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
 - Categorias: regras em `data/finance/ledger/rules.json` + `rules_user.json` (aba Revisar); divisão de uma
   transação em categorias (`splits.py`, `ledger/splits.json`, view `tx_lines`), p.ex. parte moradia + parte
   devolução de empréstimo; `emprestimos:<pessoa>` é neutro (nem gasto nem renda) e vira "A receber".
+- Estornos/reembolsos (`refunds.py`, tabela `refund_pairs`, recriada junto com `pair_transfers`): crédito casado
+  com a compra original (mesma conta e estabelecimento/pessoa, até 180 dias) some dos gráficos, das categorias e
+  do custo mensal; estorno parcial deixa só a diferença no mês da compra. O ledger continua com tudo.
 - CLI: `./venv/bin/python -m src.finance.cli import|report|queue|ledger|rebuild|reparse|wise-sync|uncategorized`.
 - **Reprocessar tudo (`reparse`) só dentro do container** (`docker exec -u 1000 odysseus-odysseus-1 ...`): o host
   não tem tesseract; arquivos que falham só por ambiente mantêm o estado anterior.
