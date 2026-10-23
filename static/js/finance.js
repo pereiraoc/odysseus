@@ -420,6 +420,13 @@ function axisFrame(host, periods, vmin, vmax, { H = 230, fmt = compact } = {}) {
   periods.forEach((p, i) => { if (i % step === 0) svg.append(svgEl('text', { x: xc(i), y: H - 8, 'text-anchor': 'middle', class: 'fin-axis' }, periodLabel(p.period, st.mGroup))); });
   return { svg, y, xc, band, W, H, P };
 }
+// largura da barra: folga de 6px entre colunas quando cabe; com muitos meses em tela estreita,
+// 80% da coluna (nunca <= 0, senao a barra some e o segmento de cima "flutua")
+function barWidth(band, n = 1) {
+  const gap = Math.min(6, band * 0.2);
+  return Math.min(24, Math.max(0.8, (band - gap) / n - (n > 1 && band >= 12 ? 1 : 0)));
+}
+const stackGap = bw => (bw >= 6 ? 2 : 0);  // separador entre segmentos so em barra larga
 function roundedBar(x, w, y0, y1, color, cls) {
   // 4px arredondado na ponta do dado, reto na linha de base
   const top = Math.min(y0, y1), h = Math.abs(y1 - y0), r = Math.min(4, h, w / 2), up = y1 < y0;
@@ -447,12 +454,12 @@ const tipHead = p => `<div class="fin-tip-h">${esc(periodLabel(p.period, st.mGro
 function chartIncomeExpense(host, periods, cur) {
   const vals = periods.flatMap(p => [p.income, p.expenses, p.net]);
   const f = axisFrame(host, periods, Math.min(...vals), Math.max(...vals));
-  const bw = Math.min(24, (f.band - 8) / 2 - 1);
+  const bw = barWidth(f.band, 2);
   periods.forEach((p, i) => {
     const op = p.incomplete || p.partial ? 0.45 : 1;
     [[p.income, SERIES[0], -1], [p.expenses, SERIES[1], 1]].forEach(([v, c, side]) => {
       if (!v) return;
-      const x = side < 0 ? f.xc(i) - bw - 1 : f.xc(i) + 1;
+      const x = side < 0 ? f.xc(i) - bw - (bw >= 4 ? 1 : 0) : f.xc(i) + (bw >= 4 ? 1 : 0);
       const b = roundedBar(x, bw, f.y(0), f.y(v), c); b.setAttribute('opacity', op); f.svg.append(b);
     });
   });
@@ -511,14 +518,14 @@ function chartStacked(host, periods, groups, cur) {
     return other ? rows.concat([['outros', other]]) : rows;
   });
   const f = axisFrame(host, periods, 0, Math.max(1, ...segs.map(r => r.reduce((a, [, v]) => a + v, 0))));
-  const bw = Math.min(24, f.band - 6);
+  const bw = barWidth(f.band);
   segs.forEach((rows, i) => {
     let acc = 0;
     const live = rows.filter(([, v]) => v > 0);
     live.forEach(([g, v], k) => {
       const y0 = f.y(acc), y1 = f.y(acc + v);
       const isTop = k === live.length - 1;
-      const el = isTop ? roundedBar(f.xc(i) - bw / 2, bw, y0, y1 + 0, colorOf(g)) : svgEl('rect', { x: f.xc(i) - bw / 2, y: y1, width: bw, height: Math.max(0, y0 - y1 - 2), fill: colorOf(g) });
+      const el = isTop ? roundedBar(f.xc(i) - bw / 2, bw, y0, y1 + 0, colorOf(g)) : svgEl('rect', { x: f.xc(i) - bw / 2, y: y1, width: bw, height: Math.max(0, y0 - y1 - stackGap(bw)), fill: colorOf(g) });
       if (periods[i].incomplete || periods[i].partial) el.setAttribute('opacity', 0.45);
       f.svg.append(el);
       acc += v;
@@ -544,12 +551,12 @@ const SAL_PARTS = [  // ordem fixa = cores fixas (slots 1-4 da paleta validada)
 function chartSalary(host, periods, cur) {
   const total = p => SAL_PARTS.reduce((a, [k]) => a + (p[k] || 0), 0);
   const f = axisFrame(host, periods, 0, Math.max(1, ...periods.map(total)));
-  const bw = Math.min(24, f.band - 6);
+  const bw = barWidth(f.band);
   periods.forEach((p, i) => {
     const parts = SAL_PARTS.filter(([k]) => (p[k] || 0) > 0);
     let acc = 0;
     parts.forEach(([k, , color], j) => {
-      const v = p[k], y0 = f.y(acc) - (j ? 2 : 0), y1 = f.y(acc + v);
+      const v = p[k], y0 = f.y(acc) - (j ? stackGap(bw) : 0), y1 = f.y(acc + v);
       const el = j === parts.length - 1 ? roundedBar(f.xc(i) - bw / 2, bw, y0, y1, color)
         : svgEl('rect', { x: f.xc(i) - bw / 2, y: y1, width: bw, height: Math.max(0, y0 - y1), fill: color });
       if (p.partial) el.setAttribute('opacity', 0.45);
