@@ -4,7 +4,7 @@ Definicoes (documentadas tambem na UI):
   ganhos      categorias renda:* (+ entradas sem categoria; + Pix/TED recebidos de pessoas se people=True)
   gastos      tudo que sai e nao e movimento entre contas proprias (- estornos da mesma categoria)
   neutros     transferencias:interna/cambio/investimento, financeiro:rotativo, ajustes:* -- nao contam
-  salario     renda:salario (base); adicional = renda:adicional:* (ex.: expatriacao) conta como ganho, nao como salario
+  salario     renda:salario (base); mesada = renda:mesada (aparece no grafico do salario, fora da base); adicional = renda:adicional:* (ex.: expatriacao) conta como ganho, nao como salario
   13o/extra   ESTIMADOS (o extrato nao traz a quebra do holerite): base = mediana do salario dos ate 6 meses
               normais anteriores; base = mediana dos meses vizinhos (3 antes/3 depois, sem nov/dez); o que passar de 1,25x a base vira 13o em nov/dez e 'extra' nos outros meses
               (ferias ou outro pagamento avulso; o padrao tipico de ferias e deposito fora do dia + saldo menor no fim do mes). Hora extra fica dentro do salario normal e nao se separa.
@@ -121,7 +121,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         unpaired_sum[r["date"][:7]] += abs(conv(r["amount_cents"], r["cur"], r["date"]) or 0)
     unpaired = {m for m, v in unpaired_sum.items() if v > INCOMPLETE_MIN_CENTS}
 
-    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_bonus": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
+    per = defaultdict(lambda: {"invested_flow": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_bonus": 0, "salary_mesada": 0, "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0, "people_out": 0,
                                "fixed": 0, "variable": 0, "uncategorized": 0, "by_group": defaultdict(int), "n": 0})
     cambio_net: dict[str, int] = defaultdict(int)
     for r in rows:
@@ -151,6 +151,8 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
                 p["salary"] += v
             elif cat.startswith("renda:adicional"):
                 p["salary_extra"] += v
+            elif cat.startswith("renda:mesada"):
+                p["salary_mesada"] += v
             elif cat.startswith("renda:bonus"):  # bonus/PLR confirmado (splits.json): fora da estimativa
                 p["salary_bonus"] += v
             if not cat:
@@ -267,7 +269,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if (date_from and m < date_from[:7]) or (date_to and m > date_to[:7]):
             continue
         k = _bucket(m, group)
-        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_bonus": 0,
+        b = buckets.setdefault(k, {"period": k, "months": 0, "income": 0, "expenses": 0, "salary": 0, "salary_extra": 0, "salary_bonus": 0, "salary_mesada": 0,
                                    "salary_base": 0, "salary_13": 0, "salary_other": 0, "people_in": 0,
                                    "people_out": 0, "fixed": 0, "variable": 0, "uncategorized": 0,
                                    "by_group": defaultdict(int), "incomplete": False, "card_known": True,
@@ -277,7 +279,7 @@ def monthly(store: Store, currency: str = "BRL", date_from: str = "", date_to: s
         if p is None or not p["n"]:
             continue
         b["data_months"] += 1
-        for f in ("income", "expenses", "salary", "salary_extra", "salary_bonus", "salary_base", "salary_13", "salary_other", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
+        for f in ("income", "expenses", "salary", "salary_extra", "salary_bonus", "salary_mesada", "salary_base", "salary_13", "salary_other", "people_in", "people_out", "fixed", "variable", "uncategorized", "n"):
             b[f] += p[f]
         for g, v in p["by_group"].items():
             b["by_group"][g] += v

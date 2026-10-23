@@ -429,6 +429,11 @@ def test_salary_split_estimates_13th_and_extra(store):
     # 13o passa de 1,2 salario no ano: o excesso de dezembro e ferias coletivas
     assert (p["2023-12"]["salary_13"], p["2023-12"]["salary_other"]) == (0, 700000)
     assert p["2023-06"]["salary_13"] == p["2023-06"]["salary_other"] == 0 and p["2023-06"]["salary_base"] == 500000
+    # mesada: parte propria no grafico do salario, fora da base
+    store.db.execute("UPDATE annotations SET category='renda:mesada', manual=1 WHERE anchor_key ="
+                     " (SELECT anchor_key FROM transactions WHERE date='2023-06-15')")
+    q = {x["period"]: x for x in monthly(store)["periods"]}["2023-06"]
+    assert (q["salary"], q["salary_mesada"], q["income"]) == (0, 500000, 500000)
 
 
 def test_card_ofx_repeated_fitid_and_chain(store):
