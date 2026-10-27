@@ -212,7 +212,7 @@ function pipelineHTML(job, events) {
     <div class="trd-feed-h"><b>${esc(AGENT_PT[e.agent] || e.agent)}</b><span>${esc(ago(e.ts))}</span></div>
     <div class="trd-feed-t">${esc(e.note)}${e.note.length >= 600 ? '…' : ''}</div></div>`).join('');
   return `
-    <div class="trd-run-h"><b class="trd-big">${esc(job.ticker || 'backtest')}</b><span>${day(job.trade_date)}</span>${statusChip(job.status)}${ratingChip(job.rating)}
+    <div class="trd-run-h"><b class="trd-big">${esc(job.ticker || (job.kind === 'radar' ? 'Radar — lendo sinais' : 'Backtest'))}</b><span>${day(job.trade_date)}</span>${statusChip(job.status)}${ratingChip(job.rating)}
       <span class="trd-grow"></span><span class="trd-small">${esc(job.model?.quick || '')}</span></div>
     ${waiting ? `<div class="trd-banner">Esperando o modelo responder — ligue-o no topo. A análise começa sozinha quando ele subir.</div>` : ''}
     ${job.status === 'failed' ? `<div class="trd-banner bad">${esc(job.error || 'falhou')} <button class="trd-btn" data-retry="${job.id}">tentar de novo</button></div>` : ''}
@@ -257,7 +257,7 @@ async function renderHome(pane) {
   const decided = jobs.filter(j => j.kind === 'analysis' && ['done', 'review'].includes(j.status)).slice(0, 8);
   const pcards = snaps.filter(Boolean).map(s => {
     const p = s.portfolio, ret = pct(s.value, p.initial_cash), bench = s.benchmark_curve.at(-1)?.value;
-    return `<div class="trd-pcard" data-pid="${p.id}"><div class="trd-pcard-h"><b>${esc(p.name)}</b>${chip(p.mode === 'replay' ? 'reencenação' : 'ao vivo')}${p.id === rd?.config?.portfolio_id ? chip('radar', 'run') : ''}</div>
+    return `<div class="trd-pcard" data-pid="${p.id}"><div class="trd-pcard-h"><b>${esc(p.name)}</b>${modeChip(p)}${p.id === rd?.config?.portfolio_id ? chip('radar', 'run') : ''}</div>
       <div class="trd-pcard-v">${money(s.value, p.currency)}</div>
       <div class="trd-pcard-s"><span class="${ret >= 0 ? 'pos' : 'neg'}">${signed(ret)}</span> · índice ${bench ? signed(pct(bench, p.initial_cash)) : '—'}</div>${sparkline(s.curve)}</div>`;
   }).join('');
@@ -445,81 +445,199 @@ function lineChart(host, a, b) {
     ${bAligned.length > 1 ? `<path d="${path(bAligned)}" class="trd-line bench"/>` : ''}<path d="${path(a)}" class="trd-line"/></svg>
     <div class="trd-legend"><span><i class="me"></i>carteira</span><span><i class="bench"></i>índice</span></div>`;
 }
+const BULL = new Set(['Buy', 'Overweight']);
+function nextBizDay(d) {
+  const x = new Date(`${d}T12:00:00`);
+  do x.setDate(x.getDate() + 1); while ([0, 6].includes(x.getDay()));
+  return x.toISOString().slice(0, 10);
+}
+function whenText(slot) {
+  if (!slot || slot === 'agora') return 'agora';
+  const [d, h] = slot.split('T');
+  return `${d === today() ? 'hoje' : day(d)} às ${h}`;
+}
+// Uma linha por analise da carteira, na lingua de quem acompanha: o que a IA decidiu e o que a
+// carteira ficticia fez com isso.
+function decisionText(j, t, cur, waiting) {
+  if (j.status === 'queued') return waiting ? 'na fila — esperando o modelo ligar' : 'na fila';
+  if (j.status === 'running') return 'analisando agora…';
+  if (j.status === 'failed') return `falhou: ${esc((j.error || '').slice(0, 140))}`;
+  if (j.status === 'review') return 'a nota não pôde ser lida — decida em Relatórios';
+  if (!t) return j.rating === 'Hold' ? 'manter — nada a fazer' : '';
+  if (t.status === 'filled') return `<b class="${t.side === 'buy' ? 'pos' : 'neg'}">${t.side === 'buy' ? 'comprou' : 'vendeu'} ${t.quantity} × ${money(t.price, cur)}</b> = ${money(t.quantity * t.price, cur)} · fechamento de ${day(t.fill_date)}`;
+  if (t.status === 'pending') return `vai ${BULL.has(t.rating) ? 'comprar' : 'vender'} no fechamento de ${day(nextBizDay(t.trade_date))}`;
+  if (t.reason === 'hold') return 'manter — nada a fazer';
+  return esc(t.reason || 'sem operação');
+}
 async function renderPortfolios(pane) {
+  stopPoll();
   await refreshPortfolios();
   if (st.pid && !st.portfolios.some(p => p.id === st.pid)) st.pid = null;
   st.pid = st.pid || st.portfolios[0]?.id || null;
   pane.innerHTML = `<div class="trd-split">
     <div class="trd-list">${st.portfolios.map(p => `<button class="trd-li ${p.id === st.pid ? 'active' : ''}" data-id="${p.id}">
-      <span><b>${esc(p.name)}</b> ${chip(p.mode === 'replay' ? 'reencenação' : 'ao vivo')}</span><span class="trd-small">${esc(p.currency)} · ${money(p.initial_cash, p.currency)}</span></button>`).join('')}
+      <span><b>${esc(p.name)}</b> ${modeChip(p)}</span><span class="trd-small">${esc(p.currency)} · início ${money(p.initial_cash, p.currency)}</span></button>`).join('')}
       <button class="trd-btn trd-new">+ nova carteira</button></div>
     <div class="trd-viewer trd-pf-detail"></div></div>`;
   pane.querySelectorAll('.trd-li').forEach(li => li.addEventListener('click', () => { st.pid = Number(li.dataset.id); renderPortfolios(pane); }));
-  pane.querySelector('.trd-new').addEventListener('click', () => newPortfolioForm(pane.querySelector('.trd-pf-detail'), pane));
+  pane.querySelector('.trd-new').addEventListener('click', () => { stopPoll(); newPortfolioForm(pane.querySelector('.trd-pf-detail'), pane); });
   const host = pane.querySelector('.trd-pf-detail');
   if (!st.pid) { newPortfolioForm(host, pane); return; }
+  await fillPortfolio(host, pane);
+}
+function modeChip(p) {
+  if (p.mode === 'replay') return chip('reencenação');
+  if (p.auto?.enabled) return chip('automático', 'run');
+  return chip(p.auto ? 'automático pausado' : 'manual');
+}
+async function fillPortfolio(host, pane) {
   const s = await lab('GET', `/portfolios/${st.pid}`);
-  const p = s.portfolio, cur = p.currency, bench = s.benchmark_curve.at(-1)?.value;
+  if (st.tab !== 'portfolios' || !host.isConnected) return;
+  const p = s.portfolio, cur = p.currency, bench = s.benchmark_curve.at(-1)?.value, a = s.auto;
+  const gain = s.value - p.initial_cash, invested = s.value ? (1 - s.cash / s.value) * 100 : 0;
+  const tradeOf = new Map(s.trades.filter(t => t.job_id).map(t => [t.job_id, t]));
+  const waiting = a ? a.model_up === false : !currentModel()?.running;
+  const rows = s.jobs.filter(j => j.ticker).map(j => {
+    const t = tradeOf.get(j.id);
+    const from = (() => { try { return JSON.parse(j.payload_json || 'null')?.from; } catch (_) { return null; } })();
+    return `<div class="trd-dec"><span class="trd-dec-d">${day(j.trade_date)}</span><b class="trd-dec-t">${esc(j.ticker)}</b>
+      <span class="trd-dec-r">${j.rating ? ratingChip(j.rating) : statusChip(j.status)}</span>
+      <span class="trd-dec-x">${decisionText(j, t, cur, waiting)}${from === 'radar' || (from === 'auto' && !(a?.tickers || []).includes(j.ticker) && t?.side !== 'sell') ? ' ' + chip('radar', 'src') : ''}</span>
+      <span class="trd-dec-b">${j.status === 'failed' ? `<button class="trd-btn" data-retry="${j.id}">tentar de novo</button>` : ''}
+        ${j.status === 'queued' ? `<button class="trd-btn" data-cancel="${j.id}">cancelar</button>` : ''}
+        ${['done', 'review'].includes(j.status) ? `<button class="trd-btn" data-open="${j.id}">relatório</button>` : ''}</span></div>`;
+  }).join('');
   host.innerHTML = `
+    <div class="trd-pf-head"><b class="trd-big">${esc(p.name)}</b>${modeChip(p)}<span class="trd-grow"></span>
+      ${p.mode === 'live' ? (a ? `<button class="trd-btn ${a.enabled ? '' : 'trd-primary'} trd-auto-toggle">${a.enabled ? 'Pausar automático' : 'Retomar automático'}</button>
+        <button class="trd-btn trd-auto-now">Rodar agora</button>` : '') : ''}
+      <button class="trd-btn trd-danger trd-del">Excluir</button></div>
     <div class="trd-kpis">
-      <div class="trd-kpi"><span>Valor</span><b>${money(s.value, cur)}</b><small class="${s.value >= p.initial_cash ? 'pos' : 'neg'}">${signed(pct(s.value, p.initial_cash))}</small></div>
-      <div class="trd-kpi"><span>Caixa</span><b>${money(s.cash, cur)}</b></div>
-      <div class="trd-kpi"><span>Índice ${esc(p.benchmark)}</span><b>${bench ? signed(pct(bench, p.initial_cash)) : '—'}</b><small>mesmo período</small></div>
-      <div class="trd-kpi"><span>Operações</span><b>${s.trades.filter(t => t.status === 'filled').length}</b><small>${s.trades.filter(t => t.status === 'pending').length} pendentes</small></div>
+      <div class="trd-kpi"><span>Valor hoje</span><b>${money(s.value, cur)}</b><small class="${gain >= 0 ? 'pos' : 'neg'}">${gain >= 0 ? '+' : ''}${money(gain, cur)} (${signed(pct(s.value, p.initial_cash))})</small></div>
+      <div class="trd-kpi"><span>Em ações</span><b>${invested.toFixed(0)}%</b><small>caixa ${money(s.cash, cur)}</small></div>
+      <div class="trd-kpi"><span>Índice ${esc(p.benchmark)}</span><b>${bench ? signed(pct(bench, p.initial_cash)) : '—'}</b><small>no mesmo período</small></div>
+      <div class="trd-kpi"><span>Posições</span><b>${s.positions.length}${a ? ` / ${a.max_positions}` : ''}</b><small>${s.trades.filter(t => t.status === 'pending').length} ordem(ns) para o próximo fechamento</small></div>
     </div>
-    ${card('Valor × índice', '<div class="trd-chart"></div>')}
-    ${p.mode === 'live' ? card('Analisar nesta carteira', `<div class="trd-form">${tickerField('trd-run-t', 'Ações: PETR4 VALE3…')}<button class="trd-btn trd-primary trd-run-pf">Enfileirar</button></div>${analystToggles()}`) : ''}
-    ${card('Posições', s.positions.length ? `<table class="trd-table"><thead><tr><th>Ação</th><th class="num">Qtd</th><th class="num">Preço médio</th><th class="num">Último</th><th class="num">Valor</th><th class="num">Resultado</th></tr></thead><tbody>${s.positions.map(x => `
+    ${p.mode === 'live' ? autoCard(a) : ''}
+    ${card('Decisões', rows ? `<div class="trd-decs">${rows}</div>` : empty(a ? 'A primeira rodada começa assim que o modelo estiver ligado.' : 'Nenhuma decisão ainda.'),
+      '<span class="trd-hint trd-right">cada decisão vira compra/venda no fechamento do pregão seguinte · dinheiro fictício</span>')}
+    ${card('Posições', s.positions.length ? `<table class="trd-table"><thead><tr><th>Ação</th><th class="num">Qtd</th><th class="num">Preço médio</th><th class="num">Último</th><th class="num">Valor</th><th class="num">Peso</th><th class="num">Resultado</th></tr></thead><tbody>${s.positions.map(x => `
       <tr><td><b>${esc(x.ticker)}</b></td><td class="num">${x.quantity}</td><td class="num">${money(x.avg_price, cur)}</td><td class="num">${money(x.last, cur)}</td>
-      <td class="num">${money(x.value, cur)}</td><td class="num ${x.last >= x.avg_price ? 'pos' : 'neg'}">${signed(pct(x.last, x.avg_price))}</td></tr>`).join('')}</tbody></table>` : empty('Sem posições.'))}
-    ${card('Extrato', s.trades.length ? `<table class="trd-table"><thead><tr><th>Análise</th><th>Ação</th><th>Nota</th><th>Operação</th><th class="num">Qtd</th><th class="num">Preço</th><th>Execução</th><th>Tamanho</th><th></th></tr></thead><tbody>${s.trades.map(t => `
-      <tr><td>${day(t.trade_date)}</td><td><b>${esc(t.ticker)}</b></td><td>${ratingChip(t.rating)}</td>
-      <td>${t.status === 'filled' ? chip(t.side === 'buy' ? 'compra' : 'venda', t.side === 'buy' ? 'up' : 'down') : t.status === 'pending' ? chip('pendente', 'warn') : chip(t.reason || 'sem operação')}</td>
-      <td class="num">${t.quantity ?? ''}</td><td class="num">${t.price ? money(t.price, cur) : ''}</td><td>${day(t.fill_date)}</td>
-      <td class="trd-small">${esc(SIZING_PT[t.sizing_source] || t.sizing_source || '')}</td>
-      <td>${t.job_id ? `<button class="trd-btn trd-ghost" data-open="${t.job_id}">relatório</button>` : ''}</td></tr>`).join('')}</tbody></table>` : empty('Nenhuma decisão ainda.'))}`;
+      <td class="num">${money(x.value, cur)}</td><td class="num">${s.value ? (x.value / s.value * 100).toFixed(1) : 0}%</td>
+      <td class="num ${x.last >= x.avg_price ? 'pos' : 'neg'}">${money((x.last - x.avg_price) * x.quantity, cur)} (${signed(pct(x.last, x.avg_price))})</td></tr>`).join('')}
+      <tr class="trd-total"><td>Caixa</td><td></td><td></td><td></td><td class="num">${money(s.cash, cur)}</td><td class="num">${s.value ? (s.cash / s.value * 100).toFixed(1) : 0}%</td><td></td></tr></tbody></table>`
+      : empty(s.trades.some(t => t.status === 'pending') ? 'As primeiras compras saem no próximo fechamento.' : 'Sem posições — tudo em caixa.'))}
+    ${card('Valor × índice', '<div class="trd-chart"></div>')}
+    ${p.mode === 'live' ? `<details class="trd-card trd-manual"><summary class="trd-card-h">Analisar uma ação nesta carteira (manual)</summary>
+      <div class="trd-form">${tickerField('trd-run-t', 'Ações: PETR4 VALE3…')}<button class="trd-btn trd-primary trd-run-pf">Enfileirar</button></div>${analystToggles()}</details>` : ''}`;
   lineChart(host.querySelector('.trd-chart'), s.curve, s.benchmark_curve);
-  wireJobButtons(host, () => renderPortfolios(pane));
+  const again = () => fillPortfolio(host, pane);
+  wireJobButtons(host, again);
   if (host.querySelector('.trd-run-t')) { wireTicker(host, 'trd-run-t'); wireToggles(host); }
+  wireAuto(host, p, a, again);
+  host.querySelector('.trd-del').addEventListener('click', async () => {
+    if (!confirm(`Excluir a carteira "${p.name}"? As análises e relatórios continuam em Relatórios.`)) return;
+    try { await lab('DELETE', `/portfolios/${p.id}`); st.pid = null; renderPortfolios(pane); } catch (e) { showError(e.message); }
+  });
   host.querySelector('.trd-run-pf')?.addEventListener('click', async () => {
     const t = tickers(host.querySelector('.trd-run-t').value);
     if (!t.length) return showError('Informe as ações');
     if (!needModel()) return;
-    try { const r = await lab('POST', `/portfolios/${p.id}/run`, { tickers: t, analysts: [...st.analysts], ...modelFields() }); showToast(`${r.ids.length} análise(s) na fila`); }
+    try { const r = await lab('POST', `/portfolios/${p.id}/run`, { tickers: t, analysts: [...st.analysts], ...modelFields() }); showToast(`${r.ids.length} análise(s) na fila`); again(); }
     catch (e) { showError(`Trading: ${e.message}`); }
   });
+  if (s.jobs.some(j => ['queued', 'running'].includes(j.status)) || a?.enabled) poll(() => st.tab === 'portfolios' && host.isConnected ? again() : Promise.resolve(), 15000);
+}
+function autoFields(a = {}) {
+  return `<div class="trd-form">
+      <div class="trd-field trd-grow"><span>Ações que ela acompanha (lista base)</span>${tickerField('trd-at', 'PETR4 VALE3 ITUB4 WEGE3…')}</div>
+      <label class="trd-field"><span>Até quantas posições</span><input type="number" class="trd-amax" min="1" max="30" value="${a.max_positions ?? 8}"></label>
+      <label class="trd-field"><span>+ ações do Radar por dia</span><input type="number" class="trd-aradar" min="0" max="10" value="${a.radar_top ?? 3}"></label>
+      <label class="trd-field"><span>Rodada diária (h)</span><input type="number" class="trd-ahour" min="0" max="23" value="${a.hour ?? 19}"></label></div>`;
+}
+function readAuto(host) {
+  return { tickers: tickers(host.querySelector('.trd-at').value), max_positions: Number(host.querySelector('.trd-amax').value) || 8,
+    radar_top: Number(host.querySelector('.trd-aradar').value) || 0, hour: Number(host.querySelector('.trd-ahour').value) || 19 };
+}
+function localModel() {
+  if (!st.model.startsWith('preset|')) { showError('Carteira automática precisa de um modelo local do Cookbook (a chave de API não fica guardada) — escolha no topo'); return null; }
+  return { analysts: [...st.analysts], ...modelFields() };
+}
+function autoCard(a) {
+  if (!a) return card('Modo automático', `<div class="trd-small">Desligado: esta carteira só opera quando você manda analisar. Ligue para ela analisar sozinha uma vez por dia útil e comprar/vender com base nas decisões.</div>
+    ${autoFields()}<div class="trd-form"><button class="trd-btn trd-primary trd-auto-on">Ligar automático (modelo do topo)</button></div>`);
+  const model = a.model?.quick || '—';
+  const state = !a.enabled ? chip('pausado', 'warn') : a.model_up ? chip('modelo ligado', 'ok') : chip('modelo desligado — a rodada espera você clicar em Ligar', 'warn');
+  return card('Modo automático', `<div class="trd-auto-sum">
+      <div><span class="trd-small">Acompanha</span> ${(a.tickers || []).map(t => chip(t)).join(' ') || '<span class="trd-small">só a carteira</span>'}${a.radar_top ? ` + ${a.radar_top} do Radar/dia` : ''}</div>
+      <div><span class="trd-small">Até</span> ${a.max_positions} posições · ${(100 / a.max_positions).toFixed(1)}% em cada "Comprar"</div>
+      <div><span class="trd-small">Próxima rodada</span> <b>${a.enabled ? whenText(a.next) : '—'}</b> · ${esc(model)} ${state}</div></div>
+    <details class="trd-auto-edit"><summary class="trd-btn">Editar</summary>${autoFields(a)}<div class="trd-form"><button class="trd-btn trd-primary trd-auto-save">Salvar</button>
+      <span class="trd-hint">usa o modelo do topo e os analistas marcados abaixo</span></div>${analystToggles()}</details>`);
+}
+function wireAuto(host, p, a, again) {
+  const post = async (body, msg) => {
+    try { await lab('POST', `/portfolios/${p.id}/auto`, body); if (msg) showToast(msg); again(); } catch (e) { showError(e.message); }
+  };
+  const at = host.querySelector('.trd-at');
+  if (at) { wireTicker(host, 'trd-at'); at.value = (a?.tickers || []).join(' '); }
+  host.querySelector('.trd-auto-on')?.addEventListener('click', () => {
+    const m = localModel(); if (m) post({ enabled: true, ...readAuto(host), ...m }, 'Automático ligado — a primeira rodada começa quando o modelo estiver ligado');
+  });
+  host.querySelector('.trd-auto-save')?.addEventListener('click', () => { const m = localModel(); if (m) post({ ...readAuto(host), ...m }, 'Salvo'); });
+  host.querySelector('.trd-auto-toggle')?.addEventListener('click', () => post({ enabled: !a.enabled }));
+  host.querySelector('.trd-auto-now')?.addEventListener('click', () => post({ enabled: true, run_now: true }, 'Rodada pedida — começa em até 1 min se o modelo estiver ligado'));
 }
 function newPortfolioForm(host, pane) {
   host.innerHTML = card('Nova carteira fictícia', `
-    <div class="trd-form"><label class="trd-field"><span>Nome</span><input class="trd-n" value="Teste"></label>
+    <div class="trd-form"><label class="trd-field"><span>Nome</span><input class="trd-n" value="Carteira ${st.portfolios.length + 1}"></label>
       <label class="trd-field"><span>Moeda</span><select class="trd-cur"><option>BRL</option><option>USD</option></select></label>
       <label class="trd-field"><span>Dinheiro inicial</span><input type="number" class="trd-cash" value="10000" min="1"></label></div>
-    <div class="trd-seg"><button class="trd-toggle on" data-mode="live">Ao vivo — de hoje em diante</button><button class="trd-toggle" data-mode="replay">Reencenar um período passado</button></div>
+    <div class="trd-seg"><button class="trd-toggle on" data-mode="auto">Automática — analisa e opera sozinha</button><button class="trd-toggle" data-mode="live">Manual — só o que eu mandar</button><button class="trd-toggle" data-mode="replay">Reencenar um período passado</button></div>
+    <div class="trd-mode-auto">${autoFields()}
+      <div class="trd-hint">Primeira rodada assim que o modelo do topo estiver ligado: analisa a lista + o Radar e compra o que for "Comprar" (1/N do valor cada) no fechamento seguinte. Depois, uma rodada por dia útil reanalisa o que tem e os candidatos novos. Nunca liga a GPU sozinha.</div></div>
     <div class="trd-replay hidden"><div class="trd-form">${tickerField('trd-rt', 'Ações: PETR4 VALE3…')}
       <label class="trd-field"><span>Início</span><input type="date" class="trd-rs" max="${today()}"></label><label class="trd-field"><span>Fim</span><input type="date" class="trd-re" max="${today()}"></label>
-      <label class="trd-field"><span>A cada (dias)</span><input type="number" class="trd-rev" value="7" min="1"></label></div>${analystToggles()}
+      <label class="trd-field"><span>A cada (dias)</span><input type="number" class="trd-rev" value="7" min="1"></label></div>
       <div class="trd-hint">Cada data × ação vira uma análise com o modelo do topo (20–40 min cada com o Qwen).</div></div>
+    ${analystToggles()}
     <div class="trd-hint">.SA = BRL (índice Ibovespa); EUA = USD (índice SPY). Uma moeda por carteira.</div>
     <div class="trd-form"><button class="trd-btn trd-primary trd-create">Criar</button></div>`);
-  let mode = 'live';
+  let mode = 'auto';
   host.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
     mode = b.dataset.mode;
     host.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
     host.querySelector('.trd-replay').classList.toggle('hidden', mode !== 'replay');
+    host.querySelector('.trd-mode-auto').classList.toggle('hidden', mode !== 'auto');
   }));
   wireTicker(host, 'trd-rt');
+  wireTicker(host, 'trd-at');
   wireToggles(host);
   host.querySelector('.trd-create').addEventListener('click', async () => {
+    let auto = null;
     const body = { name: host.querySelector('.trd-n').value.trim() || 'Carteira', currency: host.querySelector('.trd-cur').value,
-      initial_cash: Number(host.querySelector('.trd-cash').value), mode };
+      initial_cash: Number(host.querySelector('.trd-cash').value), mode: mode === 'replay' ? 'replay' : 'live' };
+    if (mode === 'auto') {
+      const m = localModel(); if (!m) return;
+      auto = { enabled: true, ...readAuto(host), ...m };
+      if (!auto.tickers.length && !auto.radar_top) return showError('Automática: informe ações ou use o Radar');
+    }
     if (mode === 'replay') {
       if (!needModel()) return;
       body.replay = { tickers: tickers(host.querySelector('.trd-rt').value), start: host.querySelector('.trd-rs').value,
         end: host.querySelector('.trd-re').value, every_days: Number(host.querySelector('.trd-rev').value) || 7, analysts: [...st.analysts], ...modelFields() };
       if (!body.replay.tickers.length || !body.replay.start || !body.replay.end) return showError('Reencenação: ações, início e fim');
     }
-    try { st.pid = (await lab('POST', '/portfolios', body)).id; renderPortfolios(pane); }
-    catch (e) { showError(`Trading: ${e.message}`); }
+    // automatico em segunda chamada: o proxy so troca o modelo escolhido (local_preset) no nivel de cima
+    let pid = null;
+    try {
+      pid = (await lab('POST', '/portfolios', body)).id;
+      if (auto) await lab('POST', `/portfolios/${pid}/auto`, auto);
+      st.pid = pid; renderPortfolios(pane);
+    } catch (e) {
+      if (pid && auto) await lab('DELETE', `/portfolios/${pid}`).catch(() => {});
+      showError(`Trading: ${e.message}`);
+    }
   });
 }
 

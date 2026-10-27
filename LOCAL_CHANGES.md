@@ -310,6 +310,12 @@ Aqui fica só o que é do Odysseus:
 
 **Atualizar o motor:** `git pull` no fork → `docker compose build tradingagents-lab &&
 docker compose up -d tradingagents-lab` (não precisa reconstruir o Odysseus).
+- Carteira automática (27/10): Carteiras mostra valor/ganho, % em ações, **Decisões** em texto (o que a IA
+  decidiu e o que a carteira fez: "comprou 40 × R$ …", "vai comprar no fechamento de …"), posições com peso e
+  resultado; criar carteira "Automática" (lista base + Radar, até N posições, hora da rodada) ou ligar numa
+  existente. A lógica (rodada diária só com o modelo já ligado, pesos 1/N) é do lab (`autopilot.py`). O
+  automático vai numa 2ª chamada `POST /portfolios/{id}/auto` porque o proxy só resolve `local_preset` no nível
+  de cima. Botão primário: o `color: inherit` da regra genérica tinha mais especificidade e apagava o texto.
 
 ## 9. Toast sem login não manda mais para /login  [bugfix, inline patch]
 
