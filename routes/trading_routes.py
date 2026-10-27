@@ -131,6 +131,10 @@ async def lab_request(method: str, path: str, *, json_body=None, params=None) ->
         raise HTTPException(503, f"Trading Lab fora do ar (container tradingagents-lab): {exc}") from None
 
 
+def scrub_key(text: str, key: str | None) -> str:
+    return text.replace(key, "***") if key else text
+
+
 def setup_trading_routes() -> APIRouter:
     r = APIRouter(prefix="/api/trading", tags=["trading"])
 
@@ -159,7 +163,10 @@ def setup_trading_routes() -> APIRouter:
             raw = await request.body()
             body = resolve_model(json.loads(raw) if raw else {}, user)
         resp = await lab_request(request.method, path, json_body=body, params=dict(request.query_params))
-        return Response(resp.content, status_code=resp.status_code,
+        content = resp.content
+        if resp.status_code >= 400 and (body or {}).get("api_key"):   # um erro nunca devolve a chave
+            content = scrub_key(resp.text, body["api_key"]).encode()
+        return Response(content, status_code=resp.status_code,
                         media_type=resp.headers.get("content-type", "application/json"))
 
     from routes.trading_action import register_trading_action

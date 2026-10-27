@@ -12,6 +12,7 @@ import json
 import time
 
 import httpx
+from fastapi import HTTPException
 
 POLL_S = 20
 INFO = ("Trading Lab: roda as análises de uma lista/carteira no Trading Lab "
@@ -35,8 +36,11 @@ async def action_trading_run(owner: str, task_name: str = "", progress_cb=None, 
     except ValueError:
         return f"Config JSON inválida: {prompt!r}", False
     say = progress_cb or (lambda _m: None)
-    body = tr.resolve_model(cfg, owner)
-    model, key = body["model"], body.get("api_key")
+    try:
+        body = tr.resolve_model(cfg, owner)
+        model, key = body["model"], body.get("api_key")
+    except (HTTPException, KeyError) as exc:   # preset/endpoint sumiu ou config sem modelo
+        return f"Modelo da agenda inválido: {getattr(exc, 'detail', exc)}", False
     # o lab enxerga o Odysseus como 'odysseus'; daqui, o mesmo servidor e localhost
     probe = model["base_url"].replace(f"//{tr.LOCAL_HOST}:", "//localhost:")
     deadline = time.monotonic() + 60 * float(cfg.get("wait_model_min", 20))
@@ -63,7 +67,7 @@ async def action_trading_run(owner: str, task_name: str = "", progress_cb=None, 
                 break
             ids.append(resp.json()["id"])
     if ids is None:
-        return f"Trading Lab recusou: {resp.status_code} {resp.text[:300]}", False
+        return f"Trading Lab recusou: {resp.status_code} {tr.scrub_key(resp.text, key)[:300]}", False
     deadline = time.monotonic() + 3600 * float(cfg.get("max_hours", 12))
     results: dict[int, dict] = {}
     while len(results) < len(ids):

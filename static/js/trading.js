@@ -55,6 +55,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 const save = (k, v) => { try { localStorage.setItem(`odysseus-trd-${k}`, v); } catch (_) {} };
 const load = k => { try { return localStorage.getItem(`odysseus-trd-${k}`); } catch (_) { return null; } };
 function day(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : ''; }
+// third-party feed URLs: only http(s) become links (no javascript:/data:)
+function link(url, text) {
+  return /^https?:\/\//i.test(url || '') ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text);
+}
 function ago(ts) {
   if (!ts) return '';
   const s = (Date.now() - new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime()) / 1000;
@@ -222,7 +226,7 @@ function wireJobButtons(host, after) {
 function queueRows(jobs) {
   return jobs.length ? `<div class="trd-rows">${jobs.map(j => `<div class="trd-row ${j.id === st.focus ? 'sel' : ''}" data-focus="${j.id}">
     <b>${esc(j.kind === 'analysis' ? j.ticker : j.kind)}</b><span class="trd-small">${day(j.trade_date)}</span>${statusChip(j.status)}${ratingChip(j.rating)}
-    ${j.payload?.from === 'radar' ? chip('radar') : ''}<span class="trd-grow"></span>
+    ${j.payload?.from === 'radar' ? chip('radar') : ''}${j.blocked_by && j.status === 'queued' ? chip(`parado: #${j.blocked_by} falhou`, 'warn') : ''}<span class="trd-grow"></span>
     ${j.status === 'queued' ? `<button class="trd-btn trd-ghost" data-cancel="${j.id}">cancelar</button>` : ''}
     ${j.status === 'failed' ? `<button class="trd-btn trd-ghost" data-retry="${j.id}">tentar de novo</button>` : ''}</div>`).join('')}</div>` : empty('Nada na fila.');
 }
@@ -332,10 +336,10 @@ async function renderRadar(pane) {
       <span class="trd-small">${esc(ago(b.last_ts))}</span><button class="trd-btn trd-ghost" data-analyze="${esc(b.ticker)}">analisar</button></summary>
       <div class="trd-sigs">${b.signals.map(s => `<div class="trd-sig"><span class="trd-arrowdir ${s.direction > 0 ? 'up' : 'down'}">${s.direction > 0 ? '▲' : '▼'}</span>
         <span class="trd-small">${esc(SOURCE_PT[s.source] || s.source)}${s.actor ? ' · ' + esc(s.actor) : ''}</span>
-        ${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>` : esc(s.title)}
+        ${link(s.url, s.title)}
         ${s.reason ? `<span class="trd-small">— ${esc(s.reason)}</span>` : ''}</div>`).join('')}</div></details>`).join('');
   const feed = rd.signals.slice(0, 40).map(s => `<div class="trd-sig"><span class="trd-small trd-src">${esc(SOURCE_PT[s.source] || s.source)}</span>
-    ${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>` : esc(s.title)}
+    ${link(s.url, s.title)}
     ${s.hits.map(h => chip(`${h.direction > 0 ? '▲' : '▼'} ${h.ticker}`, h.direction > 0 ? 'up' : 'down')).join('')}
     ${!s.processed ? chip('não lida', 'warn') : ''}<span class="trd-grow"></span><span class="trd-small">${esc(ago(s.ts))}</span></div>`).join('');
   pane.innerHTML = `<div class="trd-radar">

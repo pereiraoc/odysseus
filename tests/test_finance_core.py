@@ -639,6 +639,10 @@ def test_nubank_fatura_infers_green_credit_from_total():
                       "02 JAN           Padaria                               20,00").replace("R$ 10,00", "R$ 20,00")
     q = nubank_fatura_pdf.parse("f.pdf", b"", text=two)
     assert all(r.kind != "CREDIT" for r in q.records) and "nao fecha" in q.warnings[-1]
+    # um item que o parser nao leu (valor sem centavos) pode ser a diferenca -> nao adivinha
+    unread = txt.replace("03 JAN", "04 JAN           Linha estranha                       7\n  03 JAN", 1)
+    u = nubank_fatura_pdf.parse("f.pdf", b"", text=unread)
+    assert all("sign_inferred" not in r.extra for r in u.records) and "nao fecha" in u.warnings[-1]
 
 
 def test_pluggy_midday_balance_ignores_later_same_day_tx(store):

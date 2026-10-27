@@ -81,3 +81,13 @@ def test_is_serving_matches_gguf_path():
     assert tr._is_serving(p, ["/app/.cache/huggingface/hub/x/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"])
     assert tr._is_serving(p, ["Qwen3.6-35B-A3B-GGUF"]) and not tr._is_serving({"model": "unsloth/Qwen3.5-4B-GGUF"}, ["Qwen3.6-35B-A3B-GGUF"])
     assert not tr._is_serving(p, [])
+
+
+def test_lab_error_never_returns_the_key(setup, monkeypatch):
+    c, seen, tr = setup
+
+    def echo(request):   # um 422 que ecoa o corpo (com a chave), como o FastAPI faz por padrao
+        return httpx.Response(422, json={"detail": [{"input": json.loads(request.content)}]})
+    monkeypatch.setattr(tr, "_transport", httpx.MockTransport(echo))
+    r = c.post("/api/trading/lab/jobs", json={"date": "2026-06-01", "endpoint_id": "e1", "model_name": "qwen"})
+    assert r.status_code == 422 and "sk-x" not in r.text

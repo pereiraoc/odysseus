@@ -14,7 +14,7 @@ from src.finance.importers.pdf_text import pdf_text
 from src.finance.money import parse_brl
 
 NAME = "nubank_fatura_pdf"
-VERSION = 2
+VERSION = 3
 TOLERANCE_CENTS = 2
 
 _MON = {"JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6, "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12}
@@ -22,6 +22,7 @@ _AMT = r"\d{1,3}(?:\.\d{3})*,\d{2}"
 _FATURA = re.compile(r"FATURA (\d\d) ([A-Z]{3}) (\d{4})")
 _PERIOD = re.compile(r"TRANSAÇÕES\s+DE (\d\d) ([A-Z]{3}) A (\d\d) ([A-Z]{3})")
 _ITEM = re.compile(rf"^\s+(\d\d) ([A-Z]{{3}})\s{{2,}}(.+?)\s{{2,}}({_AMT})\s*$")
+_ITEM_LIKE = re.compile(r"^\s+\d\d (JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\s{2,}\S")
 _CREDIT = re.compile(r"^(Pagamento|Crédito de|Estorno|Desconto)")
 _INSTALLMENT = re.compile(r"\s-\s(\d{1,2})/(\d{1,2})$")
 
@@ -37,13 +38,14 @@ def _summary(text: str, label: str) -> int | None:
     return parse_brl(m.group(1)) if m else None
 
 
-def _infer_green_credit(records: list[Record], diff: int) -> Record | None:
+def _infer_green_credit(records: list[Record], diff: int, unread: int = 0) -> Record | None:
     """O Nubank as vezes marca um estorno so com a cor verde, com o nome do estabelecimento
     (ex.: "iFood 42,90" em 08/2023), e o texto do PDF perde a cor. Se a fatura nao fecha e
     inverter o sinal de UMA unica compra fecha o total, essa compra era credito. Mais de um
-    candidato = ambiguo: nao adivinha (fica o warning de fatura que nao fecha).
+    candidato = ambiguo: nao adivinha (fica o warning de fatura que nao fecha). Linha com cara
+    de item que o parser nao leu = a diferenca pode ser ela: tambem nao adivinha.
     """
-    if diff <= TOLERANCE_CENTS:
+    if diff <= TOLERANCE_CENTS or unread:
         return None
     cands = [r for r in records if r.kind == "PURCHASE" and abs(-2 * r.amount_cents - diff) <= TOLERANCE_CENTS]
     if len(cands) != 1:
@@ -76,9 +78,12 @@ def parse(name: str, data: bytes, text: str | None = None) -> ParsedFile:
         raise ParseError("resumo da fatura sem 'Fatura anterior' ou 'Total a pagar'")
 
     records: list[Record] = []
+    unread = 0
     section = text[text.find("TRANSAÇÕES"):]
     for line in section.splitlines():
         m = _ITEM.match(line)
+        if not m and _ITEM_LIKE.match(line):
+            unread += 1
         if m:
             desc = " ".join(m.group(3).split())
             value = parse_brl(m.group(4))
@@ -94,7 +99,7 @@ def parse(name: str, data: bytes, text: str | None = None) -> ParsedFile:
 
     warnings = []
     diff = -total - (-previous + sum(r.amount_cents for r in records))
-    flipped = _infer_green_credit(records, diff)
+    flipped = _infer_green_credit(records, diff, unread)
     if flipped is not None:
         diff -= 2 * flipped.amount_cents
         warnings.append(f"credito inferido pelo total da fatura: {flipped.date} {flipped.description} "
