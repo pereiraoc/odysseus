@@ -90,7 +90,7 @@ function modelOptions() {
   const m = st.models || { endpoints: [], presets: [] };
   return [
     ...m.presets.map(p => ({ value: `preset|${p.name}`, label: p.name, group: 'Cookbook (local)', running: p.running, preset: p.name })),
-    ...m.endpoints.flatMap(e => (e.models || []).map(x => ({ value: `ep|${e.id}|${x}`, label: x, group: e.name, running: true }))),
+    ...m.endpoints.flatMap(e => (e.models || []).map(x => ({ value: `ep|${e.id}|${x}`, label: x, group: e.name, running: e.running !== false }))),
   ];
 }
 function currentModel() { return modelOptions().find(o => o.value === st.model); }

@@ -67,7 +67,9 @@ def test_get_passthrough_and_lab_down(setup, monkeypatch):
 def test_models_never_expose_keys(setup, monkeypatch):
     c, _, tr = setup
     monkeypatch.setattr(tr, "_enabled_endpoints", lambda owner: [
-        {"id": "e1", "name": "GLM", "models": ["glm-5.3-flash"], "api_key": "sk-secret"}])
+        {"id": "e1", "name": "GLM", "models": ["glm-5.3-flash"], "api_key": "sk-secret", "base_url": "https://api.z.ai/v4"},
+        {"id": "local-1", "name": "Qwen", "models": ["unsloth/Qwen3.6-35B-A3B-GGUF"], "base_url": "http://localhost:8000/v1"}])
     r = c.get("/api/trading/models")
     assert "sk-secret" not in r.text and r.json()["presets"][0]["name"] == "Qwen3.6"
     assert r.json()["presets"][0]["running"] is False
+    assert [e["id"] for e in r.json()["endpoints"]] == ["e1"] and r.json()["endpoints"][0]["running"] is True
