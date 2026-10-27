@@ -1,0 +1,63 @@
+/* ══ Grupo "Trading" (fork-local; ver LOCAL_CHANGES.md §8) ═════════════════ */
+.trd-content { width: min(1180px, 96vw); height: 88vh; display: flex; flex-direction: column; padding: 0; position: relative; }
+.trd-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: move; border-bottom: 1px solid var(--border, rgba(128,128,128,0.25)); }
+.trd-titlebar { font-weight: 600; font-size: 14px; }
+.trd-status { flex: 1; font-size: 11.5px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trd-tabs { display: flex; gap: 4px; padding: 8px 14px 0; flex-wrap: wrap; }
+.trd-tabs button, .trd-btn { font-size: 11.5px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border, rgba(128,128,128,0.3)); background: transparent; color: inherit; cursor: pointer; }
+.trd-tabs button:hover, .trd-btn:hover { background: color-mix(in srgb, var(--accent-primary, #60a5fa) 15%, transparent); }
+.trd-tabs button.active, .trd-btn.trd-primary { background: color-mix(in srgb, var(--accent-primary, #60a5fa) 28%, transparent); border-color: color-mix(in srgb, var(--accent-primary, #60a5fa) 60%, transparent); }
+.trd-btn:disabled { opacity: 0.5; cursor: progress; }
+.trd-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 18px; }
+.trd-card { border: 1px solid var(--border, rgba(128,128,128,0.22)); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; min-width: 0; }
+.trd-card-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.trd-hint { font-weight: 400; opacity: 0.55; font-size: 11px; margin-left: auto; }
+div.trd-hint { margin: 2px 0 6px; }
+.trd-empty { padding: 18px; text-align: center; opacity: 0.6; font-size: 12.5px; }
+.trd-small { font-size: 11px; opacity: 0.65; }
+.trd-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin-bottom: 8px; font-size: 12px; }
+.trd-form label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; opacity: 0.9; }
+.trd-form input, .trd-form select { font-size: 12px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border, rgba(128,128,128,0.3)); background: var(--panel, transparent); color: inherit; min-width: 0; }
+.trd-form input.trd-ticker, .trd-form input.trd-rt, .trd-form input.trd-bt, .trd-form input.trd-wt, .trd-form input.trd-run-t { min-width: 200px; }
+.trd-analysts { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.trd-analysts label { flex-direction: row; align-items: center; gap: 4px; font-size: 11.5px; }
+.trd-replay.hidden { display: none; }
+.trd-review { padding: 6px 8px; border-radius: 8px; border: 1px solid #ffb45488; }
+.trd-chip { display: inline-block; font-size: 10.5px; font-weight: 400; padding: 0 7px; border-radius: 8px; border: 1px solid var(--border, rgba(128,128,128,0.35)); white-space: nowrap; margin: 1px 3px 1px 0; }
+.trd-chip.ok { border-color: #7fd96288; color: #7fd962; }
+.trd-chip.up { border-color: #7fd96288; color: #7fd962; }
+.trd-chip.down { border-color: #f0717888; color: #f07178; }
+.trd-chip.warn { border-color: #ffb45488; color: #ffb454; }
+.trd-chip.run { border-color: #59c2ff88; color: #59c2ff; }
+.trd-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.trd-table th { text-align: left; font-weight: 600; opacity: 0.7; padding: 4px 6px; border-bottom: 1px solid var(--border, rgba(128,128,128,0.25)); }
+.trd-table td { padding: 4px 6px; border-bottom: 1px solid color-mix(in srgb, var(--border, rgba(128,128,128,0.2)) 50%, transparent); vertical-align: top; }
+.trd-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trd-table .pos { color: #7fd962; }
+.trd-table .neg { color: #f07178; }
+.trd-actions { white-space: nowrap; text-align: right; }
+.trd-split { display: grid; grid-template-columns: 230px 1fr; gap: 10px; height: 100%; min-height: 0; }
+.trd-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.trd-li { padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; font-size: 12px; }
+.trd-li:hover { background: color-mix(in srgb, var(--accent-primary, #60a5fa) 8%, transparent); }
+.trd-li.active { border-color: color-mix(in srgb, var(--accent-primary, #60a5fa) 55%, transparent); background: color-mix(in srgb, var(--accent-primary, #60a5fa) 12%, transparent); }
+.trd-viewer { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.trd-report { flex: 1; min-height: 60vh; width: 100%; border: 1px solid var(--border, rgba(128,128,128,0.25)); border-radius: 8px; background: #fff; }
+.trd-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.trd-kpi { border: 1px solid var(--border, rgba(128,128,128,0.22)); border-radius: 10px; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+.trd-kpi span { font-size: 11px; opacity: 0.6; }
+.trd-kpi b { font-size: 18px; font-variant-numeric: tabular-nums; color: var(--accent-primary, #60a5fa); }
+.trd-kpi small { font-size: 11px; opacity: 0.7; }
+.trd-svg { display: block; width: 100%; height: 220px; }
+.trd-grid { stroke: var(--border, rgba(128,128,128,0.2)); stroke-width: 1; }
+.trd-axis { fill: currentColor; opacity: 0.55; font-size: 10px; }
+.trd-line { fill: none; stroke: #59c2ff; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trd-line.bench { stroke: #ffb454; stroke-dasharray: 4 3; }
+.trd-legend { display: flex; gap: 14px; font-size: 11px; margin-top: 4px; }
+.trd-legend i { display: inline-block; width: 12px; height: 3px; margin-right: 5px; vertical-align: middle; }
+.trd-legend i.me { background: #59c2ff; }
+.trd-legend i.bench { background: #ffb454; }
+.trd-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 0; font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border, rgba(128,128,128,0.2)) 50%, transparent); }
+.trd-row .trd-btn:first-of-type { margin-left: auto; }
+.trd-pre { white-space: pre-wrap; font-size: 11.5px; opacity: 0.85; margin: 6px 0 0; }
+@media (max-width: 720px) { .trd-split { grid-template-columns: 1fr; } .trd-list { max-height: 30vh; } }

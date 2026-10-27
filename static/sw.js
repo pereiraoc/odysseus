@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v659-notes-reference';
+const CACHE_NAME = 'odysseus-v660-trading';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -62,6 +62,7 @@ const PRECACHE = [
   '/static/css/cookbook-research-memory-settings.css?v=20260929csssplit',
   '/static/css/zz-fork-vaults.css?v=20260929csssplit',  // fork-local
   '/static/css/zz-fork-finance.css?v=20261021fin17',  // fork-local
+  '/static/css/zz-fork-trading.css?v=20261026trd1',  // fork-local (LOCAL_CHANGES §8)
   '/static/app.js?v=20260929csssplit',
   '/static/js/storage.js',
   '/static/js/appConfig.js',

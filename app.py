@@ -931,6 +931,10 @@ app.include_router(setup_ai_usage_routes())
 from routes.finance_routes import setup_finance_routes
 app.include_router(setup_finance_routes())
 
+# Fork-local (LOCAL_CHANGES.md §8): grupo Trading (painel fino sobre o Trading Lab)
+from routes.trading_routes import setup_trading_routes
+app.include_router(setup_trading_routes())
+
 # Contacts (CardDAV)
 from routes.contacts.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
