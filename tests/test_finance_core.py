@@ -624,3 +624,45 @@ def test_refunds_match_full_partial_iof_and_people():
     adj = {x["id"]: x["amount_cents"] for x in refunds.adjust([dict(x) for x in rows], refunds.match(rows))}
     assert 1 not in adj and 2 not in adj and 3 not in adj and 4 not in adj and 9 not in adj and 10 not in adj
     assert adj[6] == -45774 + 1602 and 7 not in adj and adj[15] == 2000 and adj[16] == 9999
+
+
+def test_nubank_fatura_infers_green_credit_from_total():
+    """Estorno so em verde ("iFood 42,90" sem 'Estorno'): o total da fatura denuncia o sinal."""
+    from src.finance.importers import nubank_fatura_pdf
+    txt = NUBANK_TXT.replace("R$ 50,00", "R$ 10,00")   # 03 JAN Mercado 20,00 era credito: 50 - 2*20
+    p = nubank_fatura_pdf.parse("f.pdf", b"", text=txt)
+    merc = p.records[3]
+    assert merc.amount_cents == 2000 and merc.kind == "CREDIT" and merc.extra["sign_inferred"] == "fatura"
+    assert len(p.warnings) == 1 and "inferido" in p.warnings[0]
+    # ambiguo (dois itens do mesmo valor podem fechar) -> nao adivinha
+    two = txt.replace("02 JAN           Estorno de \"Outra\"                    10,00",
+                      "02 JAN           Padaria                               20,00").replace("R$ 10,00", "R$ 20,00")
+    q = nubank_fatura_pdf.parse("f.pdf", b"", text=two)
+    assert all(r.kind != "CREDIT" for r in q.records) and "nao fecha" in q.warnings[-1]
+
+
+def test_pluggy_midday_balance_includes_later_same_day_tx():
+    """Saldo lido 20/10 23:17 BRT; PIX de 2000 as 23:18: o checkpoint do dia ja inclui o PIX."""
+    import json as _json
+    from src.finance.importers.pluggy import parse_multi
+    bank = {"_source": "pluggy", "kind": "account", "item": "i1", "institution": "santander",
+            "item_last_updated": "2026-10-21T02:17:35Z",
+            "account": {"id": "a2", "type": "BANK", "currencyCode": "BRL", "number": "1080", "balance": -1874.26},
+            "transactions": [
+                {"id": "x1", "type": "CREDIT", "amount": 2000, "date": "2026-10-21T02:18:37Z", "description": "Pix", "status": "POSTED"},
+                {"id": "x0", "type": "DEBIT", "amount": -5, "date": "2026-10-20T12:00:00Z", "description": "Cafe", "status": "POSTED"}]}
+    cp = parse_multi("s.json", _json.dumps(bank).encode())[0].checkpoints[0]
+    assert cp.date == "2026-10-20" and cp.balance_cents == -187426 + 200000 and "apos a leitura" in cp.note
+
+
+def test_coverage_separates_idle_from_missing(store):
+    from src.finance import reconcile
+    for i, d in enumerate(("2020-01-10", "2020-08-10", "2020-12-10")):
+        store.db.execute("INSERT INTO transactions(anchor_key, account_key, date, amount_cents, description, n_sources)"
+                         " VALUES (?, 'k', ?, -100, 'x', 1)", (f"a{i}", d))
+    store.db.execute("INSERT INTO raw_blobs(sha256, source_name, size, path, first_seen_at, status, account_key,"
+                     " period_start, period_end) VALUES (?, 'f.pdf', 1, 'p', '2020', 'parsed', 'k', '2020-03-04', '2020-09-04')",
+                     ("a" * 64,))
+    cov = reconcile.coverage(store, "k")
+    assert cov["idle_months"] == ["2020-03", "2020-04", "2020-05", "2020-06", "2020-07", "2020-09"]
+    assert cov["missing_months"] == ["2020-02", "2020-10", "2020-11"]

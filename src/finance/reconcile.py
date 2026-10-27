@@ -114,23 +114,32 @@ def reconcile_bills(store: Store, account_key: str) -> dict:
 
 
 def coverage(store: Store, account_key: str) -> dict:
+    """Meses sem transacao, separando "nenhum arquivo cobre" (missing) de "arquivo cobre, sem uso" (idle).
+
+    Uma fatura de 04/MAR a 04/SET com itens so em agosto prova que mar-jul nao tiveram uso:
+    contar esses meses como falta mandava procurar arquivo que nao existe.
+    """
     months = defaultdict(int)
     for r in store.db.execute("SELECT substr(date,1,7) m, count(*) n FROM transactions WHERE account_key=? GROUP BY m",
                               (account_key,)):
         months[r["m"]] = r["n"]
     if not months:
-        return {"first": None, "last": None, "missing_months": []}
+        return {"first": None, "last": None, "missing_months": [], "idle_months": []}
+    spans = [(r["period_start"][:7], r["period_end"][:7]) for r in store.db.execute(
+        "SELECT period_start, period_end FROM raw_blobs WHERE account_key=? AND status='parsed'"
+        " AND period_start IS NOT NULL AND period_end IS NOT NULL", (account_key,))]
     first, last = min(months), max(months)
     y, m = map(int, first.split("-"))
-    missing = []
+    missing, idle = [], []
     while f"{y:04d}-{m:02d}" <= last:
         k = f"{y:04d}-{m:02d}"
         if k not in months:
-            missing.append(k)
+            (idle if any(a <= k <= b for a, b in spans) else missing).append(k)
         m += 1
         if m > 12:
             y, m = y + 1, 1
-    return {"first": first, "last": last, "months_with_data": len(months), "missing_months": missing}
+    return {"first": first, "last": last, "months_with_data": len(months), "missing_months": missing,
+            "idle_months": idle}
 
 
 def report(store: Store) -> list[dict]:

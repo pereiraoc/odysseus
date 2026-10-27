@@ -19,7 +19,7 @@ const IMPORTER = {
   santander_csv: 'planilha', santander_fatura_pdf: 'PDF fatura', santander_cc_ocr: 'OCR extrato', pluggy: 'Open Finance',
 };
 
-const st = { mPeriod: '24', mGroup: 'month', mPeople: true, cur: 'ALL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
+const st = { mPeriod: '24', mGroup: 'month', mPeople: true, cur: 'ALL', balCur: 'BRL', category: '', catPeriod: '12', withTransfers: false, tab: 'overview', meta: null, account: '', q: '', from: '', to: '', offset: 0 };
 let els = {};
 
 // ── util ────────────────────────────────────────────────────────────────
@@ -234,10 +234,11 @@ async function renderOverview(pane) {
   const { series } = await get('/balances');
   const curs = [...new Set(Object.keys(series).map(k => accByKey(k)?.currency || 'BRL'))].sort((a, b) => (a === 'BRL' ? -1 : b === 'BRL' ? 1 : a.localeCompare(b)));
   const sel = pane.querySelector('.fin-cur');
-  sel.innerHTML = curs.map(c => `<option ${c === st.cur ? 'selected' : ''}>${c}</option>`).join('');
+  // moeda propria do grafico de saldos: nao mexe em st.cur (o "Todas (em R$)" das outras abas)
+  sel.innerHTML = curs.map(c => `<option ${c === st.balCur ? 'selected' : ''}>${c}</option>`).join('');
   const draw = () => {
-    st.cur = sel.value;
-    lineChart(pane.querySelector('.fin-chart'), Object.fromEntries(Object.entries(series).filter(([k]) => (accByKey(k)?.currency || 'BRL') === st.cur)));
+    st.balCur = sel.value;
+    lineChart(pane.querySelector('.fin-chart'), Object.fromEntries(Object.entries(series).filter(([k]) => (accByKey(k)?.currency || 'BRL') === st.balCur)));
   };
   sel.addEventListener('change', draw);
   draw();
@@ -731,7 +732,8 @@ async function renderAudit(pane) {
         + (a.chain_breaks || []).map(c => `<li>entre ${day(c.between[0])} e ${day(c.between[1])}: fatura anterior fechou ${money(c.prev_closing, cur)} e a seguinte abriu ${money(c.next_opening, cur)} — ${esc(c.hint)}</li>`).join('')
         || `<li class="fin-dim">${a.bills} faturas, todas fecham e encadeiam.</li>`;
     }
-    const miss = a.coverage.missing_months.length ? `<div class="fin-dim">meses sem nenhuma transação: ${a.coverage.missing_months.join(', ')}</div>` : '';
+    const miss = (a.coverage.missing_months.length ? `<div class="fin-dim">meses sem nenhum arquivo (falta extrato/fatura): ${a.coverage.missing_months.join(', ')}</div>` : '')
+      + ((a.coverage.idle_months || []).length ? `<div class="fin-dim">meses sem uso (o arquivo cobre, não houve lançamento): ${a.coverage.idle_months.join(', ')}</div>` : '');
     return `<div class="fin-card"><div class="fin-card-h">${esc(accLabel(acc))} ${statusChip({ status: a.status, problems: (a.breaks || []).length + (a.unbalanced || []).length + (a.chain_breaks || []).length })}
       <span class="fin-hint">${day(a.coverage.first + '-01')} → ${a.coverage.last}</span></div><ul class="fin-list">${body}</ul>${miss}</div>`;
   }).join('');

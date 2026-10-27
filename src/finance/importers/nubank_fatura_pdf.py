@@ -14,7 +14,7 @@ from src.finance.importers.pdf_text import pdf_text
 from src.finance.money import parse_brl
 
 NAME = "nubank_fatura_pdf"
-VERSION = 1
+VERSION = 2
 TOLERANCE_CENTS = 2
 
 _MON = {"JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6, "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12}
@@ -35,6 +35,24 @@ def _summary(text: str, label: str) -> int | None:
     block = block[: block.find("\n", block.find("Total a pagar"))]
     m = re.search(rf"{label}.*?\s({_AMT})\s*$", block, re.M)
     return parse_brl(m.group(1)) if m else None
+
+
+def _infer_green_credit(records: list[Record], diff: int) -> Record | None:
+    """O Nubank as vezes marca um estorno so com a cor verde, com o nome do estabelecimento
+    (ex.: "iFood 42,90" em 08/2023), e o texto do PDF perde a cor. Se a fatura nao fecha e
+    inverter o sinal de UMA unica compra fecha o total, essa compra era credito. Mais de um
+    candidato = ambiguo: nao adivinha (fica o warning de fatura que nao fecha).
+    """
+    if diff <= TOLERANCE_CENTS:
+        return None
+    cands = [r for r in records if r.kind == "PURCHASE" and abs(-2 * r.amount_cents - diff) <= TOLERANCE_CENTS]
+    if len(cands) != 1:
+        return None
+    r = cands[0]
+    r.amount_cents = -r.amount_cents
+    r.kind = "CREDIT"
+    r.extra["sign_inferred"] = "fatura"
+    return r
 
 
 def parse(name: str, data: bytes, text: str | None = None) -> ParsedFile:
@@ -76,6 +94,11 @@ def parse(name: str, data: bytes, text: str | None = None) -> ParsedFile:
 
     warnings = []
     diff = -total - (-previous + sum(r.amount_cents for r in records))
+    flipped = _infer_green_credit(records, diff)
+    if flipped is not None:
+        diff -= 2 * flipped.amount_cents
+        warnings.append(f"credito inferido pelo total da fatura: {flipped.date} {flipped.description} "
+                        f"{flipped.amount_cents} centavos (no PDF vem so em verde, sem 'Estorno')")
     if abs(diff) > TOLERANCE_CENTS:
         warnings.append(f"fatura nao fecha: anterior {previous} + itens != total {total} (diferenca {diff} centavos)")
     start = ymd(p.group(1), p.group(2))

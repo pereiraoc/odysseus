@@ -40,6 +40,8 @@ def _print_report(rep: list[dict]) -> None:
         print(f"\n== {r['account']}  [{r['status']}]  {r['transactions']} transacoes  {cov['first']} .. {cov['last']}")
         if cov["missing_months"]:
             print(f"   meses sem transacao: {', '.join(cov['missing_months'])}")
+        if cov.get("idle_months"):
+            print(f"   meses sem uso (arquivo cobre, sem lancamentos): {', '.join(cov['idle_months'])}")
         if "checked" in r:
             print(f"   checkpoints conferidos: {r['checked']}  quebras: {len(r['breaks'])}")
             for b in r["breaks"][:20]:
