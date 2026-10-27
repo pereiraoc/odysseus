@@ -79,6 +79,12 @@ def _presets() -> list[dict]:
     return out
 
 
+def _is_serving(preset: dict, served: list[str]) -> bool:
+    """O llama-server responde o caminho do .gguf ou um alias, nao o repo: casa pelo nome do modelo."""
+    stem = preset["model"].split("/")[-1].lower().removesuffix("-gguf")
+    return any(stem in (m or "").lower() or m == preset["model"] for m in served)
+
+
 def _serving(port: str) -> list[str]:
     """Modelos que o servidor local na porta responde agora ([] = desligado)."""
     try:
@@ -133,16 +139,18 @@ def setup_trading_routes() -> APIRouter:
         presets = _presets()
         up = {port: _serving(port) for port in {p["port"] for p in presets}}
         preset_models = {p["model"] for p in presets}
-        endpoints = []
+        endpoints, recent = [], set()
         for e in _enabled_endpoints(user):
             host = urlsplit(e.get("base_url", "")).hostname
             local = host in ("localhost", "127.0.0.1", "0.0.0.0")
             if local and set(e["models"]) <= preset_models:
+                recent |= set(e["models"])  # o ultimo que o Cookbook serviu: vira o padrao do painel
                 continue  # o mesmo modelo ja aparece como preset do Cookbook (com "Ligar")
             port = str(urlsplit(e["base_url"]).port or 80) if local else None
             endpoints.append({"id": e["id"], "name": e["name"], "models": e["models"],
                               "running": bool(_serving(port)) if local else True})
-        return {"endpoints": endpoints, "presets": [{**p, "running": bool(up.get(p["port"]))} for p in presets]}
+        return {"endpoints": endpoints, "presets": [{**p, "running": _is_serving(p, up.get(p["port"]) or []),
+                             "recent": p["model"] in recent} for p in presets]}
 
     @r.api_route("/lab/{path:path}", methods=["GET", "POST", "DELETE"])
     async def lab(path: str, request: Request, user: str = Depends(require_user)):

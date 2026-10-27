@@ -73,3 +73,11 @@ def test_models_never_expose_keys(setup, monkeypatch):
     assert "sk-secret" not in r.text and r.json()["presets"][0]["name"] == "Qwen3.6"
     assert r.json()["presets"][0]["running"] is False
     assert [e["id"] for e in r.json()["endpoints"]] == ["e1"] and r.json()["endpoints"][0]["running"] is True
+
+
+def test_is_serving_matches_gguf_path():
+    import routes.trading_routes as tr
+    p = {"model": "unsloth/Qwen3.6-35B-A3B-GGUF"}
+    assert tr._is_serving(p, ["/app/.cache/huggingface/hub/x/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"])
+    assert tr._is_serving(p, ["Qwen3.6-35B-A3B-GGUF"]) and not tr._is_serving({"model": "unsloth/Qwen3.5-4B-GGUF"}, ["Qwen3.6-35B-A3B-GGUF"])
+    assert not tr._is_serving(p, [])

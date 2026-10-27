@@ -83,13 +83,13 @@ async function loadModels(force = false) {
   if (!st.models || force) st.models = await call('GET', `${API}/models`);
   const options = modelOptions();
   if (!options.some(o => o.value === st.model)) st.model = load('model') || '';
-  if (!options.some(o => o.value === st.model)) st.model = (options.find(o => o.running) || options[0])?.value || '';
+  if (!options.some(o => o.value === st.model)) st.model = (options.find(o => o.running) || options.find(o => o.recent) || options[0])?.value || '';
   return st.models;
 }
 function modelOptions() {
   const m = st.models || { endpoints: [], presets: [] };
   return [
-    ...m.presets.map(p => ({ value: `preset|${p.name}`, label: p.name, group: 'Cookbook (local)', running: p.running, preset: p.name })),
+    ...m.presets.map(p => ({ value: `preset|${p.name}`, label: p.name, group: 'Cookbook (local)', running: p.running, recent: p.recent, preset: p.name })),
     ...m.endpoints.flatMap(e => (e.models || []).map(x => ({ value: `ep|${e.id}|${x}`, label: x, group: e.name, running: e.running !== false }))),
   ];
 }
