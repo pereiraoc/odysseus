@@ -46,7 +46,11 @@ async def action_trading_run(owner: str, task_name: str = "", progress_cb=None, 
         say("esperando o modelo subir…")
         await asyncio.sleep(POLL_S or 0)
     payload = {k: body[k] for k in ("tickers", "watchlist_id", "analysts", "model", "api_key") if k in body}
-    if cfg.get("portfolio_id"):
+    if cfg.get("radar"):
+        resp = await tr.lab_request("POST", "radar/run", json_body={k: payload[k] for k in ("analysts", "model", "api_key")
+                                                                    if k in payload})
+        ids = [resp.json()["id"]] if resp.status_code == 200 else None
+    elif cfg.get("portfolio_id"):
         resp = await tr.lab_request("POST", f"portfolios/{cfg['portfolio_id']}/run", json_body=payload)
         ids = resp.json().get("ids", []) if resp.status_code == 200 else None
     else:
@@ -63,18 +67,21 @@ async def action_trading_run(owner: str, task_name: str = "", progress_cb=None, 
     deadline = time.monotonic() + 3600 * float(cfg.get("max_hours", 12))
     results: dict[int, dict] = {}
     while len(results) < len(ids):
-        for jid in ids:
+        for jid in list(ids):
             if jid in results:
                 continue
             job = (await tr.lab_request("GET", f"jobs/{jid}")).json()
             if job.get("status") in ("done", "failed", "review"):
                 results[jid] = job
+                # o Radar enfileira as acoes escolhidas: espera por elas tambem
+                ids += [j for j in (job.get("payload") or {}).get("jobs", []) if j not in ids]
         say(f"{len(results)}/{len(ids)} análises prontas")
         if len(results) < len(ids):
             if time.monotonic() >= deadline:
                 break
             await asyncio.sleep(POLL_S or 0)
-    lines = [f"{j['ticker']} {j.get('rating') or j['status']}" for j in results.values()]
+    lines = [f"Radar escolheu {', '.join((j.get('payload') or {}).get('picks') or []) or 'nada'}" if j.get("kind") == "radar"
+             else f"{j['ticker']} {j.get('rating') or j['status']}" for j in results.values()]
     missing = len(ids) - len(results)
     failed = sum(1 for j in results.values() if j["status"] == "failed")
     text = ", ".join(lines) + (f" · {missing} ainda na fila" if missing else "")

@@ -47,3 +47,24 @@ def test_gives_up_when_model_never_comes_up(monkeypatch):
     monkeypatch.setattr(tr, "_presets", lambda: [{"name": "Qwen3.6", "model": "m"}])
     msg, ok = asyncio.run(ta.action_trading_run("u", prompt=prompt))
     assert not ok and "não respondeu" in msg
+
+
+def test_radar_run_waits_for_picks(monkeypatch):
+    import routes.trading_action as ta
+    import routes.trading_routes as tr
+
+    def handler(request):
+        if request.url.path == "/radar/run":
+            return httpx.Response(200, json={"id": 5})
+        if request.url.path == "/jobs/5":
+            return httpx.Response(200, json={"id": 5, "kind": "radar", "status": "done", "payload": {"picks": ["TSLA"], "jobs": [6]}})
+        if request.url.path == "/jobs/6":
+            return httpx.Response(200, json={"id": 6, "kind": "analysis", "ticker": "TSLA", "status": "done", "rating": "Buy"})
+        return httpx.Response(404)
+
+    monkeypatch.setattr(tr, "_transport", httpx.MockTransport(handler))
+    monkeypatch.setattr(tr, "_presets", lambda: [{"name": "Qwen3.6", "model": "m", "port": "8000"}])
+    monkeypatch.setattr(ta, "_model_up", lambda base, key: asyncio.sleep(0, True))
+    monkeypatch.setattr(ta, "POLL_S", 0)
+    msg, ok = asyncio.run(ta.action_trading_run("u", prompt=json.dumps({"radar": True, "local_preset": "Qwen3.6"})))
+    assert ok and "Radar escolheu TSLA" in msg and "TSLA Buy" in msg

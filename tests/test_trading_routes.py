@@ -22,7 +22,8 @@ def setup(monkeypatch):
     monkeypatch.setattr(tr, "_transport", httpx.MockTransport(handler))
     monkeypatch.setattr(tr, "_endpoint_row", lambda eid, owner: {
         "id": eid, "base_url": "http://localhost:8000/v1", "api_key": "sk-x", "name": "Local"})
-    monkeypatch.setattr(tr, "_presets", lambda: [{"name": "Qwen3.6", "model": "unsloth/Qwen3.6-35B-A3B-GGUF"}])
+    monkeypatch.setattr(tr, "_presets", lambda: [{"name": "Qwen3.6", "model": "unsloth/Qwen3.6-35B-A3B-GGUF", "port": "8000"}])
+    monkeypatch.setattr(tr, "_serving", lambda port: [])
     app = FastAPI()
     app.include_router(tr.setup_trading_routes())
     return TestClient(app), seen, tr
@@ -69,3 +70,4 @@ def test_models_never_expose_keys(setup, monkeypatch):
         {"id": "e1", "name": "GLM", "models": ["glm-5.3-flash"], "api_key": "sk-secret"}])
     r = c.get("/api/trading/models")
     assert "sk-secret" not in r.text and r.json()["presets"][0]["name"] == "Qwen3.6"
+    assert r.json()["presets"][0]["running"] is False

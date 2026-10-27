@@ -25,7 +25,6 @@ from src.constants import DATA_DIR
 
 LAB_URL = os.getenv("TRADING_LAB_URL", "http://tradingagents-lab:7100")
 LOCAL_HOST = os.getenv("TRADING_LAB_LOCAL_HOST", "odysseus")
-LOCAL_BASE = "http://localhost:8000/v1"
 COOKBOOK_STATE = Path(DATA_DIR) / "cookbook_state.json"
 _transport: httpx.BaseTransport | None = None
 
@@ -75,8 +74,18 @@ def _presets() -> list[dict]:
     for p in state.get("presets", []):
         if p.get("confirmedWorking") and p.get("name") not in seen:
             seen.add(p["name"])
-            out.append({"name": p["name"], "model": p.get("model") or p["name"]})
+            port = str((p.get("fields") or {}).get("port") or p.get("port") or "8000")
+            out.append({"name": p["name"], "model": p.get("model") or p["name"], "port": port})
     return out
+
+
+def _serving(port: str) -> list[str]:
+    """Modelos que o servidor local na porta responde agora ([] = desligado)."""
+    try:
+        r = httpx.get(f"http://localhost:{port}/v1/models", timeout=1.5)
+        return [m.get("id") for m in r.json().get("data", [])] if r.status_code == 200 else []
+    except (httpx.HTTPError, ValueError):
+        return []
 
 
 def resolve_model(body: dict, owner: str) -> dict:
@@ -90,7 +99,7 @@ def resolve_model(body: dict, owner: str) -> dict:
         p = next((x for x in _presets() if x["name"] == preset), None)
         if p is None:
             raise HTTPException(400, f"preset do Cookbook não encontrado: {preset}")
-        body["model"] = {"provider": "openai_compatible", "base_url": local_alias(LOCAL_BASE),
+        body["model"] = {"provider": "openai_compatible", "base_url": local_alias(f"http://localhost:{p.get('port', '8000')}/v1"),
                          "quick": quick or p["model"], "deep": deep or quick or p["model"]}
     elif endpoint_id:
         ep = _endpoint_row(endpoint_id, owner)
@@ -121,8 +130,10 @@ def setup_trading_routes() -> APIRouter:
 
     @r.get("/models")
     def models(user: str = Depends(require_user)):
+        presets = _presets()
+        up = {port: _serving(port) for port in {p["port"] for p in presets}}
         return {"endpoints": [{k: e[k] for k in ("id", "name", "models")} for e in _enabled_endpoints(user)],
-                "presets": _presets()}
+                "presets": [{**p, "running": bool(up.get(p["port"]))} for p in presets]}
 
     @r.api_route("/lab/{path:path}", methods=["GET", "POST", "DELETE"])
     async def lab(path: str, request: Request, user: str = Depends(require_user)):
