@@ -8,7 +8,10 @@ faturas (fechamento N == abertura N+1, senao falta fatura no meio).
 """
 from __future__ import annotations
 
+import json
+import re
 from bisect import bisect_right
+from datetime import datetime
 from collections import defaultdict
 
 from src.finance.store import Store
@@ -19,10 +22,31 @@ def _account_kind(store: Store, key: str) -> str:
     return row["kind"] if row else "?"
 
 
+def _utc(ts: str) -> datetime:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def _snapshot(note: str | None) -> datetime | None:
+    """Instante da leitura gravado no note do checkpoint ('... @2026-10-21T02:17:35.473Z')."""
+    m = re.search(r"@(\d{4}-\d\d-\d\dT[\d:.]+Z)$", note or "")
+    return _utc(m.group(1)) if m else None
+
+
 def reconcile_balances(store: Store, account_key: str) -> dict:
     db = store.db
-    txs = db.execute("SELECT date, amount_cents, description FROM transactions WHERE account_key=? ORDER BY date, id",
+    txs = db.execute("SELECT id, date, amount_cents, description FROM transactions WHERE account_key=? ORDER BY date, id",
                      (account_key,)).fetchall()
+    # instante exato (UTC) dos lancamentos que a fonte informa (Pluggy): p/ saldos lidos no meio do dia
+    stamps: dict[int, str] = {}
+    for r in db.execute("SELECT l.tx_id, s.extra_json FROM tx_links l JOIN source_records s ON s.id=l.record_id"
+                        " WHERE s.account_key=? AND s.extra_json LIKE '%\"ts\"%'", (account_key,)):
+        ts = json.loads(r["extra_json"] or "{}").get("ts")
+        if ts:
+            stamps[r["tx_id"]] = max(ts, stamps.get(r["tx_id"], ""))
+    by_day: dict[str, list] = defaultdict(list)
+    for t in txs:
+        if t["id"] in stamps:
+            by_day[t["date"]].append((stamps[t["id"]], t["amount_cents"]))
     cps = db.execute("SELECT date, balance_cents, note, sha256 FROM checkpoints WHERE account_key=? AND kind='closing'"
                      " ORDER BY date", (account_key,)).fetchall()
     if not cps:
@@ -38,8 +62,16 @@ def reconcile_balances(store: Store, account_key: str) -> dict:
         i = bisect_right(dates, d)
         return cum[i - 1] if i else 0
 
+    def at_checkpoint(cp) -> int:
+        """Soma ate o saldo: o dia todo, menos o que a fonte fez depois da leitura (saldo de meio do dia)."""
+        total = sum_until(cp["date"])
+        snap = _snapshot(cp["note"])
+        if snap:
+            total -= sum(a for ts, a in by_day.get(cp["date"], ()) if _utc(ts) > snap)
+        return total
+
     anchor = cps[0]
-    base = anchor["balance_cents"] - sum_until(anchor["date"])
+    base = anchor["balance_cents"] - at_checkpoint(anchor)
     points = []
     seen = set()
     for cp in cps:
@@ -47,7 +79,7 @@ def reconcile_balances(store: Store, account_key: str) -> dict:
         if k in seen:
             continue
         seen.add(k)
-        calc = base + sum_until(cp["date"])
+        calc = base + at_checkpoint(cp)
         points.append({"date": cp["date"], "expected": cp["balance_cents"], "computed": calc,
                        "diff": calc - cp["balance_cents"], "note": cp["note"]})
     # quebra = ponto onde a diferenca MUDA. Diferenca constante depois de uma quebra e o

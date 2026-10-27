@@ -641,18 +641,24 @@ def test_nubank_fatura_infers_green_credit_from_total():
     assert all(r.kind != "CREDIT" for r in q.records) and "nao fecha" in q.warnings[-1]
 
 
-def test_pluggy_midday_balance_includes_later_same_day_tx():
-    """Saldo lido 20/10 23:17 BRT; PIX de 2000 as 23:18: o checkpoint do dia ja inclui o PIX."""
+def test_pluggy_midday_balance_ignores_later_same_day_tx(store):
+    """Saldo lido 20/10 23:17 BRT; PIX de 2000 as 23:18 chega so no blob do dia seguinte: sem quebra."""
     import json as _json
-    from src.finance.importers.pluggy import parse_multi
-    bank = {"_source": "pluggy", "kind": "account", "item": "i1", "institution": "santander",
-            "item_last_updated": "2026-10-21T02:17:35Z",
-            "account": {"id": "a2", "type": "BANK", "currencyCode": "BRL", "number": "1080", "balance": -1874.26},
-            "transactions": [
-                {"id": "x1", "type": "CREDIT", "amount": 2000, "date": "2026-10-21T02:18:37Z", "description": "Pix", "status": "POSTED"},
-                {"id": "x0", "type": "DEBIT", "amount": -5, "date": "2026-10-20T12:00:00Z", "description": "Cafe", "status": "POSTED"}]}
-    cp = parse_multi("s.json", _json.dumps(bank).encode())[0].checkpoints[0]
-    assert cp.date == "2026-10-20" and cp.balance_cents == -187426 + 200000 and "apos a leitura" in cp.note
+    from src.finance import reconcile
+    def blob(updated, balance, txs):
+        return _json.dumps({"_source": "pluggy", "kind": "account", "item": "i1", "institution": "santander",
+                            "item_last_updated": updated,
+                            "account": {"id": "a2", "type": "BANK", "currencyCode": "BRL", "number": "1080", "balance": balance},
+                            "transactions": txs}).encode()
+    cafe = {"id": "x0", "type": "DEBIT", "amount": -5, "date": "2026-10-20T12:00:00Z", "description": "Cafe", "status": "POSTED"}
+    pix = {"id": "x1", "type": "CREDIT", "amount": 2000, "date": "2026-10-21T02:18:37Z", "description": "Pix", "status": "POSTED"}
+    ingest_bytes(store, "a.json", blob("2026-10-20T10:00:00Z", 105, []))
+    ingest_bytes(store, "b.json", blob("2026-10-21T02:17:35Z", 100, [cafe]))
+    ingest_bytes(store, "c.json", blob("2026-10-22T02:18:32Z", 2100, [cafe, pix]))
+    from src.finance import pipeline
+    pipeline.refresh(store)
+    r = reconcile.reconcile_balances(store, "santander:checking:1080:BRL")
+    assert r["checked"] == 3 and r["breaks"] == [], r["breaks"]
 
 
 def test_coverage_separates_idle_from_missing(store):

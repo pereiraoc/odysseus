@@ -20,6 +20,7 @@ from src.finance.money import parse_decimal
 NAME = "pluggy"
 VERSION = 5
 TZ = ZoneInfo("America/Sao_Paulo")
+SNAPSHOT_MARK = "@"   # note do checkpoint: "... @<instante UTC da leitura>"
 
 
 def sniff(name: str, head: bytes) -> bool:
@@ -29,10 +30,6 @@ def sniff(name: str, head: bytes) -> bool:
 def local_date(ts: str) -> str:
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     return dt.astimezone(TZ).date().isoformat()
-
-
-def _utc(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def cents(v) -> int:
@@ -56,7 +53,6 @@ def parse_multi(name: str, data: bytes) -> list[ParsedFile]:
     ref = account_ref(inst, acc)
     credit = acc.get("type") == "CREDIT"
     records, pending = [], 0
-    stamps: list[str] = []  # instante UTC de cada record (paralelo a records), p/ o saldo de meio do dia
     owner_doc = "".join(ch for ch in (acc.get("taxNumber") or "") if ch.isdigit())
     if inst != "wise":
         for t in doc.get("transactions", []):
@@ -99,19 +95,14 @@ def parse_multi(name: str, data: bytes) -> list[ParsedFile]:
                 amount = cents(t["amountInAccountCurrency"])
             records.append(Record(local_date(when), -amount if credit else amount,
                                   " ".join((t.get("description") or "").split()), t["id"], t.get("type", ""), extra))
-            stamps.append(when)
+            extra["ts"] = when
     checkpoints = []
     if not credit and acc.get("balance") is not None and doc.get("item_last_updated"):
-        # O saldo e um retrato do instante da leitura, nao do fim do dia: lancamentos do mesmo
-        # dia (horario de Brasilia) feitos DEPOIS dela entram aqui, senao a conferencia (por data)
-        # acusa uma quebra que se desfaz no saldo seguinte (PIX de 2000 1 min depois, 20/10/2026).
-        snap = _utc(doc["item_last_updated"])
-        day = local_date(doc["item_last_updated"])
-        later = [r.amount_cents for r, ts in zip(records, stamps) if r.date == day and _utc(ts) > snap]
-        note = "Pluggy saldo na ultima atualizacao do banco"
-        if later:
-            note += f" + {len(later)} lancamento(s) do mesmo dia apos a leitura"
-        checkpoints.append(Checkpoint(day, cents(acc["balance"]) + sum(later), "closing", note))
+        # O saldo e um retrato do instante da leitura, nao do fim do dia. O instante vai no note
+        # (@<UTC>) e cada record leva extra["ts"]: reconcile ignora lancamentos do mesmo dia feitos
+        # depois da leitura -- que podem chegar so no blob seguinte (PIX de 2000, 1 min depois, 20/10/2026).
+        checkpoints.append(Checkpoint(local_date(doc["item_last_updated"]), cents(acc["balance"]), "closing",
+                                      f"Pluggy saldo na ultima atualizacao do banco {SNAPSHOT_MARK}{doc['item_last_updated']}"))
     warnings = [f"{pending} lancamentos PENDING guardados so no bruto"] if pending else []
     dates = sorted(r.date for r in records)
     return [ParsedFile(NAME, VERSION, ref, records, checkpoints,
