@@ -156,6 +156,20 @@ def setup_trading_routes() -> APIRouter:
         return {"endpoints": endpoints, "presets": [{**p, "running": _is_serving(p, up.get(p["port"]) or []),
                              "recent": p["model"] in recent} for p in presets]}
 
+    @r.post("/start-model")
+    async def start_model(request: Request, user: str = Depends(require_user)):
+        """Liga um preset do Cookbook AGORA, dentro deste pedido. Como tarefa em segundo plano nao
+        da: qualquer pedido da interface logo depois (o proprio toast) para as tarefas de fundo."""
+        preset = ((await request.json()) or {}).get("preset") or ""
+        if preset not in {p["name"] for p in _presets()}:
+            raise HTTPException(404, f"preset {preset!r} nao existe no Cookbook")
+        from src.builtin_actions import action_cookbook_serve
+        msg, ok = await action_cookbook_serve(user, task_name=f"Trading — ligar {preset}", command=json.dumps(
+            {"preset": preset, "end_after_min": 240, "set_default": False}))
+        if not ok:
+            raise HTTPException(502, msg)
+        return {"ok": True, "message": msg}
+
     @r.api_route("/lab/{path:path}", methods=["GET", "POST", "DELETE"])
     async def lab(path: str, request: Request, user: str = Depends(require_user)):
         body = None

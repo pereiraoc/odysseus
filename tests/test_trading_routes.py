@@ -91,3 +91,13 @@ def test_lab_error_never_returns_the_key(setup, monkeypatch):
     monkeypatch.setattr(tr, "_transport", httpx.MockTransport(echo))
     r = c.post("/api/trading/lab/jobs", json={"date": "2026-06-01", "endpoint_id": "e1", "model_name": "qwen"})
     assert r.status_code == 422 and "sk-x" not in r.text
+
+
+def test_toast_log_without_login_is_not_401(monkeypatch):
+    """LOCAL_CHANGES §9: sem login, gravar o toast nao pode dar 401 (o fetch global iria a /login)."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    from routes.task.task_routes import setup_task_routes
+    app = FastAPI()
+    app.include_router(setup_task_routes(None))
+    r = TestClient(app).post("/api/tasks/notification-logs", json={"body": "oi"})
+    assert r.status_code == 200 and r.json()["stored"] is False

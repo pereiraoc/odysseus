@@ -118,20 +118,22 @@ function renderModelBar() {
   els.modelbar.querySelector('.trd-mb-refresh')?.addEventListener('click', async () => { await loadModels(true); renderModelBar(); });
   els.modelbar.querySelector('.trd-mb-start')?.addEventListener('click', e => startPreset(cur.preset, e.target));
 }
-// Liga o preset pelo mesmo caminho da Agenda: tarefa cookbook_serve (webhook) disparada agora.
+// Liga o preset direto (POST /api/trading/start-model), sem tarefa: tarefa de fundo disparada
+// pela interface e parada pelo proprio Odysseus no pedido seguinte.
 async function startPreset(preset, btn) {
   btn.disabled = true; btn.textContent = 'ligando…';
   try {
-    const name = `Trading — ligar ${preset}`;
-    const { tasks } = await call('GET', '/api/tasks');
-    let task = tasks.find(t => t.name === name && t.action === 'cookbook_serve');
-    if (!task) {
-      task = await call('POST', '/api/tasks', { name, task_type: 'action', action: 'cookbook_serve', trigger_type: 'webhook',
-        prompt: JSON.stringify({ preset, end_after_min: 240 }), notifications_enabled: false });
-    }
-    await call('POST', `/api/tasks/${task.id}/run`);
+    await call('POST', '/api/trading/start-model', { preset });
+    btn.textContent = 'subindo…';
     showToast(`Ligando ${preset} — leva 1–2 min; as análises na fila esperam por ele (desliga sozinho em 4 h)`);
-    setTimeout(async () => { await loadModels(true).catch(() => {}); renderModelBar(); }, 60000);
+    const until = Date.now() + 5 * 60000;
+    const check = async () => {
+      await loadModels(true).catch(() => {});
+      const up = st.models?.presets?.find(p => p.name === preset)?.running;
+      if (up || Date.now() > until) { renderModelBar(); return; }
+      setTimeout(check, 10000);
+    };
+    setTimeout(check, 10000);
   } catch (e) { showError(`Ligar ${preset}: ${e.message}`); btn.disabled = false; btn.textContent = 'Ligar'; }
 }
 
@@ -583,7 +585,7 @@ async function renderSchedule(pane) {
     const radarRun = kind.value === 'radar';
     const wl = pane.querySelector('.trd-swl').value;
     if (!radarRun && !wl) return showError('Crie uma lista de ações antes');
-    const cfg = { analysts: [...st.analysts], ...model, wait_model_min: 30 };
+    const cfg = { analysts: [...st.analysts], ...model };
     if (radarRun) cfg.radar = true;
     else {
       cfg.watchlist_id = Number(wl);

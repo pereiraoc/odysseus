@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun, NotificationLog
 from core.constants import internal_api_base
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.endpoint_resolver import resolve_owner_registered_endpoint_url
 from src.task_action_policy import (
@@ -619,7 +619,10 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         """Persist an in-app toast so Settings can show notification history."""
         user = _owner(request)
         if not user:
-            raise HTTPException(401, "Authentication required")
+            # fork (LOCAL_CHANGES §9): sem login (AUTH_ENABLED=false / loopback) nao ha dono para
+            # o historico; 401 aqui fazia o fetch global mandar para /login a cada toast.
+            require_user(request)   # 401 so quando o login e de fato exigido
+            return {"success": True, "stored": False}
         body = await request.json()
         message = str(body.get("body") or "").strip()[:2000]
         if not message:

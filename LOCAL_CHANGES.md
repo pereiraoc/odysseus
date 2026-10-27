@@ -280,7 +280,9 @@ Aqui fica só o que é do Odysseus:
   endpoints habilitados (sem chave) e presets confirmados do Cookbook.
 - `routes/trading_action.py`: ação agendável `trading_run` (registrada em
   `BUILTIN_ACTIONS` pelo próprio módulo, sem editar `src/builtin_actions.py`). Config JSON no
-  prompt. Espera o modelo responder (`wait_model_min`), enfileira no lab, espera e resume.
+  prompt. Enfileira no lab **na hora** (o lab espera o modelo) e depois espera e resume — o
+  scheduler cancela toda tarefa em execução a cada pedido da interface, então nada de esperar
+  antes de enfileirar.
   **Não liga o Qwen** (a autoridade de tarefa não inclui `serve_model`): a aba Agenda cria
   uma `cookbook_serve` agendada com `then_task_id` → `trading_run` com `trigger_type`
   `webhook` (só roda encadeada).
@@ -290,8 +292,9 @@ Aqui fica só o que é do Odysseus:
 - Testes: `tests/test_trading_routes.py`, `tests/test_trading_action.py`.
 
 - Janela (27/10): abas Início, Radar, Analisar, Relatórios, Carteiras, Backtest, Agenda; **um modelo só
-  no topo** (presets do Cookbook com estado ligado/desligado e botão "Ligar" = tarefa `cookbook_serve`
-  disparada na hora); análise com o modelo desligado **espera na fila** (o lab não falha); andamento
+  no topo** (presets do Cookbook com estado ligado/desligado e botão "Ligar" = `POST
+  /api/trading/start-model`, que chama `action_cookbook_serve` dentro do pedido — como tarefa
+  disparada, o próprio toast seguinte a cancelava; `end_after_min` 240, `set_default` false); análise com o modelo desligado **espera na fila** (o lab não falha); andamento
   agente a agente com trecho de cada relatório; campo de ação com busca (`/search` do lab, `.SA` da B3
   automático). `GET /api/trading/models` testa o servidor local de cada preset e esconde o endpoint
   local que só duplica o preset.
@@ -307,3 +310,12 @@ Aqui fica só o que é do Odysseus:
 
 **Atualizar o motor:** `git pull` no fork → `docker compose build tradingagents-lab &&
 docker compose up -d tradingagents-lab` (não precisa reconstruir o Odysseus).
+
+## 9. Toast sem login não manda mais para /login  [bugfix, inline patch]
+
+`routes/task/task_routes.py` `POST /api/tasks/notification-logs`: todo `showToast` grava o aviso
+ali; sem login (AUTH_ENABLED=false / loopback) não há dono e a rota respondia **401**, e o
+`fetch` global de `static/app.js` manda qualquer 401 para `/login` → a página recarregava no
+chat a cada toast verde. Agora, sem usuário, chama `require_user` (401 só quando o login é de
+fato exigido) e devolve `{"stored": false}`. Mesmo bug no upstream (`dev` de 27/10).
+Teste: `tests/test_trading_routes.py::test_toast_log_without_login_is_not_401`.

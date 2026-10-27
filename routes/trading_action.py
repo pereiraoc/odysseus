@@ -11,21 +11,11 @@ import asyncio
 import json
 import time
 
-import httpx
 from fastapi import HTTPException
 
 POLL_S = 20
 INFO = ("Trading Lab: roda as análises de uma lista/carteira no Trading Lab "
         "(container tradingagents-lab) e resume as notas. Config JSON no prompt.")
-
-
-async def _model_up(base_url: str, api_key: str | None) -> bool:
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            return (await c.get(base_url.rstrip("/") + "/models", headers=headers)).status_code < 500
-    except httpx.HTTPError:
-        return False
 
 
 async def action_trading_run(owner: str, task_name: str = "", progress_cb=None, prompt: str = "", **kwargs):
@@ -38,17 +28,14 @@ async def action_trading_run(owner: str, task_name: str = "", progress_cb=None, 
     say = progress_cb or (lambda _m: None)
     try:
         body = tr.resolve_model(cfg, owner)
-        model, key = body["model"], body.get("api_key")
+        key = body.get("api_key")
+        if "model" not in body:
+            raise KeyError("sem local_preset nem endpoint_id")
     except (HTTPException, KeyError) as exc:   # preset/endpoint sumiu ou config sem modelo
         return f"Modelo da agenda inválido: {getattr(exc, 'detail', exc)}", False
-    # o lab enxerga o Odysseus como 'odysseus'; daqui, o mesmo servidor e localhost
-    probe = model["base_url"].replace(f"//{tr.LOCAL_HOST}:", "//localhost:")
-    deadline = time.monotonic() + 60 * float(cfg.get("wait_model_min", 20))
-    while not await _model_up(probe, key):
-        if time.monotonic() >= deadline:
-            return f"Modelo {model['quick']} não respondeu em {cfg.get('wait_model_min', 20)} min", False
-        say("esperando o modelo subir…")
-        await asyncio.sleep(POLL_S or 0)
+    # Enfileira JA, sem esperar o modelo aqui: o lab espera por ele (ate 2 h), e o Odysseus
+    # cancela tarefas de fundo assim que a interface e usada -- depois de enfileirar, isso so
+    # interrompe o resumo, nao as analises.
     payload = {k: body[k] for k in ("tickers", "watchlist_id", "analysts", "model", "api_key") if k in body}
     if cfg.get("radar"):
         resp = await tr.lab_request("POST", "radar/run", json_body={k: payload[k] for k in ("analysts", "model", "api_key")
