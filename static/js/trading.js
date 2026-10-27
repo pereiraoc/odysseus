@@ -118,18 +118,23 @@ function renderModelBar() {
   els.modelbar.querySelector('.trd-mb-refresh')?.addEventListener('click', async () => { await loadModels(true); renderModelBar(); });
   els.modelbar.querySelector('.trd-mb-start')?.addEventListener('click', e => startPreset(cur.preset, e.target));
 }
-// Liga o preset direto (POST /api/trading/start-model), sem tarefa: tarefa de fundo disparada
-// pela interface e parada pelo proprio Odysseus no pedido seguinte.
+// Liga o preset pelo MESMO caminho do botao Serve do Cookbook (_launchServeTask, clique do
+// usuario): o Odysseus so deixa subir modelo local por ele ou por tarefa agendada com
+// autoridade, e assim o serve aparece no Cookbook com Stop funcionando.
 async function startPreset(preset, btn) {
+  const p = st.models?.presets?.find(x => x.name === preset);
+  if (!p?.cmd) { showError(`Ligar ${preset}: preset sem comando — abra no Cookbook e salve de novo`); return; }
   btn.disabled = true; btn.textContent = 'ligando…';
   try {
-    await call('POST', '/api/trading/start-model', { preset });
+    // import na hora do clique: import fixo muda a ordem de avaliacao dos modulos e quebra o
+    // initRunning do cookbook.js (ciclo de imports); aqui ja e a mesma instancia inicializada
+    const { _launchServeTask } = await import('./cookbookRunning.js');
+    await _launchServeTask(p.name, p.model, p.cmd, p.fields, '');
     btn.textContent = 'subindo…';
-    showToast(`Ligando ${preset} — leva 1–2 min; as análises na fila esperam por ele (desliga sozinho em 4 h)`);
     const until = Date.now() + 5 * 60000;
     const check = async () => {
       await loadModels(true).catch(() => {});
-      const up = st.models?.presets?.find(p => p.name === preset)?.running;
+      const up = st.models?.presets?.find(x => x.name === preset)?.running;
       if (up || Date.now() > until) { renderModelBar(); return; }
       setTimeout(check, 10000);
     };

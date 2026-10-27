@@ -3392,6 +3392,10 @@ async def action_cookbook_serve(
 
     # Resolve env_prefix etc. from the host's saved cookbook server entry,
     # matching the chat agent's serve_model path.
+    # fork (LOCAL_CHANGES §10): presets salvos pela UI guardam host "localhost" para o servidor
+    # local; como remote_host isso vira SSH para localhost e o preflight acusa "tmux is required".
+    if host.lower() in ("localhost", "127.0.0.1", "::1", "local"):
+        host = ""
     body = {"repo_id": repo_id, "cmd": cmd}
     if host:
         body["remote_host"] = host

@@ -292,9 +292,9 @@ Aqui fica só o que é do Odysseus:
 - Testes: `tests/test_trading_routes.py`, `tests/test_trading_action.py`.
 
 - Janela (27/10): abas Início, Radar, Analisar, Relatórios, Carteiras, Backtest, Agenda; **um modelo só
-  no topo** (presets do Cookbook com estado ligado/desligado e botão "Ligar" = `POST
-  /api/trading/start-model`, que chama `action_cookbook_serve` dentro do pedido — como tarefa
-  disparada, o próprio toast seguinte a cancelava; `end_after_min` 240, `set_default` false); análise com o modelo desligado **espera na fila** (o lab não falha); andamento
+  no topo** (presets do Cookbook com estado ligado/desligado e botão "Ligar" = `_launchServeTask` do Cookbook importado de
+  `cookbookRunning.js` — o mesmo caminho do botão Serve; o Odysseus só aceita subir modelo local
+  por clique do usuário ou tarefa agendada com autoridade, e assim o serve aparece no Cookbook com Stop); análise com o modelo desligado **espera na fila** (o lab não falha); andamento
   agente a agente com trecho de cada relatório; campo de ação com busca (`/search` do lab, `.SA` da B3
   automático). `GET /api/trading/models` testa o servidor local de cada preset e esconde o endpoint
   local que só duplica o preset.
@@ -319,3 +319,12 @@ ali; sem login (AUTH_ENABLED=false / loopback) não há dono e a rota respondia 
 chat a cada toast verde. Agora, sem usuário, chama `require_user` (401 só quando o login é de
 fato exigido) e devolve `{"stored": false}`. Mesmo bug no upstream (`dev` de 27/10).
 Teste: `tests/test_trading_routes.py::test_toast_log_without_login_is_not_401`.
+
+## 10. Serve agendado de preset local + chamadas internas  [bugfix, inline patch + env]
+
+- `src/builtin_actions.py` `action_cookbook_serve`: preset com `host: "localhost"` (é assim que a
+  UI salva o servidor local) virava `remote_host=localhost` → SSH → "tmux is required…". Host de
+  loopback agora conta como local. Afeta toda `cookbook_serve` agendada (Agenda do Trading).
+- `docker/pereiraoc.yml`: `ODYSSEUS_INTERNAL_BASE=http://127.0.0.1:7000`. `internal_api_base()` usa
+  `APP_PORT`, que não entra no container (padrão 7011) → "All connection attempts failed" em toda
+  chamada do Odysseus para ele mesmo (serve agendado, ferramentas do agente).

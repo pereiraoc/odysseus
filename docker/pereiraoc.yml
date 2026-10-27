@@ -40,6 +40,11 @@ services:
       # em ./data/local foram instalados sob python3.12 → reinstalar sob 3.14 ao
       # voltar a servir GPU e ajustar este path (ver LOCAL_CHANGES.md).
       - LD_LIBRARY_PATH=/app/.local/lib/python3.12/site-packages/nvidia/cu13/lib
+      # Chamadas do Odysseus para ele mesmo (cookbook_serve agendado, "Ligar" do Trading,
+      # ferramentas do agente). Sem isto internal_api_base() usa APP_PORT, que nao chega ao
+      # container (cai no padrao 7011) -> "All connection attempts failed". O container
+      # sempre escuta em 7000, seja qual for a porta do host.
+      - ODYSSEUS_INTERNAL_BASE=http://127.0.0.1:7000
       # Painel de Vaults (routes/vaultfs_routes.py): identidade git dos commits
       # feitos pela UI e credencial de push/pull https. O token vai SÓ por env
       # (o credential helper inline referencia $VAULTFS_GIT_TOKEN — nunca em
