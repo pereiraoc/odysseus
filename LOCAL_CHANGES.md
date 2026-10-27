@@ -261,3 +261,38 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
   numa camada própria antes do `COPY . .` (não invalida o cache do pip). Ao sincronizar,
   reaplicar se o upstream mexer nessa região.
 - `docker/pereiraoc.yml`: envs `WISE_API_TOKEN`, `FINANCE_PDF_PASSWORD`, `PLUGGY_*` (valores só no `.env`).
+
+## 8. Trading — painel fino sobre o Trading Lab  [feature local + serviço extra no compose]
+
+Grupo "Trading" na barra lateral para testar o TradingAgents com **dinheiro fictício**
+(nunca envia ordem real): analisar uma ação numa data, ler o relatório, carteiras ao vivo e
+de reencenação (período passado) comparadas ao índice, backtest e agenda.
+
+**A lógica toda vive no fork `pereiraoc/TradingAgents`** (`tradingagents/lab`, doc em
+`docs/lab.md` de lá; spec `docs/superpowers/specs/2026-10-26-trading-lab-design.md`), servido
+pelo container `tradingagents-lab` (rede interna, porta 7100, dados em `/data/trading`).
+Aqui fica só o que é do Odysseus:
+
+- `routes/trading_routes.py`: proxy autenticado `/api/trading/lab/*`; nos POST troca
+  `endpoint_id`+`model_name` (ou `local_preset` do Cookbook) por `model` + `api_key`
+  (chave decifrada do `ModelEndpoint`, só no corpo para a rede interna; `localhost` vira
+  `odysseus`, que é como o lab enxerga este container). `GET /api/trading/models` lista
+  endpoints habilitados (sem chave) e presets confirmados do Cookbook.
+- `routes/trading_action.py`: ação agendável `trading_run` (registrada em
+  `BUILTIN_ACTIONS` pelo próprio módulo, sem editar `src/builtin_actions.py`). Config JSON no
+  prompt. Espera o modelo responder (`wait_model_min`), enfileira no lab, espera e resume.
+  **Não liga o Qwen** (a autoridade de tarefa não inclui `serve_model`): a aba Agenda cria
+  uma `cookbook_serve` agendada com `then_task_id` → `trading_run` com `trigger_type`
+  `webhook` (só roda encadeada).
+- `static/js/trading.js`, `static/css/zz-fork-trading.css`: janela com Analisar,
+  Relatórios (HTML do lab em `<iframe sandbox srcdoc>` — o app manda X-Frame-Options DENY),
+  Carteiras, Backtest e Agenda.
+- Testes: `tests/test_trading_routes.py`, `tests/test_trading_action.py`.
+
+**Hooks mínimos em arquivos do upstream:** `app.py` (router após o de Finanças),
+`static/index.html` (seção `#trading-section`, `<link>`, `<script type="module">`),
+`static/sw.js` (CSS no PRECACHE + `CACHE_NAME`), `docker/pereiraoc.yml` (serviço
+`tradingagents-lab` + env `TRADING_LAB_URL`).
+
+**Atualizar o motor:** `git pull` no fork → `docker compose build tradingagents-lab &&
+docker compose up -d tradingagents-lab` (não precisa reconstruir o Odysseus).

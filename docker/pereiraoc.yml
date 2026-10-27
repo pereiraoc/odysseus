@@ -80,3 +80,21 @@ services:
       - PLUGGY_CLIENT_SECRET=${PLUGGY_CLIENT_SECRET:-}
       - PLUGGY_ITEM_IDS=${PLUGGY_ITEM_IDS:-}
       - CSP_EXTRA_FRAME_SRC=http://localhost:3010 http://localhost:3011 http://localhost:3012 http://localhost:3013 http://localhost:3014 http://localhost:3015 http://localhost:3016 http://localhost:3017 http://localhost:3018 http://localhost:3019
+      # Grupo "Trading" (LOCAL_CHANGES.md §8): o painel fala com o Trading Lab pela
+      # rede interna do compose.
+      - TRADING_LAB_URL=http://tradingagents-lab:7100
+
+  # Trading Lab (LOCAL_CHANGES.md §8): motor do fork pereiraoc/TradingAgents
+  # (tradingagents/lab). Toda a logica de carteira ficticia vive la; sem ports
+  # (so a rede interna). Alcanca o Qwen do Cookbook em http://odysseus:8000/v1.
+  # Atualizar: git pull no fork + `docker compose build tradingagents-lab && docker compose up -d tradingagents-lab`.
+  tradingagents-lab:
+    build: /data/projects/TradingAgents
+    image: tradingagents-lab:latest
+    pull_policy: build
+    command: ["lab", "serve", "--host", "0.0.0.0", "--port", "7100"]
+    environment:
+      - TRADINGAGENTS_LAB_DIR=/home/appuser/.tradingagents
+    volumes:
+      - /data/trading:/home/appuser/.tradingagents
+    restart: unless-stopped
