@@ -150,7 +150,7 @@
 .trd-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .trd-split { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; height: 100%; min-height: 0; }
 .trd-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
-.trd-li { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 7px 10px; border-radius: 6px; border: 1px solid transparent; background: none; cursor: pointer; }
+.trd-content .trd-li { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 7px 10px; height: auto; min-height: 0; line-height: 1.35; flex-shrink: 0; border-radius: 6px; border: 1px solid transparent; background: none; cursor: pointer; }
 .trd-li:hover { background: var(--trd-soft); }
 .trd-li.active { border-color: var(--trd-accent); background: color-mix(in srgb, var(--trd-accent) 10%, transparent); }
 .trd-viewer { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }

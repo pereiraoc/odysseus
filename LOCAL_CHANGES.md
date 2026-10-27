@@ -289,6 +289,17 @@ Aqui fica só o que é do Odysseus:
   Carteiras, Backtest e Agenda.
 - Testes: `tests/test_trading_routes.py`, `tests/test_trading_action.py`.
 
+- Janela (27/10): abas Início, Radar, Analisar, Relatórios, Carteiras, Backtest, Agenda; **um modelo só
+  no topo** (presets do Cookbook com estado ligado/desligado e botão "Ligar" = tarefa `cookbook_serve`
+  disparada na hora); análise com o modelo desligado **espera na fila** (o lab não falha); andamento
+  agente a agente com trecho de cada relatório; campo de ação com busca (`/search` do lab, `.SA` da B3
+  automático). `GET /api/trading/models` testa o servidor local de cada preset e esconde o endpoint
+  local que só duplica o preset.
+- Radar (lógica no lab): Bloomberg (RSS de manchetes), notícias sobre figuras públicas (Google News),
+  compras de congressistas dos EUA (Bargo, sem chave) e de executivos (Form 4 da SEC); a IA lê os sinais,
+  ranqueia ações e a "carteira do Radar" (fictícia) analisa as melhores. `trading_run` aceita
+  `{"radar": true}` e espera também as análises que o Radar enfileirar.
+
 **Hooks mínimos em arquivos do upstream:** `app.py` (router após o de Finanças),
 `static/index.html` (seção `#trading-section`, `<link>`, `<script type="module">`),
 `static/sw.js` (CSS no PRECACHE + `CACHE_NAME`), `docker/pereiraoc.yml` (serviço
