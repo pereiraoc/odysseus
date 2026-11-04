@@ -401,6 +401,13 @@ if AUTH_ENABLED:
                 return False
         return True
 
+    from core.sso_proxy import trusted_proxy_user as _sso_trusted_proxy_user, parse_user_map as _sso_parse_map
+    from core.auth import TOKEN_TTL
+    _SSO_SECRET = os.getenv("TRUSTED_PROXY_SECRET", "")
+    _SSO_USER_MAP = _sso_parse_map(os.getenv("TRUSTED_PROXY_USER_MAP", ""))
+    if _SSO_SECRET:
+        logger.info("Login central por proxy confiavel ligado (TRUSTED_PROXY_SECRET)")
+
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = get_application_route_path(request.scope)
@@ -510,6 +517,20 @@ if AUTH_ENABLED:
             # --- Cookie-based session auth ---
             token = request.cookies.get(SESSION_COOKIE)
             if not auth_manager.validate_token(token):
+                # Login central (patch do fork, core/sso_proxy.py): o Caddy do NAS ja passou pelo Authelia (2FA) e
+                # manda Remote-User + o segredo do proxy; abre a sessao do usuario mapeado e segue a requisicao.
+                _sso_user = _sso_trusted_proxy_user(
+                    request.headers, _SSO_SECRET, _SSO_USER_MAP, getattr(auth_manager, "users", {}).keys()
+                )
+                if _sso_user:
+                    _sso_token = await _asyncio.to_thread(auth_manager.create_session_trusted, _sso_user)
+                    if _sso_token:
+                        request.state.current_user = _sso_user
+                        request.state.api_token = False
+                        response = await call_next(request)
+                        response.set_cookie(key=SESSION_COOKIE, value=_sso_token, httponly=True, samesite="lax",
+                                            secure=True, path="/", max_age=TOKEN_TTL)
+                        return response
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
                 return RedirectResponse(
