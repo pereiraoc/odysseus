@@ -42,3 +42,12 @@ def test_never_creates_users_or_accepts_empty_user():
 
 def test_parse_user_map_ignores_junk():
     assert parse_user_map("a:b,,semdoispontos, :x, y: ,C:D") == {"a": "b", "c": "d"}
+
+
+def test_came_through_proxy():
+    from core.sso_proxy import came_through_proxy
+    sec = "s" * 40
+    assert came_through_proxy({"X-Odysseus-Proxy-Secret": sec}, sec)
+    assert not came_through_proxy({"X-Odysseus-Proxy-Secret": "x" * 40}, sec)
+    assert not came_through_proxy({}, sec)
+    assert not came_through_proxy({"X-Odysseus-Proxy-Secret": "short"}, "short")

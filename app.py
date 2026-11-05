@@ -1065,6 +1065,11 @@ async def serve_backgrounds(request: Request):
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
         return RedirectResponse(url="/", status_code=302)
+    # Login central (patch do fork, core/sso_proxy.py): pelo NAS a tela de usuario/senha do Odysseus nao aparece;
+    # depois do logout vai para a saida do login central (aparelho deixa de ser aprovado + sessao do Authelia).
+    from core.sso_proxy import came_through_proxy as _sso_came_through_proxy
+    if _sso_came_through_proxy(request.headers, os.getenv("TRUSTED_PROXY_SECRET", "")):
+        return RedirectResponse(url=os.getenv("TRUSTED_PROXY_LOGOUT_URL", "") or "/", status_code=302)
     return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")

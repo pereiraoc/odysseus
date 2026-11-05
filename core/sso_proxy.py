@@ -43,3 +43,12 @@ def trusted_proxy_user(headers: Mapping[str, str], secret: str, user_map: Mappin
         return None
     user = user_map.get(remote, remote)
     return user if user in set(known_users) else None
+
+
+def came_through_proxy(headers: Mapping[str, str], secret: str) -> bool:
+    """A requisicao veio pelo Caddy do NAS (segredo certo)? Ai a tela de login do Odysseus nao vale: quem sai vai para a
+    saida do login central (TRUSTED_PROXY_LOGOUT_URL), e quem entra passa pelo login central / aparelho aprovado."""
+    if not secret or len(secret) < MIN_SECRET_LEN:
+        return False
+    got = headers.get(SECRET_HEADER) or ""
+    return bool(got) and hmac.compare_digest(got.encode(), secret.encode())
