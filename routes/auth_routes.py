@@ -221,6 +221,62 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if token:
             auth_manager.revoke_token(token)
         response.delete_cookie(SESSION_COOKIE, path="/")
+        # Login pelo NAS (core/nas_login.py): sair tambem esquece o aparelho aprovado
+        from core import nas_login
+        dev = request.cookies.get(nas_login.DEVICE_COOKIE)
+        if dev:
+            await asyncio.to_thread(nas_login.forget, dev)
+            response.delete_cookie(nas_login.DEVICE_COOKIE, path="/")
+        return {"ok": True}
+
+    # ---- Login pelo NAS: aprovacao por admin / passkey (patch do fork, core/nas_login.py) ----
+
+    def _nas_session(request: Request, response: Response, nas_user: str) -> bool:
+        from core import nas_login
+        from core.sso_proxy import parse_user_map
+        user = nas_login.map_user(nas_user, parse_user_map(os.getenv("TRUSTED_PROXY_USER_MAP", "")),
+                                  getattr(auth_manager, "users", {}).keys())
+        if not user:
+            return False
+        token = auth_manager.create_session_trusted(user)
+        if not token:
+            return False
+        response.set_cookie(key=SESSION_COOKIE, value=token, httponly=True, samesite="lax",
+                            secure=_secure_cookie(request), path="/", max_age=TOKEN_TTL)
+        return True
+
+    @router.get("/nas")
+    async def nas_login_info():
+        from core import nas_login
+        return {"enabled": nas_login.enabled()}
+
+    @router.post("/nas/start")
+    async def nas_login_start(request: Request):
+        from core import nas_login
+        if not _login_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests — try again later")
+        return await asyncio.to_thread(nas_login.start, request.headers.get("user-agent", ""))
+
+    @router.get("/nas/status")
+    async def nas_login_status(login_id: str, request: Request, response: Response):
+        from core import nas_login
+        r = await asyncio.to_thread(nas_login.status, login_id)
+        if r.get("state") != "approved":
+            return {"state": r.get("state", "unknown")}
+        if not await asyncio.to_thread(_nas_session, request, response, r.get("user", "")):
+            return {"state": "no_account", "error": "Approved, but there is no Odysseus account for this user"}
+        response.set_cookie(key=nas_login.DEVICE_COOKIE, value=r["token"], httponly=True, samesite="lax",
+                            secure=_secure_cookie(request), path="/", max_age=int(r.get("max_age") or TOKEN_TTL))
+        return {"state": "approved"}
+
+    @router.post("/nas/auto")
+    async def nas_login_auto(request: Request, response: Response):
+        """Aparelho ja aprovado (cookie): entra sem perguntar enquanto o NAS disser que vale."""
+        from core import nas_login
+        dev = request.cookies.get(nas_login.DEVICE_COOKIE)
+        user = await asyncio.to_thread(nas_login.device_user, dev) if dev else None
+        if not user or not await asyncio.to_thread(_nas_session, request, response, user):
+            return {"ok": False}
         return {"ok": True}
 
     @router.get("/status")

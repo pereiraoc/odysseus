@@ -270,6 +270,19 @@
     font-family: 'Fira Code', monospace;
     pointer-events: none; user-select: none;
   }
+  /* Login pelo NAS (patch do fork, core/nas_login.py): mesmos botoes do Odysseus, em contorno */
+  .nas-or { display: flex; align-items: center; gap: .75rem; margin: 1.1rem 0 .3rem;
+    color: color-mix(in srgb, var(--fg) 45%, transparent); font-size: .78rem; }
+  .nas-or::before, .nas-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  button.nas-btn { margin-top: .6rem; background: transparent; color: var(--fg);
+    border: 1px solid var(--border); font-weight: 600; }
+  button.nas-btn:hover { background: color-mix(in srgb, var(--red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--red) 70%, var(--border)); }
+  .nas-wait { text-align: center; margin-top: 1rem; }
+  .nas-code { font-size: 1.9rem; font-weight: 600; letter-spacing: .22em; margin: .4rem 0 .6rem; }
+  .nas-msg { font-size: .8rem; line-height: 1.5; color: color-mix(in srgb, var(--fg) 65%, transparent); }
+  .nas-wait a { display: inline-block; margin-top: .8rem; font-size: .8rem; color: var(--red); text-decoration: none; }
+  .nas-wait a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -311,6 +324,19 @@
 
     <button type="submit" id="submitBtn">Sign In</button>
   </form>
+
+  <div id="nasLogin" hidden>
+    <div class="nas-or">or</div>
+    <div id="nasButtons">
+      <button type="button" class="nas-btn" id="nasPasskeyBtn">Sign in with a passkey</button>
+      <button type="button" class="nas-btn" id="nasApproveBtn">Sign in with admin approval</button>
+    </div>
+    <div class="nas-wait" id="nasWait" hidden>
+      <div class="nas-code" id="nasCode"></div>
+      <div class="nas-msg" id="nasMsg"></div>
+      <a href="#" id="nasCancel">Cancel</a>
+    </div>
+  </div>
 
   <div class="toggle" id="toggleArea" style="display:none">
     <span id="toggleText">Don't have an account? </span>
@@ -635,6 +661,71 @@ if (window.visualViewport) {
     }
   });
 }
+</script>
+<script nonce="{{CSP_NONCE}}">
+// Login pelo NAS (patch do fork, core/nas_login.py): aparelho ja aprovado entra sozinho; senao, aprovacao por
+// admin (Nexus / celular) ou passkey (a tela de revisao abre no navegador que faz passkey) sem sair desta tela.
+(async () => {
+  const appUrl = window.__odysseusLoginAppUrl || ((path) => path);
+  const $ = (id) => document.getElementById(id);
+  const box = $('nasLogin'), buttons = $('nasButtons'), wait = $('nasWait');
+  const code = $('nasCode'), msg = $('nasMsg');
+  let info;
+  try {
+    const ctl = new AbortController(); setTimeout(() => ctl.abort(), 3000);
+    info = await (await fetch(appUrl('/api/auth/nas'), { signal: ctl.signal })).json();
+  } catch (e) { return; }
+  if (!info || !info.enabled) return;
+  box.hidden = false;
+  // aparelho aprovado antes (30 dias / sempre): entra direto
+  try {
+    const ctl = new AbortController(); setTimeout(() => ctl.abort(), 3500);
+    const r = await (await fetch(appUrl('/api/auth/nas/auto'), { method: 'POST', credentials: 'same-origin', signal: ctl.signal })).json();
+    if (r.ok) { window.location.replace(appUrl('/')); return; }
+  } catch (e) {}
+
+  let loginId = null, timer = null;
+  function reset(text) {
+    clearTimeout(timer); loginId = null;
+    wait.hidden = !text; buttons.hidden = !!text && false;
+    code.textContent = ''; msg.textContent = text || '';
+    buttons.hidden = false;
+    $('nasCancel').textContent = 'Cancel';
+    if (text) { wait.hidden = false; $('nasCancel').hidden = true; }
+  }
+  async function poll() {
+    if (!loginId) return;
+    try {
+      const r = await (await fetch(appUrl('/api/auth/nas/status?login_id=' + encodeURIComponent(loginId)), { credentials: 'same-origin' })).json();
+      if (r.state === 'approved') { msg.textContent = 'Approved. Signing in…'; window.location.replace(appUrl('/')); return; }
+      if (r.state === 'denied') return reset('The admin denied this sign-in.');
+      if (r.state === 'expired' || r.state === 'unknown') return reset('The request expired. Try again.');
+      if (r.state === 'no_account') return reset(r.error || 'No Odysseus account for this user.');
+    } catch (e) {}
+    timer = setTimeout(poll, 2000);
+  }
+  async function start(passkey) {
+    buttons.hidden = true; wait.hidden = false; $('nasCancel').hidden = false;
+    code.textContent = ''; msg.textContent = 'Asking the home server…';
+    let r;
+    try {
+      r = await (await fetch(appUrl('/api/auth/nas/start'), { method: 'POST', credentials: 'same-origin' })).json();
+    } catch (e) { r = { ok: false, error: 'The home server did not answer (is NetBird on?)' }; }
+    if (!r.ok) return reset(r.error || 'Could not start the sign-in.');
+    loginId = r.login_id;
+    code.textContent = r.code;
+    if (passkey) {
+      msg.textContent = 'Finish in the window that opened: sign in with your passkey and approve this code.';
+      window.open(r.review, '_blank');
+    } else {
+      msg.textContent = 'Waiting for an admin. Approve this code from the notification or in Nexus › Network › Sign-ins.';
+    }
+    timer = setTimeout(poll, 2000);
+  }
+  $('nasApproveBtn').addEventListener('click', () => start(false));
+  $('nasPasskeyBtn').addEventListener('click', () => start(true));
+  $('nasCancel').addEventListener('click', (e) => { e.preventDefault(); reset(''); wait.hidden = true; });
+})();
 </script>
 <script type="module" nonce="{{CSP_NONCE}}">
 // Drive the login page's bg effect off the user's saved theme. The
