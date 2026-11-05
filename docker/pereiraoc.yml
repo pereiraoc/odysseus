@@ -23,6 +23,9 @@ services:
       # Vaults extras do painel de Vaults que vivem fora de /data/vaults:
       - /data/projects/pleitost-app:/app/vaults/pleitost-app
       - /data/projects/caelestia-arch-setup:/app/vaults/caelestia-arch-setup
+      # Documentos do NAS (Library/Documents) SO-LEITURA, montados por sshfs no PC (caelestia-arch-setup
+      # scripts/system/install-nas-documents-mount.sh). Pasta-mae com rslave: se o sshfs remontar, o container ve.
+      - /data/nas:/app/vaults/nas:ro,rslave
       # Painel "Uso de IA" (routes/ai_usage_routes.py): banco do ai-usage-export
       # do host (timer diario do caelestia-arch-setup). So leitura.
       - /data/ai-usage:/app/ai-usage:ro

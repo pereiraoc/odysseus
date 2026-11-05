@@ -349,3 +349,6 @@ Arquivos novos: `routes/lifelog_routes.py`, `static/js/lifelog.js`, `static/css/
 - `static/index.html`: seção `#lifelog-section` antes de Finanças, `<link>` do CSS e `<script type="module">`.
 - `static/sw.js`: CSS no PRECACHE, `CACHE_NAME` → `odysseus-v663-lifelog1`.
 - `docker/pereiraoc.yml`: volume `/data/lifelog:/app/lifelog:ro`.
+- `docker/pereiraoc.yml`: volume `/data/nas:/app/vaults/nas:ro,rslave` — documentos do NAS (`Library/Documents`) só leitura,
+  montados no PC por sshfs (`caelestia-arch-setup` `scripts/system/install-nas-documents-mount.sh`); `Private/` e o
+  WhatsApp ficam fora por construção.
