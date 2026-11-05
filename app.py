@@ -995,6 +995,9 @@ app.include_router(setup_vaultfs_routes())
 # Fork-local (ver LOCAL_CHANGES.md): painel "Uso de IA" -- le o banco do ai-usage-export do host
 from routes.ai_usage_routes import setup_ai_usage_routes
 app.include_router(setup_ai_usage_routes())
+# Fork-local (ver LOCAL_CHANGES.md): painel "Life log" -- le a copia do banco do nas-lifelog-export (lifelog-sync)
+from routes.lifelog_routes import setup_lifelog_routes
+app.include_router(setup_lifelog_routes())
 # Fork-local (ver LOCAL_CHANGES.md §7): painel "Finanças" -- arquivo bancario em data/finance
 from routes.finance_routes import setup_finance_routes
 app.include_router(setup_finance_routes())

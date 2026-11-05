@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v662-trading10';
+const CACHE_NAME = 'odysseus-v663-lifelog1';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -63,6 +63,7 @@ const PRECACHE = [
   '/static/css/zz-fork-vaults.css?v=20260929csssplit',  // fork-local
   '/static/css/zz-fork-finance.css?v=20261021fin17',  // fork-local
   '/static/css/zz-fork-ai-usage.css?v=20261019aiu3',  // fork-local (painel Uso de IA)
+  '/static/css/zz-fork-lifelog.css?v=20261105llg1',  // fork-local (painel Life log)
   '/static/css/zz-fork-trading.css?v=20261027trd6',  // fork-local (LOCAL_CHANGES §8)
   '/static/app.js?v=20260929csssplit',
   '/static/js/storage.js',

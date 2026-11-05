@@ -334,3 +334,18 @@ Teste: `tests/test_trading_routes.py::test_toast_log_without_login_is_not_401`.
 - `docker/pereiraoc.yml`: `ODYSSEUS_INTERNAL_BASE=http://127.0.0.1:7000`. `internal_api_base()` usa
   `APP_PORT`, que não entra no container (padrão 7011) → "All connection attempts failed" em toda
   chamada do Odysseus para ele mesmo (serve agendado, ferramentas do agente).
+
+## 11. Painel "Life log" — linha da vida do Google Takeout  [feature local]
+
+Lê, só leitura (`mode=ro`), o SQLite que o `nas-lifelog-export` (repo `nas-nixos`, `services/lifelog`) gera no NAS a
+partir do Google Takeout já extraído na `Library/`: pesquisas, YouTube, Maps, Play, Assistente etc. (`events`), Fit por
+dia e treinos, notas do Keep e lugares salvos. O PC copia o banco todo dia para `/data/lifelog/lifelog.sqlite`
+(`caelestia-arch-setup` `scripts/tools/lifelog-sync` + timer de usuário). Abas: Day (tudo de um dia), Search, Trends.
+Textos da UI em inglês.
+
+Arquivos novos: `routes/lifelog_routes.py`, `static/js/lifelog.js`, `static/css/zz-fork-lifelog.css`,
+`tests/test_lifelog_routes.py`. Patches:
+- `app.py`: `include_router(setup_lifelog_routes())` logo depois do Uso de IA.
+- `static/index.html`: seção `#lifelog-section` antes de Finanças, `<link>` do CSS e `<script type="module">`.
+- `static/sw.js`: CSS no PRECACHE, `CACHE_NAME` → `odysseus-v663-lifelog1`.
+- `docker/pereiraoc.yml`: volume `/data/lifelog:/app/lifelog:ro`.
