@@ -39,3 +39,22 @@ def test_search_groups_by_day_and_counts_kinds_before_filter(dbs):
 
 def test_nearest_days(dbs):
     assert nearest_days(date(2023, 3, 12), providers()) == {"prev": "2023-03-10", "next": "2023-03-14"}
+
+
+def test_failing_counts_is_no_data_not_zero(dbs, monkeypatch):
+    def boom(self, a, b):
+        raise RuntimeError("banco trancado")
+
+    monkeypatch.setattr("src.life.money.MoneyProvider.counts", boom)
+    m = month_view(2023, 3, providers())
+    assert m["days"][13]["values"]["spent"] is None and m["totals"]["spent"] is None
+    assert m["days"][13]["values"]["digital"] == 8
+
+
+def test_search_truncated_when_a_provider_is_capped(dbs):
+    r = search_all("Watched", providers(), limit=2)
+    assert r["truncated"] is True and r["total"] == 2
+
+
+def test_month_totals_none_without_data(dbs):
+    assert month_view(2019, 1, providers())["totals"]["spent"] is None

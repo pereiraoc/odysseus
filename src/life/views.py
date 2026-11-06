@@ -4,12 +4,15 @@
 Faixas fixas por métrica (nunca relativas a um dia extremo): ver docs/superpowers/research/…referencias-ui-life-log.md."""
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import date, timedelta
 from typing import Iterator, Optional
 
 from src.life.common import safe_status
 from src.life.fmt import compact, money, plural
+
+logger = logging.getLogger(__name__)
 
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December")
@@ -41,11 +44,12 @@ def _collect(providers, a: date, b: date):
         st = safe_status(p)
         if st["state"] != "ok":
             continue
-        coverage.update(st.get("coverage") or {})
         try:
             got = p.counts(a, b)
-        except Exception:
+        except Exception as e:
+            logger.warning("life: %s.counts falhou: %s", p.name, e)
             continue
+        coverage.update(st.get("coverage") or {})
         for ds, vals in got.items():
             days.setdefault(ds, {}).update(vals)
     return days, coverage
@@ -81,7 +85,10 @@ def month_view(y: int, m: int, providers) -> dict:
     raw, cov = _collect(providers, first, last)
     days = [{"day": d.isoformat(), "dom": d.day, "weekday": d.isoweekday(),
              "values": _values(d.isoformat(), raw.get(d.isoformat(), {}), cov)} for d in _span(first, last)]
-    totals = {k: sum(x["values"][k] or 0 for x in days) for k in KEYS}
+    totals = {}
+    for k in KEYS:
+        vals = [x["values"][k] for x in days]
+        totals[k] = sum(v or 0 for v in vals) if any(v is not None for v in vals) else None
     return {"month": f"{y:04d}-{m:02d}", "label": f"{MONTHS[m - 1]} {y}", "first_weekday": first.isoweekday(),
             "days": days, "totals": totals, "metrics": metrics_meta()}
 
@@ -134,13 +141,18 @@ def nearest_days(d: date, providers, window: int = 120) -> dict:
 def search_all(q: str, providers, kinds: Optional[set] = None, frm: Optional[str] = None, to: Optional[str] = None,
                limit: int = 300) -> dict:
     hits: list = []
+    capped = False
     for p in providers:
         if safe_status(p)["state"] != "ok":
             continue
         try:
-            hits += p.search(q, limit)
-        except Exception:
+            got = p.search(q, limit + 1)  # um a mais: detecta corte mesmo quando a fonte já limita
+        except Exception as e:
+            logger.warning("life: %s.search falhou: %s", p.name, e)
             continue
+        if len(got) > limit:
+            capped = True
+        hits += got
     if frm:
         hits = [h for h in hits if (h["day"] or "") >= frm]
     if to:
@@ -149,7 +161,7 @@ def search_all(q: str, providers, kinds: Optional[set] = None, frm: Optional[str
     if kinds:
         hits = [h for h in hits if h["kind"] in kinds]
     hits.sort(key=lambda h: (h["day"] or "", h["ts"] or ""), reverse=True)
-    truncated = len(hits) > limit
+    truncated = capped or len(hits) > limit
     hits = hits[:limit]
     days: list = []
     for h in hits:
