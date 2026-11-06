@@ -111,9 +111,14 @@ class TakeoutProvider(Provider):
                 out.setdefault(day, {})["digital"] = n
             for day, steps in con.execute("select day, steps from fit_daily where day between ? and ? and steps > 0", span):
                 out.setdefault(day, {})["steps"] = steps
-            for day, n in con.execute("select substr(coalesce(edited, created),1,10) d, count(*) from notes "
-                                      "where trashed=0 and d between ? and ? group by d", span):
-                out.setdefault(day, {})["notes"] = n
+            # mesma regra do day(): a nota conta no dia local da criação e no dia local da edição (uma vez por dia)
+            for r in con.execute("select created, edited from notes where trashed=0 and ("
+                                 "substr(created,1,10) between date(?,'-1 day') and date(?,'+1 day') or "
+                                 "substr(edited,1,10) between date(?,'-1 day') and date(?,'+1 day'))", (*span,) * 2):
+                days = {local_day(x) for x in (parse_ts(r["created"]), parse_ts(r["edited"])) if x}
+                for day in days:
+                    if span[0] <= day <= span[1]:
+                        out.setdefault(day, {})["notes"] = out.get(day, {}).get("notes", 0) + 1
         return out
 
     def search(self, q: str, limit: int) -> list[dict]:
@@ -140,9 +145,11 @@ class TakeoutProvider(Provider):
     @staticmethod
     def _context(con, r) -> list[dict]:
         out = []
+        noise = tuple(sorted(NOISE_SOURCES))  # telemetria fica fora do dia e também do contexto da busca
         for rel, op, order in (("before", "<", "desc"), ("after", ">", "asc")):
             n = con.execute(f"select id, ts, source, title, url, detail from events where day=? and ts {op} ? "
-                            f"order by ts {order} limit 1", (r["day"], r["ts"])).fetchone()
+                            f"and source not in ({','.join('?' * len(noise))}) "
+                            f"order by ts {order} limit 1", (r["day"], r["ts"], *noise)).fetchone()
             if n:
                 it = event_item(n, r["day"])
                 out.append({"rel": rel, "time": it["time"], "title": it["title"], "group": it["meta"]["group"]})

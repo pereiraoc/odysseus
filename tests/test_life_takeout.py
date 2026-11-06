@@ -1,4 +1,6 @@
 """Fork-local: provedor do Takeout do painel Life (src/life/takeout.py)."""
+import os
+import sqlite3
 from datetime import date
 
 from src.life.takeout import TakeoutProvider
@@ -50,3 +52,25 @@ def test_search_with_context_and_notes(dbs):
     ctx = hits[0]["meta"]["context"]
     assert [(c["rel"], c["title"]) for c in ctx] == [("before", "9am pst"), ("after", "Kwite Situation Is Horrible")]
     assert TakeoutProvider().search("ideia", 50)[0]["kind"] == "note"
+
+
+def test_note_counts_follow_local_days(dbs):
+    con = sqlite3.connect(os.environ["LIFELOG_DB"])
+    con.execute("INSERT INTO notes VALUES('n4','2023-03-10T12:00:00Z','2023-03-16T02:30:00Z','Viagem','x','',0,0)")
+    con.commit()
+    con.close()
+    c = TakeoutProvider().counts(date(2023, 3, 1), date(2023, 3, 31))
+    assert c["2023-03-10"]["notes"] == 1  # criada no dia 10
+    assert c["2023-03-15"]["notes"] == 1  # editada 02:30Z do dia 16 = 23:30 do dia 15 (UTC-3)
+    assert "notes" not in c.get("2023-03-16", {})
+
+
+def test_search_context_skips_telemetry(dbs):
+    con = sqlite3.connect(os.environ["LIFELOG_DB"])
+    con.execute("INSERT INTO events(ts,day,source,title,url,detail) VALUES(?,?,?,?,?,?)",
+                ("2023-03-14T11:20:00Z", "2023-03-14", "other:Google Analytics", "Used Google Analytics", None, None))
+    con.commit()
+    con.close()
+    hits = TakeoutProvider().search("razer", 50)
+    ctx = {c["rel"]: c["title"] for c in hits[0]["meta"]["context"]}
+    assert ctx["after"] == "Kwite Situation Is Horrible"
