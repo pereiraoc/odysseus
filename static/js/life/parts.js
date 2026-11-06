@@ -19,8 +19,9 @@ export function skeleton(view) {
 }
 
 export function openLink(url) {
-  if (!url) return '';
-  return `<a class="life-open" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="Open original" aria-label="Open original">${icon('external', 14)}</a>`;
+  const u = String(url || '').trim();
+  if (!/^(https?:|mailto:)/i.test(u)) return '';
+  return `<a class="life-open" href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" title="Open original" aria-label="Open original">${icon('external', 14)}</a>`;
 }
 
 const when = iso => {

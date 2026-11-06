@@ -16,7 +16,7 @@ export function fmtMetric(key, v, short = false) {
 }
 
 export function metricBar(metrics, current) {
-  return `<div class="life-seg" role="radiogroup" aria-label="Color by">${metrics.map(m => `<button type="button" role="radio" aria-checked="${m.key === current}" class="${m.key === current ? 'is-on' : ''}" data-metric="${m.key}">${escapeHtml(m.label)}</button>`).join('')}</div>`;
+  return `<div class="life-seg" role="radiogroup" aria-label="Color by">${metrics.map(m => `<button type="button" role="radio" aria-checked="${m.key === current}" class="${m.key === current ? 'is-on' : ''}" data-metric="${escapeHtml(m.key)}">${escapeHtml(m.label)}</button>`).join('')}</div>`;
 }
 
 export function legend(metric) {

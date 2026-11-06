@@ -25,7 +25,7 @@ let lastHash = '';
 function restore() {
   try {
     const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    if (VIEWS[s.view]) st.view = s.view;
+    if (['day', 'month', 'year'].includes(s.view)) st.view = s.view;
     if (/^\d{4}-\d{2}-\d{2}$/.test(s.day || '')) st.day = s.day;
     if (typeof s.metric === 'string') st.metric = s.metric;
   } catch (_) { /* armazenamento indisponível: começa do padrão */ }
