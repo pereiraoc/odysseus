@@ -4,11 +4,14 @@
    no escuro (contraste nos dois). Cor nunca vem sozinha: sempre com ícone e rótulo. */
 #life-panel {
   --life-ink: var(--fg, #9cdef2);
-  --life-muted: color-mix(in srgb, var(--fg, #9cdef2) 64%, transparent);
-  --life-faint: color-mix(in srgb, var(--fg, #9cdef2) 42%, transparent);
+  /* 78 % e 68 % do --fg: texto secundário com contraste AA (≥ 4,5:1) no claro e no escuro, também sobre --life-surface
+     (com 64 %/42 % dava 4,3:1 e 2,4:1 no claro). */
+  --life-muted: color-mix(in srgb, var(--fg, #9cdef2) 78%, transparent);
+  --life-faint: color-mix(in srgb, var(--fg, #9cdef2) 68%, transparent);
   --life-line: var(--border, rgba(128, 128, 128, 0.3));
   --life-surface: color-mix(in srgb, var(--fg, #9cdef2) 4%, transparent);
   --life-accent: var(--accent-primary, var(--red, #60a5fa));
+  --life-accent-text: color-mix(in srgb, var(--life-accent) 75%, var(--fg, #9cdef2));
   --life-hover: color-mix(in srgb, var(--life-accent) 12%, transparent);
   --life-c-digital: color-mix(in srgb, #5b8def 72%, var(--fg, #9cdef2));
   --life-c-money: color-mix(in srgb, #d99a2b 72%, var(--fg, #9cdef2));
@@ -104,7 +107,7 @@
 .life-entry-t { font-size: 13.5px; line-height: 1.35; overflow-wrap: anywhere; }
 .life-entry-s { margin-top: 1px; font-size: 12px; color: var(--life-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .life-amount { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.life-amount.is-in { color: var(--life-c-health); }
+.life-amount.is-in { color: color-mix(in srgb, var(--life-c-health) 80%, var(--fg, #9cdef2)); }
 .life-amount.is-neutral { color: var(--life-faint); }
 .life-open { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: var(--life-faint); opacity: 0; }
 .life-entry:hover .life-open, .life-drow:hover .life-open, .life-open:focus-visible { opacity: 1; }
@@ -133,7 +136,7 @@
 .life-dsrc.is-expanded .life-drow.is-more { display: grid; }
 .life-drow.is-unavailable .life-entry-t { color: var(--life-faint); font-style: italic; }
 .life-times { margin-left: 6px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--life-line); background: var(--life-surface); font-size: 11px; color: var(--life-muted); }
-#life-panel .life-more { margin: 4px 0 0 48px; padding: 2px 4px; border: 0; border-radius: 5px; background: none; color: var(--life-accent); font: inherit; font-size: 12px; cursor: pointer; }
+#life-panel .life-more { margin: 4px 0 0 48px; padding: 2px 4px; border: 0; border-radius: 5px; background: none; color: var(--life-accent-text); font: inherit; font-size: 12px; cursor: pointer; }
 #life-panel .life-more:hover { background: var(--life-hover); }
 
 /* ── coluna lateral ── */
@@ -178,6 +181,7 @@
 .life-seg { display: inline-flex; border: 1px solid var(--life-line); border-radius: 8px; overflow: hidden; }
 #life-panel .life-seg button { padding: 5px 10px; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 12px; cursor: pointer; }
 #life-panel .life-seg button + button { border-left: 1px solid var(--life-line); }
+#life-panel .life-seg button:focus-visible { outline-offset: -2px; }
 #life-panel .life-seg button.is-on { color: var(--life-ink); background: color-mix(in srgb, var(--life-accent) 18%, transparent); }
 .life-totals { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-bottom: 14px; }
 .life-mgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
@@ -190,7 +194,7 @@
 #life-panel .life-mcell.lv-2 { background: color-mix(in srgb, var(--life-accent) 22%, transparent); }
 #life-panel .life-mcell.lv-3 { background: color-mix(in srgb, var(--life-accent) 34%, transparent); }
 #life-panel .life-mcell.lv-4 { background: color-mix(in srgb, var(--life-accent) 48%, transparent); }
-.life-mcell.is-today .life-mdate { color: var(--life-accent); font-weight: 700; }
+.life-mcell.is-today .life-mdate { color: var(--life-accent-text); font-weight: 700; }
 .life-mcell.is-selected { outline: 2px solid var(--life-accent); outline-offset: 1px; }
 .life-mdate { font-size: 12px; font-weight: 600; }
 .life-mval { align-self: end; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -224,7 +228,7 @@
 .life-results { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; list-style: none; margin: 0; padding: 0; }
 .life-rday h3 { margin: 0 0 4px; }
 #life-panel .life-rday h3 button { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--life-ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
-.life-rday h3 button span { font-size: 12px; font-weight: 400; color: var(--life-accent); }
+.life-rday h3 button span { font-size: 12px; font-weight: 400; color: var(--life-accent-text); }
 #life-panel .life-rday h3 button:hover { background: var(--life-hover); }
 .life-ctx { margin-top: 2px; font-size: 11.5px; color: var(--life-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #life-panel mark { padding: 0 1px; border-radius: 2px; background: color-mix(in srgb, var(--life-c-note) 35%, transparent); color: inherit; }
