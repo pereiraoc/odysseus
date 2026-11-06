@@ -360,21 +360,30 @@ Teste: `tests/test_trading_routes.py::test_toast_log_without_login_is_not_401`.
   `APP_PORT`, que não entra no container (padrão 7011) → "All connection attempts failed" em toda
   chamada do Odysseus para ele mesmo (serve agendado, ferramentas do agente).
 
-## 11. Painel "Life log" — linha da vida do Google Takeout  [feature local]
+## 11. Painel "Life" — linha do tempo unificada  [feature local]
 
-Lê, só leitura (`mode=ro`), o SQLite que o `nas-lifelog-export` (repo `nas-nixos`, `services/lifelog`) gera no NAS a
-partir do Google Takeout já extraído na `Library/`: pesquisas, YouTube, Maps, Play, Assistente etc. (`events`), Fit por
-dia e treinos, notas do Keep e lugares salvos. O PC copia o banco todo dia para `/data/lifelog/lifelog.sqlite`
-(`caelestia-arch-setup` `scripts/tools/lifelog-sync` + timer de usuário). Abas: Day (tudo de um dia), Search, Trends.
-Textos da UI em inglês.
+Spec: `docs/superpowers/specs/2026-11-06-life-timeline-design.md` (pesquisa de embasamento em
+`docs/superpowers/research/2026-11-06-referencias-ui-life-log.md`); plano da fase 1:
+`docs/superpowers/plans/2026-11-06-life-phase1.md`. Substitui o antigo "Life log" (lista crua do Takeout).
 
-Arquivos novos: `routes/lifelog_routes.py`, `static/js/lifelog.js`, `static/css/zz-fork-lifelog.css`,
-`tests/test_lifelog_routes.py`. Patches:
-- `app.py`: `include_router(setup_lifelog_routes())` logo depois do Uso de IA.
-- `static/index.html`: seção `#lifelog-section` antes de Finanças, `<link>` do CSS e `<script type="module">`.
-- `static/sw.js`: CSS no PRECACHE e bump do `CACHE_NAME` (desde o sync de 2026-11-06 só o número:
-  `odysseus-v<N>-pr40-editor-precache`, ver topo).
-- `docker/pereiraoc.yml`: volume `/data/lifelog:/app/lifelog:ro`.
-- `docker/pereiraoc.yml`: volume `/data/nas:/app/vaults/nas:ro,rslave` — documentos do NAS (`Library/Documents`) só leitura,
-  montados no PC por sshfs (`caelestia-arch-setup` `scripts/system/install-nas-documents-mount.sh`); `Private/` e o
-  WhatsApp ficam fora por construção.
+**Fase 1 (06/11):** o dia é a página — resumo, chips de filtro, faixa All day (finanças), espinha de blocos do dia
+(Night/Morning/Afternoon/Evening) com a atividade digital agrupada ("Digital · 6 searches, 2 videos (3 views)",
+títulos limpos, repetições ×N, vídeos indisponíveis à parte), coluna com números do dia, On this day e fontes;
+mês (calendário tingido por métrica), ano (mapa de calor com faixas fixas; "sem dado" ≠ zero) e busca em tudo
+agrupada por dia. Rota na URL: `#life/AAAA-MM-DD`, `#life/AAAA-MM`, `#life/AAAA`, `#life/search?q=`. Teclado:
+`←/→`, `↑` (sobe o zoom no topo da página), `t`, `/`.
+
+Fontes (só leitura, `mode=ro`): `lifelog.sqlite` do `nas-lifelog-export` (bind `/data/lifelog:/app/lifelog:ro`),
+Finanças (`data/finance/finance.sqlite`, sem transferências internas no gasto) e Uso de IA
+(`/app/ai-usage/ai-usage.sqlite`). Rotas `/api/lifelog/*` exigem **admin**.
+
+Arquivos: `src/life/` (provedores, montagem do dia, visões), `routes/lifelog_routes.py`, `static/js/life/*.js`,
+`static/css/zz-fork-life.css`, `scripts/life_ui_check.cjs` (checagem visual no container), testes
+`tests/test_life_*.py`, `tests/test_lifelog_routes.py`, `tests/life_format.test.mjs`, `tests/life_fixtures.py`.
+Patches: `app.py` (`include_router(setup_lifelog_routes())`, inalterado desde o Life log), `static/index.html`
+(seção `#lifelog-section` "Life", `<link>` do CSS com o token compartilhado, `<script type="module"
+src="/static/js/life/index.js?v=…">`), `static/sw.js` (CSS no PRECACHE + bump do `CACHE_NAME`),
+`docker/pereiraoc.yml` (volume `/data/lifelog:/app/lifelog:ro`).
+
+Próximas fases (spec): lugares/viagens/fotos/agenda/e-mail/casa pelo `services.sqlite` do NAS; mapa e fotos ao vivo;
+commits e notas do PC.

@@ -236,12 +236,14 @@ tokens de cor do tema (claro/escuro), contraste AA, cor nunca sozinha (sempre í
   selo de número de fotos (padrão do Dawarich 1.3/1.14 e do Timelinize).
 - **Coluna direita:** mapa (Leaflet vendorizado em `static/lib/leaflet/`, tiles raster do OpenStreetMap — permitidos
   pelo CSP `img-src https:`), fotos (grade de até 12 + "See all", lightbox com hora/lugar, ←/→ e "Open in
-  Immich"; vídeo abre no Immich), números do dia, notas (Keep e Obsidian editadas), "On this day" e rodapé
+  Immich"; vídeo abre no Immich), números do dia, "On this day" e rodapé
   **Sources** (última atualização e início da cobertura de cada fonte).
 - **Celular / < 1100 px:** mapa compacto no topo (como no Arc), depois a linha do tempo com as fotos em mini-tira
   dentro das visitas, depois grade, números e notas; navegação sempre visível.
 - **Dia vazio:** "Nothing recorded on this day" + atalhos para os dias com dados mais próximos.
 - Carregamento: esqueletos; o dia vem numa chamada, mapa e imagens chegam depois (lazy, `IntersectionObserver`).
+- Notas (Keep; Obsidian na fase 4) entram na linha do tempo como itens com hora, não num cartão à parte (evita
+  mostrar a mesma coisa duas vezes).
 
 ### Name your places
 Lista dos lugares sem nome por número de visitas / tempo total ("Unnamed place · Porto Alegre — 412 visits,
