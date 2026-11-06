@@ -362,7 +362,8 @@ Arquivos novos: `routes/lifelog_routes.py`, `static/js/lifelog.js`, `static/css/
 `tests/test_lifelog_routes.py`. Patches:
 - `app.py`: `include_router(setup_lifelog_routes())` logo depois do Uso de IA.
 - `static/index.html`: seção `#lifelog-section` antes de Finanças, `<link>` do CSS e `<script type="module">`.
-- `static/sw.js`: CSS no PRECACHE, `CACHE_NAME` → `odysseus-v663-lifelog1`.
+- `static/sw.js`: CSS no PRECACHE e bump do `CACHE_NAME` (desde o sync de 2026-11-06 só o número:
+  `odysseus-v<N>-pr40-editor-precache`, ver topo).
 - `docker/pereiraoc.yml`: volume `/data/lifelog:/app/lifelog:ro`.
 - `docker/pereiraoc.yml`: volume `/data/nas:/app/vaults/nas:ro,rslave` — documentos do NAS (`Library/Documents`) só leitura,
   montados no PC por sshfs (`caelestia-arch-setup` `scripts/system/install-nas-documents-mount.sh`); `Private/` e o
