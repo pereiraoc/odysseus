@@ -27,22 +27,27 @@
   --life-h4: var(--life-accent);
   --life-hatch: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--fg, #9cdef2) 10%, transparent) 4px 5px);
 }
+/* O CSS global estiliza todo <button>/<input> (01-agent-chat.css: altura 32 px, fundo #eaeaea em `:root.light button`
+   (0,2,1), fundo --panel em `button:hover` (0,1,1)) e todo <details>/<summary> (03-agent-chat.css: caixa, ▶,
+   preenchimento). Por isso as regras de botão/campo do Life levam `#life-panel` na frente, e a altura é zerada aqui. */
+#life-panel button { height: auto; }
 .life-content { width: min(1240px, 96vw); height: 90vh; display: flex; flex-direction: column; padding: 0; color: var(--life-ink); }
 .life-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--life-line); cursor: move; }
 .life-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
 .life-crumbs { display: flex; align-items: center; gap: 2px; font-size: 13px; min-width: 0; }
-.life-crumbs button, .life-crumbs > span { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; color: var(--life-muted); padding: 3px 6px; border-radius: 6px; font: inherit; cursor: pointer; }
-.life-crumbs button:hover { background: var(--life-hover); color: var(--life-ink); }
-.life-crumbs .is-current { color: var(--life-ink); font-weight: 600; }
-.life-crumbs .life-crumb-sep { color: var(--life-faint); padding: 0 1px; cursor: default; }
+#life-panel .life-crumbs button, #life-panel .life-crumbs > span { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; color: var(--life-muted); padding: 3px 6px; border-radius: 6px; font: inherit; cursor: pointer; }
+#life-panel .life-crumbs button:hover { background: var(--life-hover); color: var(--life-ink); }
+#life-panel .life-crumbs .is-current { color: var(--life-ink); font-weight: 600; }
+#life-panel .life-crumbs .life-crumb-sep { color: var(--life-faint); padding: 0 1px; cursor: default; }
 .life-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .life-nav[hidden] { display: none; }
-.life-btn, .life-icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--life-line); background: transparent; color: inherit; font: inherit; font-size: 12.5px; cursor: pointer; }
-.life-icon-btn { width: 28px; padding: 0; }
-.life-btn:hover, .life-icon-btn:hover { background: var(--life-hover); }
+.life-nav[hidden] + .life-search { margin-left: auto; }
+#life-panel .life-btn, #life-panel .life-icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--life-line); background: transparent; color: inherit; font: inherit; font-size: 12.5px; cursor: pointer; }
+#life-panel .life-icon-btn { width: 28px; padding: 0; }
+#life-panel .life-btn:hover, #life-panel .life-icon-btn:hover { background: var(--life-hover); }
 .life-search { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--life-line); border-radius: 7px; min-width: 220px; color: var(--life-muted); }
 .life-search:focus-within { border-color: var(--life-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--life-accent) 25%, transparent); }
-.life-search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--life-ink); font: inherit; font-size: 12.5px; }
+#life-panel .life-search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--life-ink); font: inherit; font-size: 12.5px; }
 #life-panel kbd { font: 11px ui-monospace, monospace; padding: 0 5px; border: 1px solid var(--life-line); border-radius: 4px; color: var(--life-faint); }
 .life-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 28px; outline: 0; }
 #life-panel :is(button, a, input, summary):focus-visible { outline: 2px solid var(--life-accent); outline-offset: 2px; }
@@ -57,9 +62,9 @@
 .life-cols { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; align-items: start; }
 .life-side { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 76px; }
 .life-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.life-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--life-line); background: transparent; color: var(--life-muted); font: inherit; font-size: 12px; cursor: pointer; }
-.life-chip:hover { color: var(--life-ink); background: var(--life-hover); }
-.life-chip.is-on { color: var(--life-ink); border-color: var(--life-accent); background: color-mix(in srgb, var(--life-accent) 16%, transparent); }
+#life-panel .life-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--life-line); background: transparent; color: var(--life-muted); font: inherit; font-size: 12px; cursor: pointer; }
+#life-panel .life-chip:hover { color: var(--life-ink); background: var(--life-hover); }
+#life-panel .life-chip.is-on { color: var(--life-ink); border-color: var(--life-accent); background: color-mix(in srgb, var(--life-accent) 16%, transparent); }
 .life-chip-n { font-variant-numeric: tabular-nums; color: var(--life-faint); }
 .life-eyebrow { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--life-faint); }
 .life-allday { margin-bottom: 18px; padding: 8px 10px; border: 1px solid var(--life-line); border-radius: 10px; background: var(--life-surface); }
@@ -103,16 +108,18 @@
 @media (hover: none) { .life-open { opacity: 0.8; } }
 
 /* ── grupo Digital ── */
-.life-entry.k-digital:not([hidden]) { display: block; padding: 0; }
-.life-entry.k-digital:hover { background: none; }
-.life-dg > summary { display: grid; grid-template-columns: 76px 20px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; list-style: none; }
+.life-entry-group:not([hidden]) { display: block; padding: 0; }
+.life-entry-group:hover { background: none; }
+#life-panel .life-dg { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; overflow: visible; }
+.life-dg > summary { display: grid; grid-template-columns: 76px 20px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; list-style: none; }
 .life-dg > summary::-webkit-details-marker { display: none; }
+.life-dg > summary::before { content: none; }
 .life-dg > summary:hover { background: var(--life-hover); }
 .life-dg > summary .life-entry-t { color: var(--life-muted); }
 .life-dg > summary .life-entry-t b { color: var(--life-ink); font-weight: 600; }
 .life-dg > summary > .life-svg:last-child { margin-top: 2px; color: var(--life-faint); transition: transform 0.15s; }
 .life-dg[open] > summary > .life-svg:last-child { transform: rotate(180deg); }
-.life-dg-body { display: grid; gap: 10px; margin: 2px 0 8px 104px; padding-left: 12px; border-left: 2px solid color-mix(in srgb, var(--life-c-digital) 35%, transparent); }
+.life-dg-body { display: grid; gap: 10px; margin: 2px 0 8px 104px; padding: 0 0 0 12px; font-size: inherit; line-height: inherit; border-left: 2px solid color-mix(in srgb, var(--life-c-digital) 35%, transparent); }
 .life-dsrc h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--life-muted); }
 .life-dsrc h4 span { font-weight: 400; color: var(--life-faint); }
 .life-dsrc ul { list-style: none; margin: 0; padding: 0; }
@@ -122,8 +129,8 @@
 .life-dsrc.is-expanded .life-drow.is-more { display: grid; }
 .life-drow.is-unavailable .life-entry-t { color: var(--life-faint); font-style: italic; }
 .life-times { margin-left: 6px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--life-line); background: var(--life-surface); font-size: 11px; color: var(--life-muted); }
-.life-more { margin: 4px 0 0 48px; padding: 2px 4px; border: 0; border-radius: 5px; background: none; color: var(--life-accent); font: inherit; font-size: 12px; cursor: pointer; }
-.life-more:hover { background: var(--life-hover); }
+#life-panel .life-more { margin: 4px 0 0 48px; padding: 2px 4px; border: 0; border-radius: 5px; background: none; color: var(--life-accent); font: inherit; font-size: 12px; cursor: pointer; }
+#life-panel .life-more:hover { background: var(--life-hover); }
 
 /* ── coluna lateral ── */
 .life-card { border: 1px solid var(--life-line); border-radius: 12px; padding: 12px 14px; background: var(--life-surface); }
@@ -132,8 +139,8 @@
 .life-kpi dt { font-size: 11.5px; color: var(--life-muted); }
 .life-kpi dd { margin: 2px 0 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .life-otd-list { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.life-otd-list button { display: grid; gap: 1px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.life-otd-list button:hover { background: var(--life-hover); }
+#life-panel .life-otd-list button { display: grid; gap: 1px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+#life-panel .life-otd-list button:hover { background: var(--life-hover); }
 .life-otd-when { font-size: 12.5px; font-weight: 600; }
 .life-otd-when em { font-style: normal; font-weight: 400; color: var(--life-faint); }
 .life-otd-date, .life-otd-sum { font-size: 12px; color: var(--life-muted); }
@@ -157,25 +164,26 @@
 @media (prefers-reduced-motion: reduce) {
   .life-skel { animation: none; }
   .life-dg > summary > .life-svg:last-child { transition: none; }
+  #life-panel .life-dg-body { animation: none; }
 }
 
 /* ── mês, ano, busca ── */
 .life-viewhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .life-seg { display: inline-flex; border: 1px solid var(--life-line); border-radius: 8px; overflow: hidden; }
-.life-seg button { padding: 5px 10px; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 12px; cursor: pointer; }
-.life-seg button + button { border-left: 1px solid var(--life-line); }
-.life-seg button.is-on { color: var(--life-ink); background: color-mix(in srgb, var(--life-accent) 18%, transparent); }
+#life-panel .life-seg button { padding: 5px 10px; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 12px; cursor: pointer; }
+#life-panel .life-seg button + button { border-left: 1px solid var(--life-line); }
+#life-panel .life-seg button.is-on { color: var(--life-ink); background: color-mix(in srgb, var(--life-accent) 18%, transparent); }
 .life-totals { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-bottom: 14px; }
 .life-mgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .life-mhead { padding: 0 4px 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--life-faint); }
-.life-mcell { display: grid; grid-template-rows: auto 1fr auto; min-height: 76px; padding: 6px 8px; border: 1px solid var(--life-line); border-radius: 10px; background: var(--life-h0); color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.life-mcell.is-pad { visibility: hidden; }
-.life-mcell:hover { border-color: var(--life-accent); }
-.life-mcell.lv-none { background: var(--life-hatch); }
-.life-mcell.lv-1 { background: color-mix(in srgb, var(--life-accent) 12%, transparent); }
-.life-mcell.lv-2 { background: color-mix(in srgb, var(--life-accent) 22%, transparent); }
-.life-mcell.lv-3 { background: color-mix(in srgb, var(--life-accent) 34%, transparent); }
-.life-mcell.lv-4 { background: color-mix(in srgb, var(--life-accent) 48%, transparent); }
+#life-panel .life-mcell { display: grid; grid-template-rows: auto 1fr auto; min-height: 76px; padding: 6px 8px; border: 1px solid var(--life-line); border-radius: 10px; background: var(--life-h0); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+#life-panel .life-mcell.is-pad { visibility: hidden; }
+#life-panel .life-mcell:hover { border-color: var(--life-accent); }
+#life-panel .life-mcell.lv-none { background: var(--life-hatch); }
+#life-panel .life-mcell.lv-1 { background: color-mix(in srgb, var(--life-accent) 12%, transparent); }
+#life-panel .life-mcell.lv-2 { background: color-mix(in srgb, var(--life-accent) 22%, transparent); }
+#life-panel .life-mcell.lv-3 { background: color-mix(in srgb, var(--life-accent) 34%, transparent); }
+#life-panel .life-mcell.lv-4 { background: color-mix(in srgb, var(--life-accent) 48%, transparent); }
 .life-mcell.is-today .life-mdate { color: var(--life-accent); font-weight: 700; }
 .life-mcell.is-selected { outline: 2px solid var(--life-accent); outline-offset: 1px; }
 .life-mdate { font-size: 12px; font-weight: 600; }
@@ -183,34 +191,35 @@
 .life-marks { display: flex; gap: 3px; color: var(--life-muted); }
 .life-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 12px 0; font-size: 11.5px; color: var(--life-muted); }
 .life-lg { width: 12px; height: 12px; margin-left: 6px; border: 1px solid var(--life-line); border-radius: 3px; }
-.lv-none { background: var(--life-hatch); }
-.lv-0 { background: var(--life-h0); }
-.lv-1 { background: var(--life-h1); }
-.lv-2 { background: var(--life-h2); }
-.lv-3 { background: var(--life-h3); }
-.lv-4 { background: var(--life-h4); }
+#life-panel .lv-none { background: var(--life-hatch); }
+#life-panel .lv-0 { background: var(--life-h0); }
+#life-panel .lv-1 { background: var(--life-h1); }
+#life-panel .lv-2 { background: var(--life-h2); }
+#life-panel .lv-3 { background: var(--life-h3); }
+#life-panel .lv-4 { background: var(--life-h4); }
 .life-heat { overflow-x: auto; padding-bottom: 4px; }
 .life-hmonths, .life-hgrid { display: grid; grid-template-columns: repeat(54, minmax(10px, 1fr)); gap: 3px; min-width: 640px; }
 .life-hmonths { margin-bottom: 4px; }
-.life-hmonth { grid-row: 1; justify-self: start; padding: 0; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
+#life-panel .life-hmonth { grid-row: 1; justify-self: start; padding: 0; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 11px; white-space: nowrap; cursor: pointer; }
 .life-hmonth:hover { color: var(--life-ink); }
 .life-hgrid { grid-template-rows: repeat(7, auto); grid-auto-flow: column; }
-.life-hcell { aspect-ratio: 1; padding: 0; border: 0; border-radius: 3px; cursor: pointer; }
+#life-panel .life-hcell { aspect-ratio: 1; padding: 0; border: 0; border-radius: 3px; cursor: pointer; }
 .life-hcell.is-pad { visibility: hidden; }
 .life-hcell:hover { outline: 2px solid var(--life-ink); outline-offset: 1px; }
 .life-hcell.is-today { box-shadow: inset 0 0 0 2px var(--life-ink); }
 .life-bars { display: grid; grid-template-columns: repeat(12, 1fr); align-items: end; gap: 6px; height: 120px; }
-.life-bar { display: grid; grid-template-rows: 1fr auto; height: 100%; padding: 0; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 11px; cursor: pointer; }
+#life-panel .life-bar { display: grid; grid-template-rows: 1fr auto; height: 100%; padding: 0; border: 0; background: none; color: var(--life-muted); font: inherit; font-size: 11px; cursor: pointer; }
 .life-bar-v { align-self: end; border-radius: 4px 4px 0 0; background: var(--life-accent); }
 .life-bar-v.is-none { height: 100% !important; background: var(--life-hatch); }
 .life-bar:hover .life-bar-v { filter: brightness(1.15); }
 .life-range { display: flex; gap: 10px; font-size: 12px; color: var(--life-muted); }
-.life-range input { margin-left: 4px; padding: 2px 6px; border: 1px solid var(--life-line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
-.life-results { display: grid; gap: 16px; list-style: none; margin: 0; padding: 0; }
+#life-panel .life-range input { margin-left: 4px; padding: 2px 6px; border: 1px solid var(--life-line); border-radius: 6px; background: transparent; color: inherit; font: inherit; color-scheme: dark; }
+:root.light #life-panel .life-range input { color-scheme: light; }
+.life-results { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; list-style: none; margin: 0; padding: 0; }
 .life-rday h3 { margin: 0 0 4px; }
-.life-rday h3 button { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--life-ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+#life-panel .life-rday h3 button { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; border: 0; border-radius: 6px; background: none; color: var(--life-ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .life-rday h3 button span { font-size: 12px; font-weight: 400; color: var(--life-accent); }
-.life-rday h3 button:hover { background: var(--life-hover); }
+#life-panel .life-rday h3 button:hover { background: var(--life-hover); }
 .life-ctx { margin-top: 2px; font-size: 11.5px; color: var(--life-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #life-panel mark { padding: 0 1px; border-radius: 2px; background: color-mix(in srgb, var(--life-c-note) 35%, transparent); color: inherit; }
 
@@ -227,7 +236,8 @@
   .life-entry { grid-template-columns: 46px 18px minmax(0, 1fr) auto auto; }
   .life-dg > summary { grid-template-columns: 46px 18px minmax(0, 1fr) auto; }
   .life-dg-body { margin-left: 24px; }
+  .life-time-end { display: block; }
   .life-mgrid { gap: 3px; }
-  .life-mcell { min-height: 52px; padding: 4px 5px; }
+  #life-panel .life-mcell { min-height: 52px; padding: 4px 5px; }
   .life-mval, .life-marks { display: none; }
 }

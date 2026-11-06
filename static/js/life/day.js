@@ -95,7 +95,7 @@ function digital(g) {
     const views = s.views !== s.count ? ` · ${s.views} views` : '';
     return `<section class="life-dsrc"><h4>${icon(s.group, 13)}${esc(s.label)}<span>${s.count}${views}</span></h4><ul>${rows}</ul>${more}</section>`;
   }).join('');
-  return `<li class="life-entry k-digital" data-kind="digital">
+  return `<li class="life-entry life-entry-group k-digital" data-kind="digital">
     <details class="life-dg">
       <summary>${timeCell(g.time, g.end_time)}<span class="life-ic">${icon('digital', 15)}</span>
         <div class="life-entry-b"><div class="life-entry-t"><b>Digital</b> · ${esc(g.summary)}</div></div>${icon('chevron-down', 14)}</summary>
