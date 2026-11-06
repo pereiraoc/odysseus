@@ -28,6 +28,7 @@ from src.life.views import month_view, nearest_days, on_this_day, search_all, ye
 
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
+YEARS = range(1900, 2101)
 
 
 def _date(v: Optional[str], name: str) -> Optional[date]:
@@ -65,13 +66,13 @@ def setup_lifelog_routes() -> APIRouter:
     @r.get("/month")
     def month(m: str):
         mm = MONTH_RE.match(m or "")
-        if not mm or not 1 <= int(mm.group(2)) <= 12:
+        if not mm or not 1 <= int(mm.group(2)) <= 12 or int(mm.group(1)) not in YEARS:
             raise HTTPException(400, "invalid m (YYYY-MM)")
         return month_view(int(mm.group(1)), int(mm.group(2)), registry.providers())
 
     @r.get("/year")
     def year(y: str):
-        if not re.fullmatch(r"\d{4}", y or ""):
+        if not re.fullmatch(r"\d{4}", y or "") or int(y) not in YEARS:
             raise HTTPException(400, "invalid y (YYYY)")
         return year_view(int(y), registry.providers())
 
