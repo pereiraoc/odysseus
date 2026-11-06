@@ -63,6 +63,8 @@ Não toca nenhum arquivo do upstream. Adiciona ao serviço `odysseus`:
 - **Login pelo NAS**: `TRUSTED_PROXY_SECRET`, `TRUSTED_PROXY_USER_MAP`,
   `TRUSTED_PROXY_LOGOUT_URL` e `NAS_APPROVE_URL` (valores no `.env`). Até 2026-11-06
   ficavam no `docker-compose.yml`, o que quebrava os testes de compose standalone de GPU.
+- **Documentos do NAS só leitura**: volume `/data/nas:/app/vaults/nas:ro,rslave` — `Library/Documents` do NAS montado no PC por sshfs (`caelestia-arch-setup` `scripts/system/install-nas-documents-mount.sh`); `Private/` e o WhatsApp ficam fora por construção. Aparece como a vault "nas" (`tool_path_extra_roots`, §3).
+- **Life**: volume `/data/lifelog:/app/lifelog:ro` (§11).
 
 - **Imagem local, nunca a do GHCR**: `image: odysseus-odysseus:latest` +
   `pull_policy: build`. Desde o sync de 2026-10-05 o `docker-compose.yml` do

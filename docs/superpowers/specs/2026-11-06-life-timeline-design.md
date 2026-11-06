@@ -239,7 +239,7 @@ tokens de cor do tema (claro/escuro), contraste AA, cor nunca sozinha (sempre í
   Immich"; vídeo abre no Immich), números do dia, "On this day" e rodapé
   **Sources** (última atualização e início da cobertura de cada fonte).
 - **Celular / < 1100 px:** mapa compacto no topo (como no Arc), depois a linha do tempo com as fotos em mini-tira
-  dentro das visitas, depois grade, números e notas; navegação sempre visível.
+  dentro das visitas, depois grade e números; navegação sempre visível.
 - **Dia vazio:** "Nothing recorded on this day" + atalhos para os dias com dados mais próximos.
 - Carregamento: esqueletos; o dia vem numa chamada, mapa e imagens chegam depois (lazy, `IntersectionObserver`).
 - Notas (Keep; Obsidian na fase 4) entram na linha do tempo como itens com hora, não num cartão à parte (evita

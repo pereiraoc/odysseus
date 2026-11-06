@@ -10,7 +10,7 @@ const path = require('path');
 const base = '/app/.npm/_npx';
 const pw = fs.readdirSync(base).map(d => path.join(base, d, 'node_modules/playwright-core')).find(p => fs.existsSync(p));
 const { chromium } = require(pw);
-const LIGHT = { '--bg': '#f3f5f7', '--fg': '#26313a', '--panel': '#ffffff', '--border': '#cbd3da' };
+const LIGHT = { '--bg': '#f3f5f7', '--fg': '#26313a', '--panel': '#ffffff', '--border': '#cbd3da', '--red': '#b34d5c' };
 
 (async () => {
   const day = process.argv[2] || '2023-03-14';
@@ -27,7 +27,7 @@ const LIGHT = { '--bg': '#f3f5f7', '--fg': '#26313a', '--panel': '#ffffff', '--b
     page.on('console', m => { if (m.type() === 'error') errors.push(`${tag} console: ${m.text()}`); });
     page.on('response', r => { if (r.status() >= 400 && /\/static\/|\/api\/lifelog/.test(r.url())) errors.push(`${tag} ${r.status()} ${r.url()}`); });
     await page.goto(`http://127.0.0.1:7000/#life/${day}`, { waitUntil: 'networkidle', timeout: 60000 });
-    if (theme === 'light') await page.evaluate(v => { for (const [k, x] of Object.entries(v)) document.documentElement.style.setProperty(k, x); }, LIGHT);
+    if (theme === 'light') await page.evaluate(v => { document.documentElement.classList.add('light'); for (const [k, x] of Object.entries(v)) document.documentElement.style.setProperty(k, x); }, LIGHT);
     const snap = async name => { const f = `/tmp/life-${name}-${tag}.png`; await page.screenshot({ path: f }); shots.push(f); };
     await page.waitForSelector('#life-panel .life-day, #life-panel .life-empty', { timeout: 20000 });
     await page.waitForTimeout(1200);
