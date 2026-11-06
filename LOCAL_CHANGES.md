@@ -10,6 +10,19 @@ Mantidos **segregados** pra facilitar integrar updates do Odysseus depois.
   dry-run (`git worktree add --detach /tmp/ody-dryrun upstream/dev` + cherry-pick dos
   deltas) e só então apontar `pereiraoc` pro resultado. Push com `--force-with-lease`.
   (Conflito esperado nos itens 1 e 4, que são inline; os demais são aditivos.)
+- **Sync de 2026-11-06** (upstream `e4cc8efa`, merge — o upstream NÃO força-pushou desde
+  27/10): conflitos só em `Dockerfile` (item 4), `static/index.html` e `static/sw.js` (links
+  `zz-fork-*`). Lições: (a) o `CACHE_NAME` do `sw.js` TEM de casar
+  `odysseus-v<N>-pr40-editor-precache` (~20 testes do editor checam) — o fork bumpa só o
+  `<N>` (+1 sobre o do upstream), sem sufixo; (b) o Dockerfile agora checa os CAs da base
+  ANTES do apt (estágio `brotli-base`) e uma `python:3.12-slim` velha em cache falha o
+  build → sempre `docker compose build --pull`; (c) migração aditiva
+  `model_endpoints.cookbook_serve_session_id` no 1º boot (backup em
+  `data/app.db.pre-sync-2026-11-06`); (d) suíte completa rodada DENTRO da imagem
+  (o `./venv` do host não tem numpy) contra upstream puro: nenhuma falha nova do fork.
+  Falhas conhecidas e anteriores ao sync: tokens `?v=` próprios dos `zz-fork-*.css`
+  (4 testes de "mesmo cache-bust"), `TRUSTED_PROXY_*` fora dos `docker-compose.gpu-*.yml`
+  standalone (3) e `z-index: 100000` literal no CSS do fork (1).
 - **Sync de 2026-10-17 — atenção no deploy:** (a) o compose do upstream mudou a porta
   padrão do host de 7000 para **7011** — manter `APP_PORT=7000` no `.env` (o launcher
   Electron abre localhost:7000); (b) o volume do ChromaDB passou de `/chroma/chroma` para
@@ -69,7 +82,9 @@ Cookbook**, reaproveitando os engines CUDA já instalados em `./data/local`
 `docker compose build --build-arg PYTHON_VERSION=3.14`. Segundo delta inline no
 upstream; conflita quando o upstream mexe nos `FROM` (aconteceu no sync de
 2026-07-25: Dockerfile virou 2 estágios — `realesrgan-wheels` + main — e o `ARG`
-global no topo agora parametriza os dois).
+global no topo agora parametriza os dois). No sync de 2026-11-06 o upstream criou o
+estágio-base `brotli-base` (`FROM python:3.14.9-slim`, pinado) de que os outros dois
+herdam: o fork troca só esse `FROM` por `python:${PYTHON_VERSION}-slim`.
 
 ## 5. Painel de Vaults — browse/edição markdown + git na UI  [feature local]
 Espaço dedicado na UI pras vaults do `tool_path_extra_roots` (item 3): browse em

@@ -4,12 +4,25 @@
 # do 1º FROM vale pros 2 estágios. Override pontual: --build-arg PYTHON_VERSION=3.14.
 ARG PYTHON_VERSION=3.12
 
+# Both stages need the fixed native decoder, including curl in the builder and
+# distro Node in the runtime. A cached Python base may predate the Debian fix.
+FROM python:${PYTHON_VERSION}-slim AS brotli-base
+COPY scripts/check_brotli.py /usr/local/bin/check-brotli.py
+COPY scripts/check_ca_trust.py /usr/local/bin/check-ca-trust.py
+# Check inherited trust before the first HTTPS package request, retaining Debian's
+# signed archive verification. Refresh only the explicit native dependency.
+RUN python /usr/local/bin/check-ca-trust.py --system \
+    && sed -i 's|http://deb.debian.org/|https://deb.debian.org/|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends libbrotli1 \
+    && python /usr/local/bin/check-brotli.py \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---- builder: patch + build wheels for Real-ESRGAN's broken-on-3.14 deps ----
 # basicsr/gfpgan/facexlib read their version via exec()+locals()['__version__'],
 # which raises KeyError on Python 3.13+ (PEP 667). Build patched wheels here so
 # the final image / Cookbook never has to compile the broken sdists. See
 # docker/build-realesrgan-wheels.sh for the full rationale.
-FROM python:${PYTHON_VERSION}-slim AS realesrgan-wheels
+FROM brotli-base AS realesrgan-wheels
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/check_ca_trust.py /usr/local/bin/check-ca-trust.py
@@ -20,7 +33,7 @@ RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: --
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
-FROM python:${PYTHON_VERSION}-slim
+FROM brotli-base
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
@@ -58,6 +71,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     libxcb1 \
     libmagic1 \
+    && python /usr/local/bin/check-brotli.py --node /usr/bin/node \
     && rm -rf /var/lib/apt/lists/*
 
 # Refresh both Python trust bundles before installing application dependencies.
@@ -138,7 +152,8 @@ RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
 # Check gRPC's effective defaults after all Python dependencies are installed.
 # The application minimum fixes its bundled roots; the checked override also
 # keeps the effective Docker selection consistent with system trust.
-RUN python /usr/local/bin/check-ca-trust.py --system --python --grpc
+RUN python /usr/local/bin/check-ca-trust.py --system --python --grpc \
+    && python /usr/local/bin/check-brotli.py --node /usr/bin/node
 
 # Copy app code
 # Fork-local (ver LOCAL_CHANGES.md §7): ferramentas do arquivo financeiro
