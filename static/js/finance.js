@@ -7,7 +7,7 @@
 import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { showError, esc } from './ui.js?v=20260916largetoolscroll1';
-import { nextToolWindowZ } from './toolWindowZOrder.js';
+import { nextToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 
 const PANEL_ID = 'finance-panel';
 const API = '/api/finance';
@@ -361,6 +361,9 @@ function tip(e, html) {
   if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'fin-tip'; document.body.append(tipEl); }
   if (!html) { tipEl.style.display = 'none'; return; }
   tipEl.innerHTML = html;
+  // acima de toda janela aberta: o contador de z dos modais sobe sem teto, então um z fixo
+  // acabaria atrás do próprio painel de Finanças numa sessão longa (mesma regra dos portais do upstream)
+  tipEl.style.zIndex = String(topPortalZ());
   tipEl.style.display = 'block';
   const x = Math.min(e.clientX + 14, window.innerWidth - tipEl.offsetWidth - 8);
   tipEl.style.left = `${x}px`;

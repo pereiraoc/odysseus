@@ -50,6 +50,14 @@ services:
       # container (cai no padrao 7011) -> "All connection attempts failed". O container
       # sempre escuta em 7000, seja qual for a porta do host.
       - ODYSSEUS_INTERNAL_BASE=http://127.0.0.1:7000
+      # Login pelo NAS (core/sso_proxy.py, core/nas_login.py): segredo do Caddy do NAS, mapa
+      # usuario-do-Authelia -> usuario-do-Odysseus, saida do login central e o nas-approve.
+      # Ficavam no docker-compose.yml do upstream (que voltou a ser pristine no sync de
+      # 2026-11-06 — os testes exigem gpu-*.yml standalone == base + overlay de GPU).
+      - TRUSTED_PROXY_SECRET=${TRUSTED_PROXY_SECRET:-}
+      - TRUSTED_PROXY_USER_MAP=${TRUSTED_PROXY_USER_MAP:-}
+      - TRUSTED_PROXY_LOGOUT_URL=${TRUSTED_PROXY_LOGOUT_URL:-}
+      - NAS_APPROVE_URL=${NAS_APPROVE_URL:-}
       # Painel de Vaults (routes/vaultfs_routes.py): identidade git dos commits
       # feitos pela UI e credencial de push/pull https. O token vai SÓ por env
       # (o credential helper inline referencia $VAULTFS_GIT_TOKEN — nunca em

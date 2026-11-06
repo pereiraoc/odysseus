@@ -20,9 +20,13 @@ Mantidos **segregados** pra facilitar integrar updates do Odysseus depois.
   `model_endpoints.cookbook_serve_session_id` no 1º boot (backup em
   `data/app.db.pre-sync-2026-11-06`); (d) suíte completa rodada DENTRO da imagem
   (o `./venv` do host não tem numpy) contra upstream puro: nenhuma falha nova do fork.
-  Falhas conhecidas e anteriores ao sync: tokens `?v=` próprios dos `zz-fork-*.css`
-  (4 testes de "mesmo cache-bust"), `TRUSTED_PROXY_*` fora dos `docker-compose.gpu-*.yml`
-  standalone (3) e `z-index: 100000` literal no CSS do fork (1).
+  As 8 falhas antigas do fork foram corrigidas no mesmo dia: (e) os `zz-fork-*.css` usam o
+  **token `?v=` compartilhado** do upstream (o mesmo do `app.js`, em `index.html` e no
+  PRECACHE do `sw.js`) — mudou um CSS do fork, bumpe o token de TODAS as folhas e do
+  `app.js` juntas (é um token só); (f) `docker-compose.yml` voltou a ser pristine: as vars
+  do login pelo NAS (`TRUSTED_PROXY_*`, `NAS_APPROVE_URL`) moraram pro overlay (item 2);
+  (g) nada de `z-index` fixo em elemento portado pro `body`: use `topPortalZ()` de
+  `static/js/toolWindowZOrder.js` (o tooltip de Finanças já usa).
 - **Sync de 2026-10-17 — atenção no deploy:** (a) o compose do upstream mudou a porta
   padrão do host de 7000 para **7011** — manter `APP_PORT=7000` no `.env` (o launcher
   Electron abre localhost:7000); (b) o volume do ChromaDB passou de `/chroma/chroma` para
@@ -56,6 +60,9 @@ Não toca nenhum arquivo do upstream. Adiciona ao serviço `odysseus`:
   escreve os vaults.
 - **`LD_LIBRARY_PATH`** das libs CUDA das wheels nvidia em `~/.local` (movido pra cá
   do `docker/gpu.nvidia.yml`, que voltou a ser pristine).
+- **Login pelo NAS**: `TRUSTED_PROXY_SECRET`, `TRUSTED_PROXY_USER_MAP`,
+  `TRUSTED_PROXY_LOGOUT_URL` e `NAS_APPROVE_URL` (valores no `.env`). Até 2026-11-06
+  ficavam no `docker-compose.yml`, o que quebrava os testes de compose standalone de GPU.
 
 - **Imagem local, nunca a do GHCR**: `image: odysseus-odysseus:latest` +
   `pull_policy: build`. Desde o sync de 2026-10-05 o `docker-compose.yml` do
@@ -71,6 +78,9 @@ Ativar no `.env` (gitignored, NÃO comitado):
 painel de Vaults** (item 5): `OP Vault`, `pleitost`, `pleitost-app`,
 `caelestia-arch-setup` e `POA 1987` (adicionada em 2026-10-13) (os dois últimos montados pelo overlay do item 2, de
 `/data/projects/*`). Setável pelo chat (`manage_settings`) ou editando o arquivo.
+Em 2026-11-06 entrou `/app/vaults/nas` (documentos do NAS, mount **só leitura** do item 2):
+aparece na barra lateral e o agente pode LER; escrita falha (EROFS). Sem mapeamento no
+`VAULTFS_HOST_MAP` de propósito — uma sessão do Obsidian gravaria `.obsidian/` no NAS.
 
 ## 4. `Dockerfile` — pin Python em 3.12  [inline patch]
 Upstream usa `FROM python:3.14-slim`; trocado por `ARG PYTHON_VERSION=3.12` +
