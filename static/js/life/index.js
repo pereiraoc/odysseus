@@ -272,6 +272,12 @@ function mountSidebar() {
 restore();
 window.addEventListener('hashchange', fromHash);
 window.addEventListener('popstate', fromHash);
+// Celular: o ✖ some (02-compare.css) e arrastar a folha para baixo (ui.js) só põe .hidden e avisa por
+// 'modal-dismissed' — o app ficava montado escondido e a URL presa em #life/…. O Life não está entre as janelas que
+// o arrasto minimiza (modalManager), então fecha como o ✖.
+window.addEventListener('modal-dismissed', e => {
+  if (e.detail?.id === PANEL_ID && Modals.isRegistered(PANEL_ID)) Modals.close(PANEL_ID);
+});
 function boot() {
   mountSidebar();
   if (parseLifeHash(location.hash)) fromHash();
