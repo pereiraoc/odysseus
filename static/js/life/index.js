@@ -21,6 +21,7 @@ const st = { view: 'day', day: '', q: '', metric: 'digital', filter: 'all', kind
 let els = null;
 let seq = 0;
 let lastHash = '';
+let returnHash = null;  // hash do chat aberto antes do Life mexer na URL; volta ao fechar
 
 function restore() {
   try {
@@ -102,8 +103,9 @@ function buildPanel() {
 function onClose() {
   els?.panel.classList.add('hidden');
   if (parseHash(location.hash)) {
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+    try { history.replaceState(null, '', location.pathname + location.search + (returnHash || '')); } catch (_) {}
   }
+  returnHash = null;
   lastHash = '';
 }
 
@@ -123,6 +125,7 @@ function go(patch = {}, { replace = false } = {}) {
   Object.assign(st, patch);
   if (!st.day) st.day = todayIso();
   const h = buildHash(st);
+  if (!parseHash(location.hash)) returnHash = location.hash;
   if (location.hash !== h) {
     try { history[replace ? 'replaceState' : 'pushState'](null, '', h); } catch (_) { location.hash = h; }
   }
