@@ -141,8 +141,9 @@ leva de volta à origem (Promnesia, Recall, Rewind). Provedor sem arquivo vira `
 3. **Digital.** Em cada bloco, os itens `digital` viram um grupo `{counts_by_source, items_by_source}`: a linha
    recolhida diz "Digital · 6 searches, 2 videos (3 views)"; expandida, cada fonte mostra 3–5 itens e
    "+N more"; repetições do mesmo vídeo/URL/consulta no bloco viram uma linha "×3" com os horários; itens
-   indisponíveis ("YouTube video (unavailable)") são contados à parte e ficam no fim. Blocos longos (> 3 h)
-   quebram o grupo por hora.
+   indisponíveis ("YouTube video (unavailable)") são contados à parte e ficam no fim. A sequência de itens
+   digitais quebra quando aparece um item não digital ou há um intervalo > 60 min (estilo Timelinize; ver o
+   documento de pesquisa).
 4. **Resumo e números.** Frase-resumo por template (sem LLM); KPIs com zero ou sem fonte não aparecem
    ("No bank data" ≠ "R$ 0").
 

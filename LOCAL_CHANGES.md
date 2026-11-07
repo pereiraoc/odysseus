@@ -387,5 +387,13 @@ Patches: `app.py` (`include_router(setup_lifelog_routes())`, inalterado desde o 
 src="/static/js/life/index.js?v=…">`), `static/sw.js` (CSS no PRECACHE + bump do `CACHE_NAME`),
 `docker/pereiraoc.yml` (volume `/data/lifelog:/app/lifelog:ro`).
 
+**Hash e upstream:** o Life usa `#life/...` na URL; `sessions.js`, `init.js` e `chat.js` tratam hashes desconhecidos como
+id de sessão (inofensivo: não casa com nenhuma), e o Life restaura o hash do chat anterior ao fechar. Conferir isso ao
+sincronizar com o upstream.
+
+**Diferenças conhecidas / para depois:** o "spent" do Life não abate pares de estorno (pode diferir de Finanças); o chip
+de filtro não persiste entre recarregamentos; as facetas da busca não vão na URL; o estado "stale" das fontes não está
+implementado; o mapa de calor do ano tem uma parada de Tab por dia.
+
 Próximas fases (spec): lugares/viagens/fotos/agenda/e-mail/casa pelo `services.sqlite` do NAS; mapa e fotos ao vivo;
 commits e notas do PC.
