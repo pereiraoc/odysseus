@@ -1,7 +1,4 @@
-// static/js/life/apps/ai.js — stub da Task 2 (substituído na Task 4).
-import { emptyState } from '../parts.js';
+// static/js/life/apps/ai.js — app AI usage do hub Life (o painel de static/js/aiUsage.js, embutido).
+import { mountAiUsage } from '../../aiUsage.js';
 
-export async function mount(host) {
-  host.innerHTML = emptyState('work', 'AI usage', 'Coming in the next task.');
-  return { route() {}, unmount() {} };
-}
+export const mount = (host, hub) => mountAiUsage(host, hub);

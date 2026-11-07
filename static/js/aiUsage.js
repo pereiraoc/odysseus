@@ -1,22 +1,20 @@
-// static/js/aiUsage.js — painel "Uso de IA" (fork-local, ver LOCAL_CHANGES.md)
+// static/js/aiUsage.js — app "AI usage" do hub Life (fork-local, ver LOCAL_CHANGES.md)
+// `mountAiUsage(host, hub)` desenha dentro do host do hub, com UI em inglês.
 //
 // Le /api/ai-usage/* (routes/ai_usage_routes.py), que consulta o banco do
 // ai-usage-export do host: tokens por dia, sessao, modelo e categoria de Claude
 // Code, Codex, Cursor, Copilot, Cline e do proprio Odysseus. Graficos em SVG
 // feitos aqui (sem biblioteca externa: o CSP do app nao libera CDN).
-import * as Modals from './modalManager.js';
-import { makeWindowDraggable } from './windowDrag.js';
-import { showError, esc } from './ui.js?v=20260916largetoolscroll1';
-import { nextToolWindowZ } from './toolWindowZOrder.js';
+import { esc } from './ui.js?v=20260916largetoolscroll1';
+import { lifeHref } from './life/router.js';
 
-const PANEL_ID = 'ai-usage-panel';
 const API = '/api/ai-usage';
 const METRICS = {
-  total: 'Tokens (total)', output: 'Saída', input: 'Entrada sem cache', cache_read: 'Cache lido',
-  cache_write: 'Cache gravado', calls: 'Chamadas', cost_usd: 'Custo (US$, só Cline)',
+  total: 'Tokens (total)', output: 'Output', input: 'Input (no cache)', cache_read: 'Cache read',
+  cache_write: 'Cache written', calls: 'Calls', cost_usd: 'Cost (US$, Cline only)',
 };
-const DIMS = { category: 'Categoria', model: 'Modelo', source: 'Ferramenta', machine: 'Máquina' };
-const PERIODS = [['7', '7 dias'], ['30', '30 dias'], ['90', '90 dias'], ['365', '1 ano'], ['all', 'Tudo']];
+const DIMS = { category: 'Category', model: 'Model', source: 'Tool', machine: 'Machine' };
+const PERIODS = [['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['365', '1 year'], ['all', 'All']];
 // cores bem separadas no matiz (nada de dois verdes vizinhos)
 const PALETTE = ['#59c2ff', '#ffb454', '#7fd962', '#f07178', '#c792ea', '#2ec4b6', '#ff8f40', '#e6e16b',
   '#ff6ac1', '#8d9eff', '#a0785a', '#b8c4cc', '#3d9970', '#d9534f', '#f5c2e7', '#6c8ebf'];
@@ -28,6 +26,8 @@ const st = {
 };
 const colorMap = new Map();
 let els = {};
+let hubRef = null;      // hub do Life (navegação entre abas); definido em mountAiUsage
+let resizeObs = null;   // ResizeObserver do corpo; desconectado no unmount
 
 // ── util ────────────────────────────────────────────────────────────────
 function fmt(n, metric = st.metric) {
@@ -49,6 +49,17 @@ function colorFor(key) {
 }
 function shortDay(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}` : ''; }
 function isoDay(d) { return d.toISOString().slice(0, 10); }
+const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + 'T12:00:00'));
+// dia de uma sessão: link que abre o dia no Diary
+function dayLink(d) {
+  if (!d) return '';
+  const iso = String(d).slice(0, 10);
+  return `<a class="aiu-daylink" href="${esc(lifeHref('diary', [iso]))}" title="Open this day in Diary">${esc(shortDay(iso))}</a>`;
+}
+// período de uma sessão (primeiro → último dia), com links
+function daySpan(a, b) { return dayLink(a) + (b && b !== a ? ' → ' + dayLink(b) : ''); }
+// navega para uma aba mantendo o período personalizado na URL
+function goTab(tab) { void hubRef.navigate([tab], st.period === 'custom' ? { from: st.from, to: st.to } : {}); }
 function range() {
   if (st.period === 'custom') return { from: st.from, to: st.to };
   if (st.period === 'all') return { from: '', to: '' };
@@ -94,7 +105,7 @@ function stackedBars(host, data, { onBucket } = {}) {
   host.innerHTML = '';
   const series = data.series.filter(s => !st.hidden.has(s.key));
   const n = data.buckets.length;
-  if (!n) { host.innerHTML = '<div class="aiu-empty">Sem dados no período/filtros.</div>'; return; }
+  if (!n) { host.innerHTML = '<div class="aiu-empty">No data for this period/filters.</div>'; return; }
   const W = Math.max(host.clientWidth || 700, 320), H = 260, L = 56, B = 26, T = 8;
   const totals = data.buckets.map((_, i) => series.reduce((a, s) => a + (s.values[i] || 0), 0));
   const max = Math.max(1, ...totals);
@@ -114,7 +125,7 @@ function stackedBars(host, data, { onBucket } = {}) {
       if (!v) continue;
       const h = (H - T - B) * v / max;
       const r = svgEl('rect', { x, y: y0 - h, width: w, height: Math.max(h, 0.5), fill: colorFor(s.key), class: 'aiu-bar' });
-      r.addEventListener('mousemove', e => tip(e, `<b>${esc(bk)}</b><br><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}: <b>${fmt(v)}</b><br>Total do período: ${fmt(totals[i])}`));
+      r.addEventListener('mousemove', e => tip(e, `<b>${esc(bk)}</b><br><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}: <b>${fmt(v)}</b><br>Bucket total: ${fmt(totals[i])}`));
       r.addEventListener('mouseleave', e => tip(e, null));
       if (onBucket) r.addEventListener('click', () => onBucket(bk));
       svg.append(r);
@@ -128,14 +139,14 @@ function stackedBars(host, data, { onBucket } = {}) {
 
 function hbars(host, rows, { onClick, valueKey = 'value', label = r => r.key, sub } = {}) {
   host.innerHTML = '';
-  if (!rows.length) { host.innerHTML = '<div class="aiu-empty">Sem dados.</div>'; return; }
+  if (!rows.length) { host.innerHTML = '<div class="aiu-empty">No data.</div>'; return; }
   const max = Math.max(1, ...rows.map(r => r[valueKey] || 0));
   const sum = rows.reduce((a, r) => a + (r[valueKey] || 0), 0) || 1;
   for (const r of rows) {
-    const key = label(r) ?? '(sem)';
+    const key = label(r) ?? '(none)';
     const row = document.createElement('div');
     row.className = 'aiu-hbar' + (onClick ? ' clickable' : '');
-    row.innerHTML = `<div class="aiu-hbar-label" title="${esc(key)}"><span class="aiu-sw" style="background:${colorFor(key)}"></span>${esc(key)}${r.estimated ? ' <span class="aiu-est" title="inclui estimativas">≈</span>' : ''}</div>
+    row.innerHTML = `<div class="aiu-hbar-label" title="${esc(key)}"><span class="aiu-sw" style="background:${colorFor(key)}"></span>${esc(key)}${r.estimated ? ' <span class="aiu-est" title="includes estimates">≈</span>' : ''}</div>
       <div class="aiu-hbar-track"><div class="aiu-hbar-fill" style="width:${100 * (r[valueKey] || 0) / max}%;background:${colorFor(key)}"></div></div>
       <div class="aiu-hbar-val">${fmt(r[valueKey])}<small>${(100 * (r[valueKey] || 0) / sum).toFixed(1)}%</small></div>
       ${sub ? `<div class="aiu-hbar-sub">${sub(r)}</div>` : ''}`;
@@ -163,7 +174,7 @@ function hoursChart(host, rows) {
 
 function heatmap(host, rows) {
   host.innerHTML = '';
-  if (!rows.length) { host.innerHTML = '<div class="aiu-empty">Sem dados.</div>'; return; }
+  if (!rows.length) { host.innerHTML = '<div class="aiu-empty">No data.</div>'; return; }
   const byDay = new Map(rows.map(r => [r.day, r]));
   const first = new Date(rows[0].day + 'T12:00:00'), last = new Date(rows[rows.length - 1].day + 'T12:00:00');
   const start = new Date(first); start.setDate(start.getDate() - start.getDay());
@@ -171,7 +182,7 @@ function heatmap(host, rows) {
   const C = 16, G = 3, L = 28, T = 18;
   const max = Math.max(1, ...rows.map(r => r.value || 0));
   const svg = svgEl('svg', { width: L + weeks * (C + G) + 4, height: T + 7 * (C + G) + 4, class: 'aiu-svg' });
-  ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].forEach((d, i) => i % 2 && svg.append(svgEl('text', { x: 0, y: T + i * (C + G) + 11, class: 'aiu-axis' }, d)));
+  ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach((d, i) => i % 2 && svg.append(svgEl('text', { x: 0, y: T + i * (C + G) + 11, class: 'aiu-axis' }, d)));
   let lastMonth = -1, lastLabelW = -9;
   for (let w = 0; w < weeks; w++) {
     for (let d = 0; d < 7; d++) {
@@ -180,14 +191,14 @@ function heatmap(host, rows) {
       const k = isoDay(day), r = byDay.get(k), v = r?.value || 0;
       if (d === 0 && day.getMonth() !== lastMonth && w - lastLabelW >= 3) {
         lastMonth = day.getMonth(); lastLabelW = w;
-        svg.append(svgEl('text', { x: L + w * (C + G), y: 11, class: 'aiu-axis' }, day.toLocaleDateString('pt-BR', { month: 'short' })));
+        svg.append(svgEl('text', { x: L + w * (C + G), y: 11, class: 'aiu-axis' }, day.toLocaleDateString('en-GB', { month: 'short' })));
       }
       const a = v ? 0.18 + 0.82 * Math.sqrt(v / max) : 0;
       const cell = svgEl('rect', { x: L + w * (C + G), y: T + d * (C + G), width: C, height: C, rx: 3,
         class: 'aiu-cell' + (v ? '' : ' empty'), style: v ? `fill-opacity:${a}` : '' });
-      cell.addEventListener('mousemove', e => tip(e, `<b>${k}</b><br>${fmt(v)}${r ? ` · ${r.sessions} sessão(ões)` : ''}`));
+      cell.addEventListener('mousemove', e => tip(e, `<b>${k}</b><br>${fmt(v)}${r ? ` · ${r.sessions} session(s)` : ''}`));
       cell.addEventListener('mouseleave', e => tip(e, null));
-      if (v) cell.addEventListener('click', () => { st.period = 'custom'; st.from = k; st.to = k; syncToolbar(); st.tab = 'sessions'; render(); });
+      if (v) cell.addEventListener('click', () => { st.period = 'custom'; st.from = k; st.to = k; syncToolbar(); goTab('sessions'); });
       svg.append(cell);
     }
   }
@@ -196,7 +207,7 @@ function heatmap(host, rows) {
 
 function lineChart(host, rows) {
   host.innerHTML = '';
-  if (!rows.length) { host.innerHTML = '<div class="aiu-empty">Sem leituras de limite (só o Codex grava).</div>'; return; }
+  if (!rows.length) { host.innerHTML = '<div class="aiu-empty">No limit readings (only Codex records them).</div>'; return; }
   const days = [...new Set(rows.map(r => r.day))].sort();
   const names = [...new Set(rows.map(r => r.limit_name))];
   const W = Math.max(host.clientWidth || 600, 320), H = 220, L = 40, B = 24, T = 8;
@@ -212,7 +223,7 @@ function lineChart(host, rows) {
     svg.append(svgEl('polyline', { points: pts.map(p => `${p[0]},${p[1]}`).join(' '), fill: 'none', stroke: colorFor(n), 'stroke-width': 2 }));
     for (const [px, py, r] of pts) {
       const c = svgEl('circle', { cx: px, cy: py, r: 3, fill: colorFor(n) });
-      c.addEventListener('mousemove', e => tip(e, `<b>${r.day}</b><br>${esc(n)} (janela ${Math.round(r.window_minutes / 60)} h): <b>${r.used_percent}%</b> · plano ${esc(r.plan || '')}`));
+      c.addEventListener('mousemove', e => tip(e, `<b>${r.day}</b><br>${esc(n)} (${Math.round(r.window_minutes / 60)} h window): <b>${r.used_percent}%</b> · plan ${esc(r.plan || '')}`));
       c.addEventListener('mouseleave', e => tip(e, null));
       svg.append(c);
     }
@@ -230,12 +241,12 @@ function lineChart(host, rows) {
 async function renderOverview(pane) {
   pane.innerHTML = `
     <div class="aiu-kpis"></div>
-    <div class="aiu-card"><div class="aiu-card-h"><span>${METRICS[st.metric]} por ${st.bucket === 'day' ? 'dia' : st.bucket === 'week' ? 'semana' : 'mês'} · ${DIMS[st.by]}</span><span class="aiu-hint">clique numa barra = ver só aquele período · clique na legenda = esconder</span></div>
+    <div class="aiu-card"><div class="aiu-card-h"><span>${METRICS[st.metric]} per ${st.bucket === 'day' ? 'day' : st.bucket === 'week' ? 'week' : 'month'} · ${DIMS[st.by]}</span><span class="aiu-hint">click a bar = show only that period · click the legend = hide</span></div>
       <div class="aiu-chart"></div><div class="aiu-legend clickable"></div></div>
     <div class="aiu-grid2">
-      <div class="aiu-card"><div class="aiu-card-h">Por ${DIMS[st.by].toLowerCase()} <span class="aiu-hint">clique = filtrar</span></div><div class="aiu-break"></div></div>
-      <div class="aiu-card"><div class="aiu-card-h">Hora do dia</div><div class="aiu-hours"></div>
-        <div class="aiu-card-h" style="margin-top:12px">Ferramenta</div><div class="aiu-bysrc"></div></div>
+      <div class="aiu-card"><div class="aiu-card-h">By ${DIMS[st.by].toLowerCase()} <span class="aiu-hint">click = filter</span></div><div class="aiu-break"></div></div>
+      <div class="aiu-card"><div class="aiu-card-h">Hour of day</div><div class="aiu-hours"></div>
+        <div class="aiu-card-h" style="margin-top:12px">Tool</div><div class="aiu-bysrc"></div></div>
     </div>`;
   const [series, br, hrs, bysrc] = await Promise.all([
     get('series', { bucket: st.bucket, by: st.by, metric: st.metric }),
@@ -249,15 +260,15 @@ async function renderOverview(pane) {
   daysActive.forEach(r => days.add(r.day));
   const kpi = (label, val, sub = '') => `<div class="aiu-kpi"><div class="aiu-kpi-v">${val}</div><div class="aiu-kpi-l">${label}</div>${sub ? `<div class="aiu-kpi-s">${sub}</div>` : ''}</div>`;
   pane.querySelector('.aiu-kpis').innerHTML =
-    kpi('tokens no total', fmt(tot, 'total'), `${fmt(br.reduce((a, r) => a + (r.cache_read || 0), 0), 'total')} de cache lido`) +
-    kpi('de saída (texto gerado)', fmt(out, 'total')) +
-    kpi('dias com uso', days.size, days.size ? `${fmt(tot / days.size, 'total')} por dia ativo` : '') +
-    kpi('sessões', fmt(sessions, 'calls')) +
-    kpi(`maior ${DIMS[st.by].toLowerCase()}`, esc(br[0]?.key || '—'), br[0] ? `${(100 * br[0].value / (br.reduce((a, r) => a + r.value, 0) || 1)).toFixed(0)}%` : '');
+    kpi('tokens in total', fmt(tot, 'total'), `${fmt(br.reduce((a, r) => a + (r.cache_read || 0), 0), 'total')} cache read`) +
+    kpi('output (generated text)', fmt(out, 'total')) +
+    kpi('days with usage', days.size, days.size ? `${fmt(tot / days.size, 'total')} per active day` : '') +
+    kpi('sessions', fmt(sessions, 'calls')) +
+    kpi(`top ${DIMS[st.by].toLowerCase()}`, esc(br[0]?.key || '—'), br[0] ? `${(100 * br[0].value / (br.reduce((a, r) => a + r.value, 0) || 1)).toFixed(0)}%` : '');
   stackedBars(pane.querySelector('.aiu-chart'), series, {
     onBucket: bk => {
       if (st.bucket !== 'day') return;
-      st.period = 'custom'; st.from = bk; st.to = bk; syncToolbar(); render();
+      st.period = 'custom'; st.from = bk; st.to = bk; syncToolbar(); goTab('overview');
     },
   });
   const lg = pane.querySelector('.aiu-legend');
@@ -272,7 +283,7 @@ async function renderOverview(pane) {
   const dimKey = { category: 'categories', model: 'models', source: 'sources', machine: 'machines' }[st.by];
   hbars(pane.querySelector('.aiu-break'), br.slice(0, 25), {
     onClick: r => { st.filters[dimKey].add(r.key); syncFilters(); render(); },
-    sub: r => `${fmt(r.output, 'total')} saída · ${r.sessions} sessões · ${r.days} dias · ${esc(r.first_day)} → ${esc(r.last_day)}`,
+    sub: r => `${fmt(r.output, 'total')} output · ${r.sessions} sessions · ${r.days} days · ${esc(r.first_day)} → ${esc(r.last_day)}`,
   });
   hoursChart(pane.querySelector('.aiu-hours'), hrs);
   hbars(pane.querySelector('.aiu-bysrc'), bysrc, { onClick: r => { st.filters.sources.add(r.key); syncFilters(); render(); } });
@@ -280,28 +291,28 @@ async function renderOverview(pane) {
 
 async function renderModels(pane) {
   const rows = await get('breakdown', { by: 'model', metric: st.metric });
-  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">Modelos · ${METRICS[st.metric]} <span class="aiu-hint">clique = filtrar por modelo</span></div>
-    <table class="aiu-table"><thead><tr><th>Modelo</th><th>Ferramentas</th><th class="num">${METRICS[st.metric]}</th><th class="num">Total</th><th class="num">Saída</th><th class="num">Cache lido</th><th class="num">Chamadas</th><th class="num">Sessões</th><th class="num">Dias</th><th>Período</th></tr></thead><tbody></tbody></table></div>`;
+  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">Models · ${METRICS[st.metric]} <span class="aiu-hint">click = filter by model</span></div>
+    <table class="aiu-table"><thead><tr><th>Model</th><th>Tools</th><th class="num">${METRICS[st.metric]}</th><th class="num">Total</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Calls</th><th class="num">Sessions</th><th class="num">Days</th><th>Period</th></tr></thead><tbody></tbody></table></div>`;
   const tb = pane.querySelector('tbody');
   const max = Math.max(1, ...rows.map(r => r.value || 0));
   for (const r of rows) {
     const tr = document.createElement('tr');
     tr.className = 'clickable';
-    tr.innerHTML = `<td><span class="aiu-sw" style="background:${colorFor(r.key || '(sem)')}"></span>${esc(r.key || '(sem modelo)')}${r.estimated ? ' <span class="aiu-est">≈</span>' : ''}</td>
+    tr.innerHTML = `<td><span class="aiu-sw" style="background:${colorFor(r.key || '(none)')}"></span>${esc(r.key || '(no model)')}${r.estimated ? ' <span class="aiu-est">≈</span>' : ''}</td>
       <td>${esc(r.sources || '')}</td>
       <td class="num"><div class="aiu-cellbar" style="width:${100 * (r.value || 0) / max}%"></div>${fmt(r.value)}</td>
       <td class="num">${fmt(r.total, 'total')}</td><td class="num">${fmt(r.output, 'total')}</td><td class="num">${fmt(r.cache_read, 'total')}</td>
       <td class="num">${fmt(r.calls, 'calls')}</td><td class="num">${r.sessions}</td><td class="num">${r.days}</td><td class="aiu-nowrap">${esc(shortDay(r.first_day))} → ${esc(shortDay(r.last_day))}</td>`;
-    tr.addEventListener('click', () => { st.filters.models.add(r.key); syncFilters(); st.tab = 'overview'; st.by = 'category'; syncToolbar(); render(); });
+    tr.addEventListener('click', () => { st.filters.models.add(r.key); syncFilters(); st.by = 'category'; syncToolbar(); goTab('overview'); });
     tb.append(tr);
   }
 }
 
 async function renderSessions(pane) {
-  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">Sessões
-      <input class="aiu-search" placeholder="buscar título, pasta…" value="${esc(st.q)}">
-      <select class="aiu-sort">${[['total', 'Mais tokens'], ['output', 'Mais saída'], ['calls', 'Mais chamadas'], ['days', 'Mais dias'], ['last', 'Mais recentes']].map(([v, l]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-    <table class="aiu-table"><thead><tr><th>Sessão</th><th>Ferramenta</th><th>Categorias</th><th>Modelos</th><th class="num">Total</th><th class="num">Saída</th><th class="num">Chamadas</th><th class="num">Dias</th><th>Período</th></tr></thead><tbody></tbody></table></div>
+  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">Sessions
+      <input class="aiu-search" placeholder="search title, folder…" value="${esc(st.q)}">
+      <select class="aiu-sort">${[['total', 'Most tokens'], ['output', 'Most output'], ['calls', 'Most calls'], ['days', 'Most days'], ['last', 'Most recent']].map(([v, l]) => `<option value="${v}" ${st.sort === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <table class="aiu-table"><thead><tr><th>Session</th><th>Tool</th><th>Categories</th><th>Models</th><th class="num">Total</th><th class="num">Output</th><th class="num">Calls</th><th class="num">Days</th><th>Period</th></tr></thead><tbody></tbody></table></div>
     <div class="aiu-detail"></div>`;
   const search = pane.querySelector('.aiu-search');
   let tmr;
@@ -318,34 +329,35 @@ async function renderSessions(pane) {
         <td>${(r.categories || '').split(',').map(c => `<span class="aiu-chip" style="border-color:${colorFor(c)}">${esc(c)}</span>`).join('')}</td>
         <td><small>${esc((r.models || '').split(',').join(', '))}</small></td>
         <td class="num">${fmt(r.total, 'total')}${r.estimated ? ' <span class="aiu-est">≈</span>' : ''}</td><td class="num">${fmt(r.output, 'total')}</td><td class="num">${fmt(r.calls, 'calls')}</td>
-        <td class="num">${r.days}</td><td class="aiu-nowrap">${esc(shortDay(r.first_day))}${r.last_day !== r.first_day ? ' → ' + esc(shortDay(r.last_day)) : ''}</td>`;
-      tr.addEventListener('click', () => showSession(pane.querySelector('.aiu-detail'), r.session_key));
+        <td class="num">${r.days}</td><td class="aiu-nowrap">${daySpan(r.first_day, r.last_day)}</td>`;
+      tr.addEventListener('click', e => { if (e.target.closest('a')) return; showSession(pane.querySelector('.aiu-detail'), r.session_key); });
       tb.append(tr);
     }
-    if (!rows.length) tb.innerHTML = '<tr><td colspan="9" class="aiu-empty">Nenhuma sessão.</td></tr>';
+    if (!rows.length) tb.innerHTML = '<tr><td colspan="9" class="aiu-empty">No sessions.</td></tr>';
   }
   await fill();
 }
 
 async function showSession(host, key) {
-  host.innerHTML = '<div class="aiu-card">Carregando…</div>';
+  host.innerHTML = '<div class="aiu-card">Loading…</div>';
   const r = await fetch(`${API}/session?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' });
-  if (!r.ok) { host.innerHTML = `<div class="aiu-card aiu-empty">Erro ${r.status}</div>`; return; }
+  if (!r.ok) { host.innerHTML = `<div class="aiu-card aiu-empty">Error ${r.status}</div>`; return; }
   const d = await r.json(), s = d.session;
   const days = [...new Set(d.days.map(x => x.day))];
-  const models = [...new Set(d.days.map(x => x.model || '(sem)'))];
-  const series = { buckets: days, bucket: 'day', series: models.map(m => ({ key: m, values: days.map(day => d.days.filter(x => x.day === day && (x.model || '(sem)') === m).reduce((a, x) => a + (x[st.metric === 'cost_usd' ? 'total' : st.metric] || 0), 0)) })) };
-  host.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">${esc(s.ai_title || s.title || s.session_id)} <button class="aiu-x" title="fechar">✕</button></div>
+  const models = [...new Set(d.days.map(x => x.model || '(none)'))];
+  const series = { buckets: days, bucket: 'day', series: models.map(m => ({ key: m, values: days.map(day => d.days.filter(x => x.day === day && (x.model || '(none)') === m).reduce((a, x) => a + (x[st.metric === 'cost_usd' ? 'total' : st.metric] || 0), 0)) })) };
+  host.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">${esc(s.ai_title || s.title || s.session_id)} <button class="aiu-x" title="close">✕</button></div>
     <div class="aiu-meta">
-      <div><b>Ferramenta</b> ${esc(s.source)} · ${esc(s.machine || '')}${s.entrypoint ? ' · ' + esc(s.entrypoint) : ''}${s.version ? ' v' + esc(s.version) : ''}</div>
-      <div><b>Pasta</b> ${esc(s.cwd || '—')}${s.branch ? ` · branch ${esc(s.branch)}` : ''}</div>
-      <div><b>Categoria</b> ${esc(s.category || '')} <small>(${esc(s.reason || '')})</small></div>
-      <div><b>Período</b> ${esc((s.first_ts || '').slice(0, 16).replace('T', ' '))} → ${esc((s.last_ts || '').slice(0, 16).replace('T', ' '))}${s.active_ms ? ` · ${Math.round(s.active_ms / 60000)} min de trabalho do agente` : ''}${s.compactions ? ` · ${s.compactions} compactações` : ''}</div>
-      <div><b>Prompts</b> ${s.user_prompts || d.prompts.n || 0}${d.extra.reasoning ? ` · raciocínio ${fmt(d.extra.reasoning, 'total')}` : ''}${d.extra.ws ? ` · ${d.extra.ws} buscas web` : ''}${d.extra.efforts ? ` · esforço ${esc(d.extra.efforts)}` : ''}${d.extra.latency ? ` · latência média ${(d.extra.latency / 1000).toFixed(1)} s` : ''}${s.lines_added ? ` · +${s.lines_added}/−${s.lines_removed || 0} linhas` : ''}</div>
+      <div><b>Tool</b> ${esc(s.source)} · ${esc(s.machine || '')}${s.entrypoint ? ' · ' + esc(s.entrypoint) : ''}${s.version ? ' v' + esc(s.version) : ''}</div>
+      <div><b>Folder</b> ${esc(s.cwd || '—')}${s.branch ? ` · branch ${esc(s.branch)}` : ''}</div>
+      <div><b>Category</b> ${esc(s.category || '')} <small>(${esc(s.reason || '')})</small></div>
+      <div><b>Period</b> ${esc((s.first_ts || '').slice(0, 16).replace('T', ' '))} → ${esc((s.last_ts || '').slice(0, 16).replace('T', ' '))}${s.active_ms ? ` · ${Math.round(s.active_ms / 60000)} min of agent work` : ''}${s.compactions ? ` · ${s.compactions} compactions` : ''}</div>
+      <div><b>Days</b> ${days.map(dayLink).join(', ') || '—'}</div>
+      <div><b>Prompts</b> ${s.user_prompts || d.prompts.n || 0}${d.extra.reasoning ? ` · reasoning ${fmt(d.extra.reasoning, 'total')}` : ''}${d.extra.ws ? ` · ${d.extra.ws} web searches` : ''}${d.extra.efforts ? ` · effort ${esc(d.extra.efforts)}` : ''}${d.extra.latency ? ` · average latency ${(d.extra.latency / 1000).toFixed(1)} s` : ''}${s.lines_added ? ` · +${s.lines_added}/−${s.lines_removed || 0} lines` : ''}</div>
     </div>
-    <div class="aiu-card-h">${METRICS[st.metric]} por dia e modelo</div><div class="aiu-chart"></div>
+    <div class="aiu-card-h">${METRICS[st.metric]} per day and model</div><div class="aiu-chart"></div>
     <div class="aiu-legend">${models.map(m => `<span><span class="aiu-sw" style="background:${colorFor(m)}"></span>${esc(m)}</span>`).join('')}</div>
-    <div class="aiu-card-h aiu-gap">Ferramentas que o agente usou</div><div class="aiu-tools"></div></div>`;
+    <div class="aiu-card-h aiu-gap">Tools the agent used</div><div class="aiu-tools"></div></div>`;
   host.querySelector('.aiu-x').onclick = () => { host.innerHTML = ''; };
   stackedBars(host.querySelector('.aiu-chart'), series);
   hbars(host.querySelector('.aiu-tools'), d.tools.map(t => ({ key: t.tool, value: t.n })), { valueKey: 'value' });
@@ -353,7 +365,7 @@ async function showSession(host, key) {
 }
 
 async function renderCalendar(pane) {
-  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">${METRICS[st.metric]} por dia <span class="aiu-hint">clique num dia = ver as sessões dele</span></div><div class="aiu-heat"></div></div>`;
+  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">${METRICS[st.metric]} per day <span class="aiu-hint">click a day = see its sessions</span></div><div class="aiu-heat"></div></div>`;
   heatmap(pane.querySelector('.aiu-heat'), await get('heatmap', { metric: st.metric }));
 }
 
@@ -364,14 +376,14 @@ async function renderTools(pane) {
   if (r.to) p.set('to', r.to);
   if (st.filters.sources.size) p.set('sources', [...st.filters.sources].join(','));
   const rows = await (await fetch(`${API}/tools?${p}`, { credentials: 'same-origin' })).json();
-  pane.innerHTML = '<div class="aiu-card"><div class="aiu-card-h">Ferramentas mais chamadas pelos agentes</div><div class="aiu-tools"></div></div>';
+  pane.innerHTML = '<div class="aiu-card"><div class="aiu-card-h">Tools most called by the agents</div><div class="aiu-tools"></div></div>';
   hbars(pane.querySelector('.aiu-tools'), rows.map(x => ({ ...x, key: `${x.tool} · ${x.source}`, value: x.calls })), {
-    valueKey: 'value', sub: x => `${x.sessions} sessões`,
+    valueKey: 'value', sub: x => `${x.sessions} sessions`,
   });
 }
 
 async function renderLimits(pane) {
-  pane.innerHTML = '<div class="aiu-card"><div class="aiu-card-h">Limites do plano (Codex) — maior uso do dia em cada janela</div><div class="aiu-lim"></div></div>';
+  pane.innerHTML = '<div class="aiu-card"><div class="aiu-card-h">Plan limits (Codex) — highest usage of the day in each window</div><div class="aiu-lim"></div></div>';
   const rows = await (await fetch(`${API}/limits`, { credentials: 'same-origin' })).json();
   lineChart(pane.querySelector('.aiu-lim'), rows);
 }
@@ -398,12 +410,12 @@ function rangeQs() {
 
 async function renderWeb(pane) {
   const d = await (await fetch(`${API}/web?${rangeQs()}`, { credentials: 'same-origin' })).json();
-  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">Chats de IA no navegador · visitas por dia <span class="aiu-hint">do histórico do Firefox/Chrome: sem tokens (os sites não expõem); só o período filtra</span></div>
+  pane.innerHTML = `<div class="aiu-card"><div class="aiu-card-h">AI chats in the browser · visits per day <span class="aiu-hint">from the Firefox/Chrome history: no tokens (sites do not expose them); only the period filters</span></div>
       <div class="aiu-chart"></div><div class="aiu-legend"></div></div>
     <div class="aiu-grid2">
-      <div class="aiu-card"><div class="aiu-card-h">Conversas mais visitadas</div>
-        <table class="aiu-table"><thead><tr><th>Conversa</th><th>Site</th><th class="num">Visitas</th><th>Período</th></tr></thead><tbody></tbody></table></div>
-      <div class="aiu-card"><div class="aiu-card-h">Por site</div><div class="aiu-sites"></div></div>
+      <div class="aiu-card"><div class="aiu-card-h">Most visited conversations</div>
+        <table class="aiu-table"><thead><tr><th>Conversation</th><th>Site</th><th class="num">Visits</th><th>Period</th></tr></thead><tbody></tbody></table></div>
+      <div class="aiu-card"><div class="aiu-card-h">By site</div><div class="aiu-sites"></div></div>
     </div>`;
   const prev = 'calls';
   const fmtVis = v => fmt(v, prev);
@@ -413,54 +425,54 @@ async function renderWeb(pane) {
   st.metric = saved;
   pane.querySelector('.aiu-legend').innerHTML = series.series.map(s => `<span><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}</span>`).join('');
   hbars(pane.querySelector('.aiu-sites'), d.sites.map(x => ({ ...x, key: x.site, value: x.visits })), {
-    sub: x => `${x.conversations} conversas · ${x.days} dias · ${esc(shortDay(x.first_day))} → ${esc(shortDay(x.last_day))}`,
+    sub: x => `${x.conversations} conversations · ${x.days} days · ${esc(shortDay(x.first_day))} → ${esc(shortDay(x.last_day))}`,
   });
   const tb = pane.querySelector('tbody');
-  tb.innerHTML = d.conversations.map(c => `<tr><td class="aiu-title" title="${esc(c.title || '')}">${esc(c.title || c.conversation)}</td><td>${esc(c.site)}</td><td class="num">${fmtVis(c.visits)}</td><td class="aiu-nowrap">${esc(shortDay(c.first_day))}${c.last_day !== c.first_day ? ' → ' + esc(shortDay(c.last_day)) : ''}</td></tr>`).join('')
-    || '<tr><td colspan="4" class="aiu-empty">Nenhuma conversa no período.</td></tr>';
+  tb.innerHTML = d.conversations.map(c => `<tr><td class="aiu-title" title="${esc(c.title || '')}">${esc(c.title || c.conversation)}</td><td>${esc(c.site)}</td><td class="num">${fmtVis(c.visits)}</td><td class="aiu-nowrap">${daySpan(c.first_day, c.last_day)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="aiu-empty">No conversations in this period.</td></tr>';
 }
 
 async function renderCode(pane) {
   const d = await (await fetch(`${API}/ai-code?${rangeQs()}`, { credentials: 'same-origin' })).json();
   const tot = d.commits.reduce((a, c) => ({ add: a.add + (c.lines_added || 0), ai: a.ai + (c.ai_added || 0), hu: a.hu + (c.human_added || 0) }), { add: 0, ai: 0, hu: 0 });
   pane.innerHTML = `<div class="aiu-kpis">
-      <div class="aiu-kpi"><div class="aiu-kpi-v">${fmt(d.models.reduce((a, m) => a + m.blocks, 0), 'calls')}</div><div class="aiu-kpi-l">blocos de código gerados</div></div>
-      <div class="aiu-kpi"><div class="aiu-kpi-v">${d.commits.length}</div><div class="aiu-kpi-l">commits avaliados</div></div>
-      <div class="aiu-kpi"><div class="aiu-kpi-v">${tot.add ? Math.round(100 * tot.ai / tot.add) : 0}%</div><div class="aiu-kpi-l">das linhas commitadas vieram da IA</div><div class="aiu-kpi-s">${fmt(tot.ai, 'calls')} de ${fmt(tot.add, 'calls')} linhas</div></div>
+      <div class="aiu-kpi"><div class="aiu-kpi-v">${fmt(d.models.reduce((a, m) => a + m.blocks, 0), 'calls')}</div><div class="aiu-kpi-l">code blocks generated</div></div>
+      <div class="aiu-kpi"><div class="aiu-kpi-v">${d.commits.length}</div><div class="aiu-kpi-l">commits evaluated</div></div>
+      <div class="aiu-kpi"><div class="aiu-kpi-v">${tot.add ? Math.round(100 * tot.ai / tot.add) : 0}%</div><div class="aiu-kpi-l">of committed lines came from AI</div><div class="aiu-kpi-s">${fmt(tot.ai, 'calls')} of ${fmt(tot.add, 'calls')} lines</div></div>
     </div>
-    <div class="aiu-card"><div class="aiu-card-h">Cursor · blocos de código por dia e modelo <span class="aiu-hint">ai-code-tracking do Cursor; só o período filtra</span></div><div class="aiu-chart"></div><div class="aiu-legend"></div></div>
+    <div class="aiu-card"><div class="aiu-card-h">Cursor · code blocks per day and model <span class="aiu-hint">Cursor's ai-code-tracking; only the period filters</span></div><div class="aiu-chart"></div><div class="aiu-legend"></div></div>
     <div class="aiu-grid2">
-      <div class="aiu-card"><div class="aiu-card-h">Commits (linhas IA × humano)</div>
-        <table class="aiu-table"><thead><tr><th>Dia</th><th>Branch</th><th>Commit</th><th class="num">+ linhas</th><th class="num">IA</th><th class="num">IA %</th></tr></thead><tbody></tbody></table></div>
-      <div class="aiu-card"><div class="aiu-card-h">Por modelo</div><div class="aiu-models"></div></div>
+      <div class="aiu-card"><div class="aiu-card-h">Commits (AI × human lines)</div>
+        <table class="aiu-table"><thead><tr><th>Day</th><th>Branch</th><th>Commit</th><th class="num">+ lines</th><th class="num">AI</th><th class="num">AI %</th></tr></thead><tbody></tbody></table></div>
+      <div class="aiu-card"><div class="aiu-card-h">By model</div><div class="aiu-models"></div></div>
     </div>`;
   const series = seriesFrom(d.days, 'model', 'blocks');
   const saved = st.metric; st.metric = 'calls';
   stackedBars(pane.querySelector('.aiu-chart'), series);
   hbars(pane.querySelector('.aiu-models'), d.models.map(m => ({ ...m, key: m.model, value: m.blocks })), {
-    sub: m => `${esc(m.kind)} · ${m.conversations} conversas · ${esc(shortDay(m.first_day))} → ${esc(shortDay(m.last_day))}`,
+    sub: m => `${esc(m.kind)} · ${m.conversations} conversations · ${esc(shortDay(m.first_day))} → ${esc(shortDay(m.last_day))}`,
   });
   st.metric = saved;
   pane.querySelector('.aiu-legend').innerHTML = series.series.map(s => `<span><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}</span>`).join('');
-  pane.querySelector('tbody').innerHTML = d.commits.map(c => `<tr><td class="aiu-nowrap">${esc(shortDay(c.day))}</td><td>${esc(c.branch || '')}</td><td><code>${esc((c.commit_hash || '').slice(0, 8))}</code></td><td class="num">${c.lines_added || 0}</td><td class="num">${c.ai_added || 0}</td><td class="num">${c.lines_added ? Math.round(100 * (c.ai_added || 0) / c.lines_added) : 0}%</td></tr>`).join('')
-    || '<tr><td colspan="6" class="aiu-empty">Nenhum commit no período.</td></tr>';
+  pane.querySelector('tbody').innerHTML = d.commits.map(c => `<tr><td class="aiu-nowrap">${dayLink(c.day)}</td><td>${esc(c.branch || '')}</td><td><code>${esc((c.commit_hash || '').slice(0, 8))}</code></td><td class="num">${c.lines_added || 0}</td><td class="num">${c.ai_added || 0}</td><td class="num">${c.lines_added ? Math.round(100 * (c.ai_added || 0) / c.lines_added) : 0}%</td></tr>`).join('')
+    || '<tr><td colspan="6" class="aiu-empty">No commits in this period.</td></tr>';
 }
 
-const TABS = { overview: ['Visão geral', renderOverview], models: ['Modelos', renderModels], sessions: ['Sessões', renderSessions],
-  calendar: ['Calendário', renderCalendar], tools: ['Ferramentas', renderTools], limits: ['Limites Codex', renderLimits],
-  web: ['Chats web', renderWeb], code: ['Código IA', renderCode] };
+const TABS = { overview: ['Overview', renderOverview], models: ['Models', renderModels], sessions: ['Sessions', renderSessions],
+  calendar: ['Calendar', renderCalendar], tools: ['Tools', renderTools], limits: ['Codex limits', renderLimits],
+  web: ['Web chats', renderWeb], code: ['AI code', renderCode] };
 
 async function render() {
   if (!els.body) return;
   els.tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === st.tab));
   const pane = els.body;
-  // mantem o desenho anterior esmaecido enquanto carrega (sem trocar por "Carregando…": era o que piscava)
-  if (!pane.children.length) pane.innerHTML = '<div class="aiu-empty">Carregando…</div>';
+  // mantem o desenho anterior esmaecido enquanto carrega (sem trocar por "Loading…": era o que piscava)
+  if (!pane.children.length) pane.innerHTML = '<div class="aiu-empty">Loading…</div>';
   pane.style.opacity = '0.55';
   try {
     await TABS[st.tab][1](pane);
   } catch (e) {
-    pane.innerHTML = `<div class="aiu-empty">Falhou: ${esc(e.message)}</div>`;
+    pane.innerHTML = `<div class="aiu-empty">Failed: ${esc(e.message)}</div>`;
   } finally {
     pane.style.opacity = '';
   }
@@ -479,10 +491,10 @@ function syncToolbar() {
 }
 function syncFilters() {
   const host = els.filters;
-  const names = { sources: 'ferramenta', categories: 'categoria', models: 'modelo', machines: 'máquina' };
+  const names = { sources: 'tool', categories: 'category', models: 'model', machines: 'machine' };
   const chips = [];
-  for (const [k, set] of Object.entries(st.filters)) for (const v of set) chips.push(`<span class="aiu-fchip" data-k="${k}" data-v="${esc(v)}">${names[k]}: ${esc(v || '(sem)')} ✕</span>`);
-  host.innerHTML = chips.length ? chips.join('') + '<span class="aiu-fclear">limpar filtros</span>' : '';
+  for (const [k, set] of Object.entries(st.filters)) for (const v of set) chips.push(`<span class="aiu-fchip" data-k="${k}" data-v="${esc(v)}">${names[k]}: ${esc(v || '(none)')} ✕</span>`);
+  host.innerHTML = chips.length ? chips.join('') + '<span class="aiu-fclear">clear filters</span>' : '';
 }
 
 function buildToolbar() {
@@ -491,10 +503,10 @@ function buildToolbar() {
     <div class="aiu-tgroup">${PERIODS.map(([v, l]) => `<button data-period="${v}">${l}</button>`).join('')}
       <input type="date" class="aiu-from"><span>→</span><input type="date" class="aiu-to"></div>
     <div class="aiu-tgroup">
-      <label>Agrupar <select class="aiu-by">${Object.entries(DIMS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
-      <label>Métrica <select class="aiu-metric">${Object.entries(METRICS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
-      <label>Por <select class="aiu-bucket"><option value="day">dia</option><option value="week">semana</option><option value="month">mês</option></select></label>
-      <label title="Cursor e parte do Copilot não gravam tokens: o valor é estimado pelo texto (subestima)"><input type="checkbox" class="aiu-estim"> incluir estimados (≈)</label>
+      <label>Group by <select class="aiu-by">${Object.entries(DIMS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+      <label>Metric <select class="aiu-metric">${Object.entries(METRICS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+      <label>By <select class="aiu-bucket"><option value="day">day</option><option value="week">week</option><option value="month">month</option></select></label>
+      <label title="Cursor and part of Copilot do not record tokens: the value is estimated from the text (underestimates)"><input type="checkbox" class="aiu-estim"> include estimates (≈)</label>
     </div>`;
   t.addEventListener('click', e => {
     const b = e.target.closest('[data-period]');
@@ -514,103 +526,77 @@ function buildToolbar() {
   });
 }
 
-function buildPanel() {
-  let panel = document.getElementById(PANEL_ID);
-  if (panel) return panel;
-  panel = document.createElement('div');
-  panel.id = PANEL_ID;
-  panel.className = 'modal hidden';
-  panel.innerHTML = `
-    <div class="modal-content aiu-content">
-      <div class="modal-header aiu-header">
-        <span class="aiu-titlebar">Uso de IA</span>
-        <span class="aiu-status"></span>
-        <button class="close-btn" aria-label="Fechar">✖</button>
-      </div>
-      <div class="aiu-toolbar"></div>
-      <div class="aiu-filters"></div>
-      <div class="aiu-tabs">${Object.entries(TABS).map(([k, [l]]) => `<button data-tab="${k}">${l}</button>`).join('')}</div>
-      <div class="aiu-body"></div>
-      <div class="aiu-tip"></div>
-    </div>`;
-  document.body.appendChild(panel);
+export async function mountAiUsage(host, hub) {
+  hubRef = hub;
+  host.innerHTML = `<div class="aiu-content aiu-embedded">
+    <div class="aiu-subhead"><span class="aiu-status"></span></div>
+    <div class="aiu-toolbar"></div><div class="aiu-filters"></div>
+    <div class="aiu-tabs">${Object.entries(TABS).map(([k, [l]]) => `<button data-tab="${k}">${l}</button>`).join('')}</div>
+    <div class="aiu-body"></div><div class="aiu-tip"></div>
+  </div>`;
+  const content = host.querySelector('.aiu-content');
   els = {
-    panel, content: panel.querySelector('.modal-content'), header: panel.querySelector('.modal-header'),
-    toolbar: panel.querySelector('.aiu-toolbar'), filters: panel.querySelector('.aiu-filters'),
-    tabs: panel.querySelector('.aiu-tabs'), body: panel.querySelector('.aiu-body'), tip: panel.querySelector('.aiu-tip'),
-    status: panel.querySelector('.aiu-status'),
+    panel: host, content, toolbar: content.querySelector('.aiu-toolbar'), filters: content.querySelector('.aiu-filters'),
+    tabs: content.querySelector('.aiu-tabs'), body: content.querySelector('.aiu-body'), tip: content.querySelector('.aiu-tip'),
+    status: content.querySelector('.aiu-status'),
   };
-  panel.querySelector('.close-btn').addEventListener('click', () => Modals.close(PANEL_ID));
-  makeWindowDraggable(panel, { content: els.content, header: els.header });
-  panel.addEventListener('pointerdown', () => {
-    try {
-      panel.style.setProperty('z-index', String(nextToolWindowZ({ exclude: panel, current: getComputedStyle(panel).zIndex, floor: 300 })), 'important');
-    } catch (_) {}
-  }, true);
+  st.meta = null;
+  if (st.period === 'custom') st.period = '90';  // o período personalizado vem da URL (route), não de um mount anterior
   els.tabs.addEventListener('click', e => {
     const b = e.target.closest('[data-tab]');
-    if (b) { st.tab = b.dataset.tab; try { localStorage.setItem('odysseus-aiu-tab', st.tab); } catch (_) {} render(); }
+    if (b) goTab(b.dataset.tab);
   });
-  try { st.tab = localStorage.getItem('odysseus-aiu-tab') || 'overview'; } catch (_) {}
-  if (!TABS[st.tab]) st.tab = 'overview';
   buildToolbar();
-  if (!Modals.isRegistered(PANEL_ID)) {
-    Modals.register(PANEL_ID, {
-      label: 'Uso de IA',
-      restoreFn: () => {},
-      closeFn: () => document.getElementById(PANEL_ID)?.classList.add('hidden'),
-    });
-    Modals.injectMinimizeButton(panel, PANEL_ID);
-  }
   let rt;
-  // so redesenha quando a janela muda de largura de verdade. Antes: a barra de rolagem aparecer mudava a
+  // so redesenha quando a largura muda de verdade. Antes: a barra de rolagem aparecer mudava a
   // largura util -> redesenho -> conteudo encolhia no meio do redesenho -> barra sumia -> loop (piscava 2x/s)
   let lastW = 0;
-  new ResizeObserver(() => {
+  if (resizeObs) resizeObs.disconnect();
+  const body = els.body;
+  resizeObs = new ResizeObserver(() => {
     // offsetWidth inclui a barra de rolagem: ela aparecer/sumir NAO muda esse valor (contentRect mudava)
-    const w = els.body.offsetWidth;
+    const w = body.offsetWidth;
     if (Math.abs(w - lastW) <= 8) return;
     lastW = w;
-    clearTimeout(rt); rt = setTimeout(() => { if (!panel.classList.contains('hidden')) render(); }, 250);
-  }).observe(els.body);
-  return panel;
-}
-
-async function openPanel() {
-  const panel = buildPanel();
-  panel.classList.remove('hidden');
+    clearTimeout(rt); rt = setTimeout(() => { if (body.isConnected && st.meta?.available) void render(); }, 250);
+  });
+  resizeObs.observe(body);
+  let metaFailed = '';
   try {
-    panel.style.setProperty('z-index', String(nextToolWindowZ({ exclude: panel, current: getComputedStyle(panel).zIndex, floor: 300 })), 'important');
-  } catch (_) {}
-  try {
-    st.meta = await (await fetch(`${API}/meta`, { credentials: 'same-origin' })).json();
-  } catch (e) {
-    showError(`Uso de IA: ${e.message}`);
-    return;
+    const r = await fetch(`${API}/meta`, { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(`${r.status}`);
+    st.meta = await r.json();
+  } catch (e) { st.meta = null; metaFailed = e.message; }
+  if (!st.meta) {
+    body.innerHTML = `<div class="aiu-empty">Failed: ${esc(metaFailed)}</div>`;
+  } else if (!st.meta.available) {
+    body.innerHTML = `<div class="aiu-empty">Database not found. ${esc(st.meta.hint || '')}</div>`;
+  } else {
+    const lr = st.meta.last_run;
+    els.status.textContent = `${st.meta.day_min} → ${st.meta.day_max}` + (lr ? ` · updated ${new Date(lr.ts).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(', ', ' ')}` : '');
+    syncToolbar();
+    syncFilters();
   }
-  if (!st.meta.available) {
-    els.body.innerHTML = `<div class="aiu-empty">Banco não encontrado. ${esc(st.meta.hint || '')}</div>`;
-    return;
-  }
-  const lr = st.meta.last_run;
-  els.status.textContent = `${st.meta.day_min} → ${st.meta.day_max}` + (lr ? ` · atualizado ${new Date(lr.ts).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : '');
-  syncToolbar();
-  syncFilters();
-  render();
+  return {
+    route(path, params) {
+      const key = path?.[0];
+      let tab = TABS[key] ? key : '';
+      if (!tab) { try { tab = localStorage.getItem('odysseus-aiu-tab') || ''; } catch (_) {} }
+      st.tab = TABS[tab] ? tab : 'overview';
+      const p = params || {};
+      if (isDate(p.from) || isDate(p.to)) {
+        st.period = 'custom';
+        st.from = isDate(p.from) ? p.from : '';
+        st.to = isDate(p.to) ? p.to : '';
+        if (st.meta?.available) syncToolbar();
+      }
+      try { localStorage.setItem('odysseus-aiu-tab', st.tab); } catch (_) {}
+      if (!st.meta?.available) return;  // sem banco: o estado vazio já está no corpo
+      void render();  // sem await: o hub não espera os fetches da aba
+    },
+    unmount() {
+      if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+      if (els.tip) els.tip.style.display = 'none';
+    },
+  };
 }
-
-function mountSidebar() {
-  const list = document.getElementById('ai-usage-list');
-  if (!list || list.dataset.ready) return;
-  list.dataset.ready = '1';
-  const item = document.createElement('div');
-  item.className = 'list-item aiu-side-item';
-  item.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.6"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg><span class="grow">Tokens, modelos e sessões</span>`;
-  item.addEventListener('click', openPanel);
-  list.append(item);
-}
-
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountSidebar);
-else mountSidebar();
-
-export { openPanel };
