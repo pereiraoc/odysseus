@@ -54,6 +54,14 @@ function raise() {
   } catch (_) {}
 }
 
+// Minimizado, o painel tem .modal-minimized (display:none !important no upstream): só tirar .hidden não o
+// mostra. Restaurar pelo modalManager também tira o chip da doca.
+function showPanel() {
+  if (Modals.isMinimized(PANEL_ID)) { Modals.restore(PANEL_ID); return; }
+  els.panel.classList.remove('hidden');
+  raise();
+}
+
 function buildPanel() {
   if (els) return;
   const panel = document.createElement('div');
@@ -235,8 +243,7 @@ function openApp(id) {
 function openPanel({ app = null } = {}) {
   buildPanel();
   ensureRegistered();
-  els.panel.classList.remove('hidden');
-  raise();
+  showPanel();
   if (app) return openApp(app);
   const r = parseLifeHash(location.hash);
   const done = r ? (lastHash = location.hash, apply(r, location.hash)) : go(memory.routes[memory.app] || lifeHref(memory.app));
@@ -251,7 +258,7 @@ function fromHash() {
   lastHash = location.hash;
   buildPanel();
   ensureRegistered();
-  if (!isOpen()) { els.panel.classList.remove('hidden'); raise(); }
+  if (!isOpen()) showPanel();
   apply(r, location.hash);
 }
 

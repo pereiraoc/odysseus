@@ -90,6 +90,17 @@ const LIGHT = { '--bg': '#f3f5f7', '--fg': '#26313a', '--panel': '#ffffff', '--b
       // o unmount vai pela fila do hub: espera ela esvaziar o host
       try { await page.waitForFunction(() => !document.querySelector('#life-panel .life-host > *'), null, { timeout: 5000 }); } catch (_) { errors.push(`${tag} close ${round}: the app is still mounted`); }
     }
+    // minimizar → abrir pela barra lateral: minimizado o painel tem .modal-minimized (display:none !important);
+    // abrir tem de restaurar, não só tirar .hidden.
+    await page.evaluate(() => document.querySelector('#lifelog-list .life-side-item[data-app="diary"]').click());
+    await page.waitForSelector('#life-panel:not(.hidden) .life-app-diary', { timeout: 20000 });
+    await page.evaluate(() => document.querySelector('#life-panel .modal-minimize-btn').click());
+    try { await page.waitForFunction(() => document.getElementById('life-panel').classList.contains('modal-minimized'), null, { timeout: 5000 }); } catch (_) { errors.push(`${tag} minimize: the panel did not minimize`); }
+    await page.evaluate(() => document.querySelector('#lifelog-list .life-side-item[data-app="finances"]').click());
+    try {
+      await page.waitForFunction(() => { const p = document.getElementById('life-panel'); return getComputedStyle(p).display !== 'none' && !p.classList.contains('modal-minimized') && !!p.querySelector('.life-app-finances'); }, null, { timeout: 20000 });
+    } catch (_) { errors.push(`${tag} reopen after minimize: the panel stayed hidden`); }
+    await closePanel('close after minimize', phone ? 'esc' : 'x');
     await ctx.close();
   }
   await browser.close();
