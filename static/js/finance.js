@@ -876,6 +876,9 @@ export async function mountFinances(host, hub) {
       let tab = TABS[key] ? key : '';
       if (!tab) { try { tab = localStorage.getItem('odysseus-fin-tab') || ''; } catch (_) {} }
       st.tab = TABS[tab] ? tab : 'overview';
+      // #life/finances sem aba: põe a aba na URL (replace), como o Diary faz com o dia. Sem isso o voltar de
+      // #life/finances/monthly para #life/finances reabria a última aba (Monthly) e parecia não fazer nada.
+      if (!TABS[key]) { void hub.navigate([st.tab], st.tab === 'transactions' ? params : {}, { replace: true }); return; }
       if (st.tab === 'transactions') {
         const p = params || {};
         st.from = p.from || ''; st.to = p.to || ''; st.account = p.account || ''; st.q = p.q || '';

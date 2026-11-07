@@ -583,6 +583,9 @@ export async function mountAiUsage(host, hub) {
       let tab = TABS[key] ? key : '';
       if (!tab) { try { tab = localStorage.getItem('odysseus-aiu-tab') || ''; } catch (_) {} }
       st.tab = TABS[tab] ? tab : 'overview';
+      // #life/ai sem aba: põe a aba na URL (replace), como o Diary faz com o dia; sem isso o voltar de uma aba
+      // para #life/ai reabria a última aba e parecia não fazer nada.
+      if (!TABS[key]) { void hub.navigate([st.tab], params || {}, { replace: true }); return; }
       const p = params || {};
       if (isDate(p.from) || isDate(p.to)) {
         st.period = 'custom';
