@@ -10,7 +10,12 @@ export function parseLifeHash(hash) {
   const qi = rest.indexOf('?');
   const pathStr = qi >= 0 ? rest.slice(0, qi) : rest;
   const params = Object.fromEntries(new URLSearchParams(qi >= 0 ? rest.slice(qi + 1) : ''));
-  const parts = pathStr.split('/').filter(Boolean).map(decodeURIComponent);
+  let parts;
+  try {
+    parts = pathStr.split('/').filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return null; // escape percent malformado: hash inválido, nunca lança
+  }
   if (!parts.length) return { app: null, path: [], params };
   if (DIARY_LEGACY.test(parts[0])) return { app: 'diary', path: parts, params };
   if (!APP_IDS.includes(parts[0])) return { app: null, path: [], params: {} };
@@ -19,6 +24,6 @@ export function parseLifeHash(hash) {
 
 export function lifeHref(app, path = [], params = {}) {
   const segs = [app, ...(Array.isArray(path) ? path : [path])].filter(x => x != null && x !== '').map(encodeURIComponent);
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
+  const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v != null && v !== '')).toString();
   return `#life/${segs.join('/')}${q ? `?${q}` : ''}`;
 }

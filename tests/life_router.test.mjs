@@ -40,3 +40,9 @@ test('round trip', () => {
     assert.deepEqual(parseLifeHash(lifeHref(app, path, params)), { app, path, params });
   }
 });
+
+test('malformed escapes return null', () => {
+  assert.equal(parseLifeHash('#life/%'), null);
+  assert.equal(parseLifeHash('#life/diary/%E0%A4%A'), null);
+  assert.equal(lifeHref('ai', [], null), '#life/ai');
+});
