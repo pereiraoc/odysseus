@@ -409,4 +409,5 @@ de apps (`static/js/life/index.js`, roteador em `static/js/life/router.js`). Rot
 Finances nas transações do dia ("Open in Finances") e as entradas de trabalho abrem AI usage nas sessões do dia. A sidebar
 tem um item por app dentro de `#lifelog-list`; as seções `#ai-usage-section` e `#finance-section` e os `<script>` de
 `aiUsage.js`/`finance.js` saíram do `index.html`. Em 07/11 o token compartilhado `?v=` das folhas e do `app.js`
-(`static/index.html` + `static/sw.js`) foi trocado para `20261107lifehub1` e o `CACHE_NAME` subiu para v1143.
+(`static/index.html` + `static/sw.js`) foi trocado para `20261107lifehub1` e o `CACHE_NAME` subiu para v1143; no polimento
+visual do hub (mesmo dia) passou a `20261107lifehub2` e v1144.
