@@ -40,7 +40,7 @@ function day(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)
 function dayLink(d) {
   if (!d) return '';
   const iso = String(d).slice(0, 10);
-  return `<a class="fin-daylink" href="${lifeHref('diary', [iso])}" title="Open this day in Diary">${day(iso)}</a>`;
+  return `<a class="fin-daylink" href="${esc(lifeHref('diary', [iso]))}" title="Open this day in Diary">${esc(day(iso))}</a>`;
 }
 // dd/mm/yyyy hh:mm
 function stamp(ts) {
@@ -657,8 +657,8 @@ async function renderMonthly(pane) {
   pane.querySelector('.fin-csv').addEventListener('click', e => {
     e.preventDefault();
     const head = ['period', 'income', 'base_salary', 'salary_13th_est', 'vacation_other_est', 'allowance', 'bonus', 'pocket_money', 'expenses', 'fixed', 'variable', 'net', 'savings_rate_pct', 'net_worth', 'invested', 'reserve_months', 'incomplete'];
-    const csv = [head.join(',')].concat(P.map(p => [p.period, p.income, p.salary_base, p.salary_13, p.salary_other, p.salary_extra, p.salary_bonus, p.salary_mesada, p.expenses, p.fixed, p.variable, p.net, p.savings_rate === null ? '' : Math.round(p.savings_rate * 1000) / 10, p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
-      .map((v, i) => (i >= 1 && i <= 9) || i === 11 || i === 12 ? (v === '' ? '' : (v / 100).toFixed(2)) : String(v)).join(','))).join('\n');
+    const csv = [head.join(';')].concat(P.map(p => [p.period, p.income, p.salary_base, p.salary_13, p.salary_other, p.salary_extra, p.salary_bonus, p.salary_mesada, p.expenses, p.fixed, p.variable, p.net, p.savings_rate === null ? '' : Math.round(p.savings_rate * 1000) / 10, p.net_worth ?? '', p.investments ?? p.invested, p.reserve_months ?? '', p.incomplete ? 1 : 0]
+      .map((v, i) => (i >= 1 && i <= 9) || i === 11 || i === 12 ? (v === '' ? '' : (v / 100).toFixed(2).replace('.', ',')) : String(v).replace('.', ',')).join(';'))).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
     a.download = `finances-${cur}-${st.mGroup}.csv`;
