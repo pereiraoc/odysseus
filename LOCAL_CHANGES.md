@@ -263,9 +263,10 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
 - Importadores: OFX (Nubank/Santander), CSV do Wise, PDF do extrato Santander (texto ou OCR), PDF da fatura Santander (senha via FINANCE_PDF_PASSWORD, duas colunas)
   (texto ou OCR), PDF da fatura Nubank, CSVs categorizados do Santander (fonte
   secundária), JSON da API do Wise. Cada parser confere saldo/total impresso.
-- Painel na sidebar ("Finanças"): Visão geral, Transações (com as fontes de cada
-  uma), Auditoria (quebras de saldo, faturas, fila de revisão, erros) e Arquivos
-  (upload + download do original).
+- App "Finances" do hub Life (§11; item "Finances" da seção Life da sidebar, rota `#life/finances/<aba>`): abas
+  Overview, Monthly, Review, Categories, Transactions (com as fontes de cada uma; filtros na URL:
+  `?from=&to=&account=&q=&category=`, datas só `AAAA-MM-DD`), Audit (quebras de saldo, faturas, fila de revisão,
+  erros) e Files (upload + download do original).
 - Open Finance (Meu Pluggy, grátis): `src/finance/pluggy_client.py`, `pluggy_sync.py`, `importers/pluggy.py`.
   Poller em thread própria (a cada 3h, `FINANCE_POLL_SECONDS`; desliga com `FINANCE_POLLER=0`), só baixa quando
   o banco atualizou (`lastUpdatedAt`); leitura completa semanal. Investimentos viram `investment_snapshots`.
@@ -286,7 +287,8 @@ histórico), auditável e sem duplicatas entre fontes. Spec:
 
 **Hooks mínimos em arquivos do upstream:**
 - `app.py`: registro `setup_finance_routes()` logo após o do "Uso de IA".
-- `static/index.html`: seção `#finance-section` após a do "Uso de IA", `<link>` do CSS e `<script type="module">`.
+- `static/index.html`: `<link>` do CSS (a seção `#finance-section` e o `<script type="module">` saíram em 07/11; o hub
+  Life importa `finance.js` como o módulo do app Finances).
 - `static/sw.js`: `zz-fork-finance.css` no precache (mesmo `?v=` do index).
 - `Dockerfile` **[inline patch]**: `RUN apt-get install poppler-utils tesseract-ocr tesseract-ocr-por`
   numa camada própria antes do `COPY . .` (não invalida o cache do pip). Ao sincronizar,
@@ -383,9 +385,11 @@ Fontes (só leitura, `mode=ro`): `lifelog.sqlite` do `nas-lifelog-export` (bind 
 Finanças (`data/finance/finance.sqlite`, sem transferências internas no gasto) e Uso de IA
 (`/app/ai-usage/ai-usage.sqlite`). Rotas `/api/lifelog/*` exigem **admin**.
 
-Arquivos: `src/life/` (provedores, montagem do dia, visões), `routes/lifelog_routes.py`, `static/js/life/*.js`,
-`static/css/zz-fork-life.css`, `scripts/life_ui_check.cjs` (checagem visual no container), testes
-`tests/test_life_*.py`, `tests/test_lifelog_routes.py`, `tests/life_format.test.mjs`, `tests/life_fixtures.py`.
+Arquivos: `src/life/` (provedores, montagem do dia, visões), `routes/lifelog_routes.py`, `static/js/life/*.js`
+(inclusive o roteador `static/js/life/router.js`), `static/js/life/apps/*` (Diary, Finances, AI usage como apps do
+hub), `static/css/zz-fork-life.css`, `scripts/life_ui_check.cjs` (checagem visual no container), testes
+`tests/test_life_*.py`, `tests/test_lifelog_routes.py`, `tests/life_format.test.mjs`, `tests/life_router.test.mjs`,
+`tests/test_life_router_js.py`, `tests/life_fixtures.py`.
 Patches: `app.py` (`include_router(setup_lifelog_routes())`, inalterado desde o Life log), `static/index.html`
 (seção `#lifelog-section` "Life", `<link>` do CSS com o token compartilhado, `<script type="module"
 src="/static/js/life/index.js?v=…">`), `static/sw.js` (CSS no PRECACHE + bump do `CACHE_NAME`),
@@ -404,10 +408,20 @@ commits e notas do PC.
 
 **Hub (07/11):** o Life virou um hub de apps — Diary (a linha do tempo acima), Finances (§7) e AI usage (§6) — com um trilho
 de apps (`static/js/life/index.js`, roteador em `static/js/life/router.js`). Rotas `#life/<app>/…`: `#life/diary/<AAAA-MM-DD|AAAA-MM|AAAA>`,
-`#life/diary/search?q=`, `#life/finances/<aba>[?from=&to=&account=&q=]`, `#life/ai/<aba>[?from=&to=]`; os hashes antigos
+`#life/diary/search?q=`, `#life/finances/<aba>[?from=&to=&account=&q=&category=]`, `#life/ai/<aba>[?from=&to=]`; os hashes antigos
 `#life/<data|mês|ano>` e `#life/search?q=` continuam abrindo o Diary. Links cruzados no Diary: a faixa All day abre
 Finances nas transações do dia ("Open in Finances") e as entradas de trabalho abrem AI usage nas sessões do dia. A sidebar
 tem um item por app dentro de `#lifelog-list`; as seções `#ai-usage-section` e `#finance-section` e os `<script>` de
 `aiUsage.js`/`finance.js` saíram do `index.html`. Em 07/11 o token compartilhado `?v=` das folhas e do `app.js`
 (`static/index.html` + `static/sw.js`) foi trocado para `20261107lifehub1` e o `CACHE_NAME` subiu para v1143; no polimento
-visual do hub (mesmo dia) passou a `20261107lifehub2` e v1144.
+visual do hub (mesmo dia) passou a `20261107lifehub2` e v1144; nas correções da revisão final (botão "‹ Apps" no celular)
+passou a `20261107lifehub3` e v1145, e o `?v=` de `static/js/life/index.js` a `20261107hub2`.
+
+**Correções da revisão final (07/11):** `from`/`to` do hash só valem como `AAAA-MM-DD` (`isIsoDate` em `router.js`;
+Finances e AI usage descartam o resto, Finances escapa todo filtro que vai para o HTML e o hub não lembra nem
+reaplica rota com data inválida); a categoria de Finances viaja na URL; fechar o painel desmonta o app pela fila e
+registra o painel de novo no modalManager a cada abertura (✖/Esc/minimizar seguem funcionando; no celular, onde o ✖
+some, arrastar a folha para baixo — evento `modal-dismissed` — fecha como o ✖); os replaces
+atrasados da URL só valem se o hash ainda for o que o hub está aplicando (`hub.currentHash()`); `/meta` dos três apps
+com prazo de 15 s; `render()` de Finances e AI usage com número de sequência (um desenho antigo não sobrescreve a aba
+nova).
