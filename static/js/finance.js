@@ -7,7 +7,7 @@
 // exatamente como entraram). Graficos em SVG proprio (o CSP nao libera CDN).
 import { showError, esc } from './ui.js?v=20260916largetoolscroll1';
 import { topPortalZ } from './toolWindowZOrder.js';
-import { lifeHref } from './life/router.js';
+import { isIsoDate, lifeHref } from './life/router.js';
 
 const API = '/api/finance';
 const PALETTE = ['#59c2ff', '#ffb454', '#7fd962', '#f07178', '#c792ea', '#2ec4b6', '#ff8f40', '#e6e16b', '#ff6ac1', '#8d9eff'];
@@ -268,7 +268,7 @@ async function renderTransactions(pane) {
       <select class="fin-f-acc"><option value="">all accounts</option>${opts}</select>
       <input class="fin-f-q" placeholder="search description" value="${esc(st.q)}">
       <input class="fin-f-cat" placeholder="category (or (sem))" value="${esc(st.category)}" list="fin-cat-list">
-      <input type="date" class="fin-f-from" value="${st.from}"><span>→</span><input type="date" class="fin-f-to" value="${st.to}">
+      <input type="date" class="fin-f-from" value="${esc(st.from)}"><span>→</span><input type="date" class="fin-f-to" value="${esc(st.to)}">
       <span class="fin-f-sum"></span>
     </div>
     <div class="fin-tx"></div>`;
@@ -815,9 +815,21 @@ async function renderFiles(pane) {
 
 const TABS = { overview: ['Overview', renderOverview], monthly: ['Monthly', renderMonthly], review: ['Review', renderReview], categories: ['Categories', renderCategories], transactions: ['Transactions', renderTransactions], audit: ['Audit', renderAudit], files: ['Files', renderFiles] };
 
-// vai para a aba Transactions pelo hub (filtros viajam nos params do hash; a categoria fica em st.category)
+// filtros da aba Transactions como vão no hash (#life/finances/transactions?from=&to=&account=&q=&category=)…
+const txParams = () => ({ from: st.from, to: st.to, account: st.account, q: st.q, category: st.category });
+// …e como voltam dele. O hash vem de fora (link, localStorage): datas só AAAA-MM-DD; o resto é texto e sai sempre
+// escapado (esc) onde aparece.
+function readTxParams(p) {
+  const v = p || {};
+  return {
+    from: isIsoDate(v.from) ? v.from : '', to: isIsoDate(v.to) ? v.to : '',
+    account: String(v.account || ''), q: String(v.q || ''), category: String(v.category || ''),
+  };
+}
+
+// vai para a aba Transactions pelo hub (os filtros, inclusive a categoria, viajam nos params do hash)
 function goTransactions() {
-  void hubRef?.navigate(['transactions'], { from: st.from, to: st.to, account: st.account, q: st.q });
+  void hubRef?.navigate(['transactions'], txParams());
 }
 
 async function render() {
@@ -865,7 +877,7 @@ export async function mountFinances(host, hub) {
     const b = e.target.closest('[data-tab]');
     if (!b) return;
     const key = b.dataset.tab;
-    void hub.navigate([key], key === 'transactions' ? { from: st.from, to: st.to, account: st.account, q: st.q } : {});
+    void hub.navigate([key], key === 'transactions' ? txParams() : {});
   });
   st.meta = null;
   metaError = '';
@@ -878,10 +890,9 @@ export async function mountFinances(host, hub) {
       st.tab = TABS[tab] ? tab : 'overview';
       // #life/finances sem aba: põe a aba na URL (replace), como o Diary faz com o dia. Sem isso o voltar de
       // #life/finances/monthly para #life/finances reabria a última aba (Monthly) e parecia não fazer nada.
-      if (!TABS[key]) { void hub.navigate([st.tab], st.tab === 'transactions' ? params : {}, { replace: true }); return; }
+      if (!TABS[key]) { void hub.navigate([st.tab], st.tab === 'transactions' ? readTxParams(params) : {}, { replace: true }); return; }
       if (st.tab === 'transactions') {
-        const p = params || {};
-        st.from = p.from || ''; st.to = p.to || ''; st.account = p.account || ''; st.q = p.q || '';
+        Object.assign(st, readTxParams(params));
         st.offset = 0;
       }
       try { localStorage.setItem('odysseus-fin-tab', st.tab); } catch (_) {}

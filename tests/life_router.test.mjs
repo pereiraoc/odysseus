@@ -1,7 +1,7 @@
 // Fork-local: rotas do hub Life (static/js/life/router.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { APP_IDS, lifeHref, parseLifeHash } from '../static/js/life/router.js';
+import { APP_IDS, isIsoDate, lifeHref, parseLifeHash } from '../static/js/life/router.js';
 
 test('apps and hrefs', () => {
   assert.deepEqual(APP_IDS, ['diary', 'finances', 'ai']);
@@ -45,4 +45,18 @@ test('malformed escapes return null', () => {
   assert.equal(parseLifeHash('#life/%'), null);
   assert.equal(parseLifeHash('#life/diary/%E0%A4%A'), null);
   assert.equal(lifeHref('ai', [], null), '#life/ai');
+});
+
+test('isIsoDate accepts only YYYY-MM-DD', () => {
+  for (const ok of ['2023-03-14', '1999-12-31']) assert.equal(isIsoDate(ok), true, ok);
+  for (const bad of ['', null, undefined, '2023-03', '2023-3-14', '2023-03-14T00:00', ' 2023-03-14', '2023-03-14 ',
+    '"><img src=x>', '2023-03-14"><img src=x>', 20230314]) assert.equal(isIsoDate(bad), false, String(bad));
+});
+
+test('crafted Finances hash keeps the payload only as a string param', () => {
+  const r = parseLifeHash('#life/finances/transactions?from=%22%3E%3Cimg%20src%3Dx%3E&to=2023-01-01');
+  assert.equal(r.app, 'finances');
+  assert.equal(r.params.from, '"><img src=x>');
+  assert.equal(isIsoDate(r.params.from), false);
+  assert.equal(isIsoDate(r.params.to), true);
 });

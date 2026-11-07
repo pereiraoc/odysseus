@@ -6,7 +6,7 @@
 // Code, Codex, Cursor, Copilot, Cline e do proprio Odysseus. Graficos em SVG
 // feitos aqui (sem biblioteca externa: o CSP do app nao libera CDN).
 import { esc } from './ui.js?v=20260916largetoolscroll1';
-import { lifeHref } from './life/router.js';
+import { isIsoDate, lifeHref } from './life/router.js';
 
 const API = '/api/ai-usage';
 const METRICS = {
@@ -49,7 +49,8 @@ function colorFor(key) {
 }
 function shortDay(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}` : ''; }
 function isoDay(d) { return d.toISOString().slice(0, 10); }
-const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + 'T12:00:00'));
+// `from`/`to` da URL: só AAAA-MM-DD (isIsoDate, compartilhado com Finances) e uma data que existe
+const isDate = v => isIsoDate(v) && !Number.isNaN(Date.parse(`${v}T12:00:00`));
 // dia de uma sessão: link que abre o dia no Diary
 function dayLink(d) {
   if (!d) return '';

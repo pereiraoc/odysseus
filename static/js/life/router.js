@@ -2,6 +2,9 @@
 // Hashes antigos do Diary (#life/AAAA-MM-DD, #life/AAAA-MM, #life/AAAA, #life/search?q=) continuam valendo.
 export const APP_IDS = ['diary', 'finances', 'ai'];
 const DIARY_LEGACY = /^(\d{4}-\d{2}-\d{2}|\d{4}-\d{2}|\d{4}|search)$/;
+// AAAA-MM-DD (só o formato). Os apps aceitam `from`/`to` da URL só assim: o hash vem de fora (link, localStorage) e
+// esses valores vão para atributos HTML.
+export const isIsoDate = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 
 export function parseLifeHash(hash) {
   const s = String(hash || '').replace(/^#/, '');

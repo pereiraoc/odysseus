@@ -9,7 +9,7 @@ import { escapeHtml } from './format.js';
 import { icon } from './icons.js';
 import { emptyState } from './parts.js';
 import { APPS, appById } from './apps.js';
-import { lifeHref, parseLifeHash } from './router.js';
+import { isIsoDate, lifeHref, parseLifeHash } from './router.js';
 
 const PANEL_ID = 'life-panel';
 const LS_KEY = 'odysseus.life.hub.v1';
@@ -21,12 +21,19 @@ let queue = Promise.resolve();
 let lastHash = '';
 let returnHash = null;
 
+// Rota que pode ser lembrada (e reaplicada ao reabrir): do próprio app e com `from`/`to`, quando houver, em
+// AAAA-MM-DD. O hash vem de fora (link colado, localStorage antigo) e esses valores vão para atributos HTML.
+function rememberable(hash, app) {
+  const r = typeof hash === 'string' ? parseLifeHash(hash) : null;
+  return !!r && r.app === app && ['from', 'to'].every(k => !(k in r.params) || isIsoDate(r.params[k]));
+}
+
 function restore() {
   try {
     const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
     if (appById(s.app)) memory.app = s.app;
     if (s.routes && typeof s.routes === 'object') {
-      for (const [k, v] of Object.entries(s.routes)) if (appById(k) && parseLifeHash(v)?.app === k) memory.routes[k] = v;
+      for (const [k, v] of Object.entries(s.routes)) if (appById(k) && rememberable(v, k)) memory.routes[k] = v;
     }
   } catch (_) { /* armazenamento indisponível */ }
 }
@@ -180,7 +187,8 @@ async function doApply(route) {
     }
   }
   memory.app = app.id;
-  memory.routes[app.id] = parseLifeHash(location.hash)?.app === app.id ? location.hash : lifeHref(app.id, r.path, r.params);
+  const here = parseLifeHash(location.hash)?.app === app.id ? location.hash : lifeHref(app.id, r.path, r.params);
+  if (rememberable(here, app.id)) memory.routes[app.id] = here;
   persist();
   try { await current.inst.route(r.path, r.params); } catch (e) { console.error('life route:', e); }
   focusHost();
