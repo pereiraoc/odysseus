@@ -97,14 +97,17 @@ export async function mountDiary(host, hub) {
     if (b) go({ view: b.dataset.view });
   });
 
+  let metaErr = null;
+  const showMetaErr = () => { host.innerHTML = emptyState('life', 'Diary is not available', escapeHtml(metaErr.message)); };
   try {
     st.meta = await api('meta', {}, { key: 'diary-meta' });
   } catch (e) {
-    if (!isAbort(e)) host.innerHTML = emptyState('life', 'Diary is not available', escapeHtml(e.message));
+    if (!isAbort(e)) { metaErr = e; showMetaErr(); }
   }
 
   return {
     route(path, params) {
+      if (metaErr) { showMetaErr(); return undefined; }
       const p = path[0] || '';
       if (!p) { if (!st.day) st.day = todayIso(); hub.navigate(pathOf(), paramsOf(), { replace: true }); return undefined; }
       if (p === 'search') Object.assign(st, { view: 'search', q: params.q || '' });
@@ -114,7 +117,9 @@ export async function mountDiary(host, hub) {
       else Object.assign(st, { view: 'day', day: st.day || todayIso() });
       if (!st.day) st.day = todayIso();
       persist();
-      return render();
+      hub.setSearch(st.view === 'search' ? st.q : '');
+      render();
+      return undefined;
     },
     onKey(e) {
       const typing = e.target.closest?.('input, textarea, select, [contenteditable="true"]');

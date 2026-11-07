@@ -34,6 +34,10 @@ function persist() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(memory)); } catch (_) {}
 }
 const isOpen = () => !!els && !els.panel.classList.contains('hidden');
+function focusHost() {
+  if (!els || els.panel.contains(document.activeElement)) return;
+  try { els.host.querySelector('.life-app')?.focus({ preventScroll: true }); } catch (_) {}
+}
 const narrow = () => !!window.matchMedia?.(NARROW).matches;
 
 function raise() {
@@ -75,7 +79,7 @@ function buildPanel() {
     form: panel.querySelector('.life-search'), input: panel.querySelector('.life-search input'),
   };
   panel.querySelector('.close-btn').addEventListener('click', () => Modals.close(PANEL_ID));
-  panel.querySelector('.life-back').addEventListener('click', () => showIndex(true));
+  panel.querySelector('.life-back').addEventListener('click', () => go('#life'));
   makeWindowDraggable(panel, { content: els.content, header: els.header });
   panel.addEventListener('pointerdown', raise, true);
   els.rail.addEventListener('click', e => {
@@ -89,7 +93,7 @@ function buildPanel() {
     const q = els.input.value.trim();
     if (q.length >= 2) go(lifeHref('diary', ['search'], { q }));
   });
-  els.input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); els.input.blur(); } });
+  els.input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); els.input.blur(); els.host.querySelector('.life-app')?.focus({ preventScroll: true }); } });
   panel.addEventListener('keydown', onKey);
   if (!Modals.isRegistered(PANEL_ID)) {
     Modals.register(PANEL_ID, { label: 'Life', restoreFn: () => {}, closeFn: onClose });
@@ -124,6 +128,7 @@ function hubFor(id) {
     lifeHref,
     navigate: (path = [], params = {}, opts = {}) => go(lifeHref(id, path, params), opts),
     open: (href, opts = {}) => go(href, opts),
+    setSearch(q) { els.input.value = q || ''; },
     setToolbar(html) { els.toolbar.innerHTML = html; return els.toolbar; },
     isCurrent: () => current?.id === id,
   };
@@ -160,6 +165,8 @@ async function doApply(route) {
     els.toolbar.innerHTML = '';
     const host = document.createElement('div');
     host.className = `life-app life-app-${app.id}`;
+    host.tabIndex = -1;
+    els.input.value = '';
     els.host.append(host);
     current = { id: app.id, inst: null };
     els.title.textContent = app.label;
@@ -176,6 +183,7 @@ async function doApply(route) {
   memory.routes[app.id] = parseLifeHash(location.hash)?.app === app.id ? location.hash : lifeHref(app.id, r.path, r.params);
   persist();
   try { await current.inst.route(r.path, r.params); } catch (e) { console.error('life route:', e); }
+  focusHost();
 }
 
 function onKey(e) {
@@ -199,8 +207,9 @@ function openPanel({ app = null } = {}) {
   raise();
   if (app) return openApp(app);
   const r = parseLifeHash(location.hash);
-  if (r) { lastHash = location.hash; return apply(r); }
-  return go(memory.routes[memory.app] || lifeHref(memory.app));
+  const done = r ? (lastHash = location.hash, apply(r)) : go(memory.routes[memory.app] || lifeHref(memory.app));
+  focusHost();
+  return done;
 }
 
 function fromHash() {
