@@ -74,3 +74,8 @@ def test_search_context_skips_telemetry(dbs):
     hits = TakeoutProvider().search("razer", 50)
     ctx = {c["rel"]: c["title"] for c in hits[0]["meta"]["context"]}
     assert ctx["after"] == "Kwite Situation Is Horrible"
+
+
+def test_search_date_range_filters_in_sql(dbs):
+    hits = TakeoutProvider().search("Searched", 50, frm="2020-01-01", to="2020-12-31")
+    assert hits and all(h["day"].startswith("2020") for h in hits)

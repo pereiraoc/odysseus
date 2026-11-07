@@ -82,10 +82,11 @@ class MoneyProvider(Provider):
                 day["spent"] += -r["amount_cents"]
         return out
 
-    def search(self, q: str, limit: int) -> list[dict]:
+    def search(self, q: str, limit: int, frm: Optional[str] = None, to: Optional[str] = None) -> list[dict]:
         p = self.path()
         if not p:
             return []
         with ro(p) as con:
-            return [self._item(r) for r in con.execute(SQL + "where l.description like ? order by l.date desc limit ?",
-                                                        (f"%{q}%", limit))]
+            return [self._item(r) for r in con.execute(SQL + "where l.description like ? and l.date between coalesce(?, '0000-01-01') and "
+                                                        "coalesce(?, '9999-12-31') order by l.date desc limit ?",
+                                                        (f"%{q}%", frm, to, limit))]

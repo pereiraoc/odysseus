@@ -5,6 +5,7 @@ notas do Keep criadas/editadas no dia viram `note`. O Fit diÃ¡rio alimenta os nÃ
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 from urllib.parse import quote_plus
 
 from src.life.clean import NOISE_SOURCES, clean_event
@@ -121,22 +122,26 @@ class TakeoutProvider(Provider):
                         out.setdefault(day, {})["notes"] = out.get(day, {}).get("notes", 0) + 1
         return out
 
-    def search(self, q: str, limit: int) -> list[dict]:
+    def search(self, q: str, limit: int, frm: Optional[str] = None, to: Optional[str] = None) -> list[dict]:
         p = self.path()
         if not p:
             return []
         like, out = f"%{q}%", []
         with ro(p) as con:
             rows = con.execute("select id, ts, day, source, title, url, detail from events "
-                               "where title like ? or detail like ? order by ts desc limit ?", (like, like, limit)).fetchall()
+                               "where (title like ? or detail like ?) and day between coalesce(?, '0000-01-01') "
+                               "and coalesce(?, '9999-12-31') order by ts desc limit ?",
+                               (like, like, frm, to, limit)).fetchall()
             for i, r in enumerate(rows):
                 it = event_item(r, r["day"])
                 if i < CONTEXT_HITS:
                     it["meta"]["context"] = self._context(con, r)
                 out.append(it)
             for r in con.execute("select id, title, text, created, edited from notes where trashed=0 and "
-                                 "(title like ? or text like ?) order by coalesce(edited, created) desc limit ?",
-                                 (like, like, limit)):
+                                 "(title like ? or text like ?) and substr(coalesce(edited, created), 1, 10) between "
+                                 "coalesce(?, '0000-01-01') and coalesce(?, '9999-12-31') "
+                                 "order by coalesce(edited, created) desc limit ?",
+                                 (like, like, frm, to, limit)):
                 out.append(make_item(id=f"keep:{r['id']}", kind="note", source="keep",
                                      ts=parse_ts(r["edited"]) or parse_ts(r["created"]), title=_note_title(r),
                                      subtitle="Keep"))

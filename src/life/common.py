@@ -95,7 +95,7 @@ class Provider:
     def counts(self, a: date, b: date) -> dict:
         return {}
 
-    def search(self, q: str, limit: int) -> list[dict]:
+    def search(self, q: str, limit: int, frm: Optional[str] = None, to: Optional[str] = None) -> list[dict]:
         return []
 
 

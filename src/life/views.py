@@ -146,7 +146,7 @@ def search_all(q: str, providers, kinds: Optional[set] = None, frm: Optional[str
         if safe_status(p)["state"] != "ok":
             continue
         try:
-            got = p.search(q, limit + 1)  # um a mais: detecta corte mesmo quando a fonte já limita
+            got = p.search(q, limit + 1, frm, to)  # um a mais: detecta corte mesmo quando a fonte já limita
         except Exception as e:
             logger.warning("life: %s.search falhou: %s", p.name, e)
             continue

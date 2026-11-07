@@ -58,3 +58,8 @@ def test_search_truncated_when_a_provider_is_capped(dbs):
 
 def test_month_totals_none_without_data(dbs):
     assert month_view(2019, 1, providers())["totals"]["spent"] is None
+
+
+def test_search_date_range_is_applied_before_the_cap(dbs):
+    r = search_all("Watched", providers(), frm="2022-01-01", to="2022-12-31", limit=2)
+    assert r["total"] == 1

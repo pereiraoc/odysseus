@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from typing import Optional
 
 from src.life.common import Provider, make_item, parse_ts, ro, status
 
@@ -61,12 +62,13 @@ class WorkProvider(Provider):
                 "select day, count(distinct session_key) from events where day between ? and ? "
                 "and coalesce(superseded,0)=0 group by day", (a.isoformat(), b.isoformat()))}
 
-    def search(self, q: str, limit: int) -> list[dict]:
+    def search(self, q: str, limit: int, frm: Optional[str] = None, to: Optional[str] = None) -> list[dict]:
         p = self.path()
         if not p:
             return []
         like = f"%{q}%"
         with ro(p) as con:
-            rows = con.execute(SQL.format(where="(s.title like ? or s.ai_title like ? or s.cwd like ?)")
-                               + " order by a desc limit ?", (like, like, like, limit)).fetchall()
+            rows = con.execute(SQL.format(where="(s.title like ? or s.ai_title like ? or s.cwd like ?) and e.day between "
+                                     "coalesce(?, '0000-01-01') and coalesce(?, '9999-12-31')")
+                               + " order by a desc limit ?", (like, like, like, frm, to, limit)).fetchall()
         return [self._item(r) for r in rows]
