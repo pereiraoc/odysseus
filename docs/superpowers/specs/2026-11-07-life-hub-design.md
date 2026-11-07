@@ -94,3 +94,20 @@ Wallet; tela inicial com resumo; carregar a data global em toda troca de app; pa
   transactions filtrada por dia), AI usage (overview e sessions), lista de apps no celular, tema claro e escuro, sem
   erros de console; voltar/avançar entre apps.
 - Suíte completa dentro da imagem comparada com o commit anterior (mesmo procedimento do Diary).
+
+## Pendências conhecidas depois da entrega (2026-11-07)
+
+Ficaram de fora da entrega do hub, registradas nas revisões (nenhuma é de segurança):
+
+- **CSV mensal de Finances (bug antigo):** divide `savings_rate_pct` por 100 (23.5 → 0,24) e escreve
+  `net_worth`/`invested` em centavos crus. Corrigir num commit próprio.
+- **Estado fora da URL:** filtros digitados em Transactions (além de categoria) e o período digitado nos campos de
+  data do AI usage não vão para o hash — somem ao clicar de novo no app pelo trilho; o filtro/foco do Diary some ao
+  trocar de app. `onBucket` semanal/mensal do AI usage põe from/to inválidos no estado.
+- **Fechar e voltar:** fechar depois de abrir por hash/Back limpa o hash em vez de voltar ao do chat; no celular,
+  Back de `#life` para o chat deixa o Life aberto na lista de apps; se algo fora do Life reescrever o hash com o
+  painel aberto, o app pode ficar com o corpo vazio (guarda de replace).
+- **Visual:** hover dos botões de paginação/ações de Finances no azul de fallback; tabelas largas no celular;
+  campos de data nativos no idioma do navegador.
+- **Código:** `hub.open` sem uso; `els.panel` morto e `st.revMonths` indefinido em finance.js (pré-existentes);
+  roteador aceita `#life?x` com params e trata arrays/`false`/`NaN` em params como texto.
