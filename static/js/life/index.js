@@ -1,41 +1,40 @@
-// static/js/life/index.js — painel "Life" (fork-local, LOCAL_CHANGES.md §11).
-// Spec: docs/superpowers/specs/2026-11-06-life-timeline-design.md. Moldura (migalha de zoom, ‹ Today ›, busca),
-// rota por hash (#life/AAAA-MM-DD | AAAA-MM | AAAA | search?q=), teclado e itens da barra lateral.
-// Cada visão desenha em ./day.js, ./month.js, ./year.js e ./search.js; o servidor monta os dados (src/life).
+// static/js/life/index.js — hub "Life" (fork-local, LOCAL_CHANGES.md §11).
+// Spec: docs/superpowers/specs/2026-11-07-life-hub-design.md. Uma janela com trilho de apps (./apps.js), rota por
+// hash #life/<app>/… (./router.js), busca global (abre o Diary), teclado, barra lateral do Odysseus com um item por
+// app e, no celular, a lista de apps como tela raiz. Fechar devolve o hash da conversa que estava aberta.
 import * as Modals from '../modalManager.js';
 import { makeWindowDraggable } from '../windowDrag.js';
 import { nextToolWindowZ } from '../toolWindowZOrder.js';
-import { api, isAbort } from './api.js';
-import { buildHash, escapeHtml, fmtDate, monthName, parseHash, shiftDay, shiftMonth } from './format.js';
+import { escapeHtml } from './format.js';
 import { icon } from './icons.js';
-import { emptyState, skeleton } from './parts.js';
-import { renderDay } from './day.js';
-import { renderMonth } from './month.js';
-import { renderYear } from './year.js';
-import { renderSearch } from './search.js';
+import { emptyState } from './parts.js';
+import { APPS, appById } from './apps.js';
+import { lifeHref, parseLifeHash } from './router.js';
 
 const PANEL_ID = 'life-panel';
-const LS_KEY = 'odysseus.life.v1';
-const VIEWS = { day: renderDay, month: renderMonth, year: renderYear, search: renderSearch };
-const st = { view: 'day', day: '', q: '', metric: 'digital', filter: 'all', kinds: '', from: '', to: '', focus: '', meta: null };
+const LS_KEY = 'odysseus.life.hub.v1';
+const NARROW = '(max-width: 640px)';
+const memory = { app: 'diary', routes: {} };
 let els = null;
-let seq = 0;
+let current = null;
+let queue = Promise.resolve();
 let lastHash = '';
-let returnHash = null;  // hash do chat aberto antes do Life mexer na URL; volta ao fechar
+let returnHash = null;
 
 function restore() {
   try {
     const s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    if (['day', 'month', 'year'].includes(s.view)) st.view = s.view;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s.day || '')) st.day = s.day;
-    if (typeof s.metric === 'string') st.metric = s.metric;
-  } catch (_) { /* armazenamento indisponível: começa do padrão */ }
+    if (appById(s.app)) memory.app = s.app;
+    if (s.routes && typeof s.routes === 'object') {
+      for (const [k, v] of Object.entries(s.routes)) if (appById(k) && parseLifeHash(v)?.app === k) memory.routes[k] = v;
+    }
+  } catch (_) { /* armazenamento indisponível */ }
 }
 function persist() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify({ view: st.view, day: st.day, metric: st.metric })); } catch (_) {}
+  try { localStorage.setItem(LS_KEY, JSON.stringify(memory)); } catch (_) {}
 }
 const isOpen = () => !!els && !els.panel.classList.contains('hidden');
-const todayIso = () => st.meta?.today || st.day || new Date().toISOString().slice(0, 10);
+const narrow = () => !!window.matchMedia?.(NARROW).matches;
 
 function raise() {
   try {
@@ -51,13 +50,9 @@ function buildPanel() {
   panel.innerHTML = `
     <div class="modal-content life-content" role="dialog" aria-label="Life">
       <div class="modal-header life-header">
-        <span class="life-title">${icon('life', 16)}Life</span>
-        <nav class="life-crumbs" aria-label="Zoom level"></nav>
-        <div class="life-nav">
-          <button type="button" class="life-icon-btn" data-act="prev" aria-label="Previous" title="Previous (←)">${icon('chevron-left')}</button>
-          <button type="button" class="life-btn" data-act="today" title="Today (t)">Today</button>
-          <button type="button" class="life-icon-btn" data-act="next" aria-label="Next" title="Next (→)">${icon('chevron-right')}</button>
-        </div>
+        <button type="button" class="life-icon-btn life-back" aria-label="All apps" title="All apps">${icon('chevron-left')}</button>
+        <span class="life-title">${icon('life', 16)}<span>Life</span><span class="life-title-sep" aria-hidden="true">·</span><span class="life-title-app"></span></span>
+        <div class="life-toolbar"></div>
         <form class="life-search" role="search">
           ${icon('search', 14)}
           <input type="search" name="q" placeholder="Search everything" aria-label="Search everything" autocomplete="off">
@@ -65,34 +60,36 @@ function buildPanel() {
         </form>
         <button type="button" class="close-btn" aria-label="Close">✖</button>
       </div>
-      <div class="life-body" tabindex="-1"></div>
+      <div class="life-frame">
+        <nav class="life-rail" aria-label="Life apps">
+          ${APPS.map(a => `<a class="life-rail-item" href="${lifeHref(a.id)}" data-app="${a.id}">${icon(a.icon, 18)}<span>${escapeHtml(a.label)}</span></a>`).join('')}
+        </nav>
+        <div class="life-host"></div>
+      </div>
     </div>`;
   document.body.appendChild(panel);
   els = {
     panel, content: panel.querySelector('.life-content'), header: panel.querySelector('.life-header'),
-    crumbs: panel.querySelector('.life-crumbs'), nav: panel.querySelector('.life-nav'),
-    body: panel.querySelector('.life-body'), form: panel.querySelector('.life-search'),
-    input: panel.querySelector('.life-search input'),
+    title: panel.querySelector('.life-title-app'), toolbar: panel.querySelector('.life-toolbar'),
+    rail: panel.querySelector('.life-rail'), host: panel.querySelector('.life-host'),
+    form: panel.querySelector('.life-search'), input: panel.querySelector('.life-search input'),
   };
   panel.querySelector('.close-btn').addEventListener('click', () => Modals.close(PANEL_ID));
+  panel.querySelector('.life-back').addEventListener('click', () => showIndex(true));
   makeWindowDraggable(panel, { content: els.content, header: els.header });
   panel.addEventListener('pointerdown', raise, true);
-  els.nav.addEventListener('click', e => {
-    const b = e.target.closest('[data-act]');
-    if (!b) return;
-    if (b.dataset.act === 'today') goToday();
-    else step(b.dataset.act === 'next' ? 1 : -1);
-  });
-  els.crumbs.addEventListener('click', e => {
-    const b = e.target.closest('[data-view]');
-    if (b) go({ view: b.dataset.view });
+  els.rail.addEventListener('click', e => {
+    const a = e.target.closest('[data-app]');
+    if (!a) return;
+    e.preventDefault();
+    openApp(a.dataset.app);
   });
   els.form.addEventListener('submit', e => {
     e.preventDefault();
     const q = els.input.value.trim();
-    if (q.length >= 2) go({ view: 'search', q });
+    if (q.length >= 2) go(lifeHref('diary', ['search'], { q }));
   });
-  els.input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); els.input.blur(); els.body.focus(); } });
+  els.input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); els.input.blur(); } });
   panel.addEventListener('keydown', onKey);
   if (!Modals.isRegistered(PANEL_ID)) {
     Modals.register(PANEL_ID, { label: 'Life', restoreFn: () => {}, closeFn: onClose });
@@ -102,123 +99,132 @@ function buildPanel() {
 
 function onClose() {
   els?.panel.classList.add('hidden');
-  if (parseHash(location.hash)) {
+  if (parseLifeHash(location.hash)) {
     try { history.replaceState(null, '', location.pathname + location.search + (returnHash || '')); } catch (_) {}
   }
   returnHash = null;
   lastHash = '';
 }
 
-function crumbs() {
-  const y = st.day.slice(0, 4);
-  const m = Number(st.day.slice(5, 7));
-  const d = Number(st.day.slice(8, 10));
-  const b = (view, label) => `<button type="button" data-view="${view}"${st.view === view ? ' class="is-current" aria-current="page"' : ''}>${label}</button>`;
-  const sep = '<span class="life-crumb-sep" aria-hidden="true">›</span>';
-  els.crumbs.innerHTML = st.view === 'search'
-    ? `${b('day', `${icon('chevron-left', 13)}${escapeHtml(fmtDate(st.day))}`)}${sep}<span class="is-current">Search</span>`
-    : [b('year', y), st.view !== 'year' ? b('month', monthName(m)) : '', st.view === 'day' ? b('day', String(d)) : '']
-      .filter(Boolean).join(sep);
+function showIndex(on) {
+  els.panel.classList.toggle('is-index', !!on);
+  if (on) markRail(null);
 }
 
-function go(patch = {}, { replace = false } = {}) {
-  Object.assign(st, patch);
-  if (!st.day) st.day = todayIso();
-  const h = buildHash(st);
-  if (!parseHash(location.hash)) returnHash = location.hash;
-  if (location.hash !== h) {
-    try { history[replace ? 'replaceState' : 'pushState'](null, '', h); } catch (_) { location.hash = h; }
+function markRail(id) {
+  els.rail.querySelectorAll('[data-app]').forEach(a => {
+    const on = a.dataset.app === id;
+    a.classList.toggle('is-current', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+}
+
+function hubFor(id) {
+  return {
+    lifeHref,
+    navigate: (path = [], params = {}, opts = {}) => go(lifeHref(id, path, params), opts),
+    open: (href, opts = {}) => go(href, opts),
+    setToolbar(html) { els.toolbar.innerHTML = html; return els.toolbar; },
+    isCurrent: () => current?.id === id,
+  };
+}
+
+function go(href, { replace = false } = {}) {
+  if (!parseLifeHash(location.hash)) returnHash = location.hash;
+  if (location.hash !== href) {
+    try { history[replace ? 'replaceState' : 'pushState'](null, '', href); } catch (_) { location.hash = href; }
   }
-  persist();
-  render();
+  lastHash = href;
+  return apply(parseLifeHash(href));
 }
 
-function step(n) {
-  if (st.view === 'day') go({ day: shiftDay(st.day, n) });
-  else if (st.view === 'month') go({ day: `${shiftMonth(st.day.slice(0, 7), n)}-01` });
-  else if (st.view === 'year') go({ day: `${Number(st.day.slice(0, 4)) + n}-01-01` });
+function apply(r) {
+  queue = queue.then(() => doApply(r)).catch(e => console.error('life:', e));
+  return queue;
 }
-function zoomOut() {
-  if (st.view === 'day') go({ view: 'month' });
-  else if (st.view === 'month') go({ view: 'year' });
+
+async function doApply(route) {
+  let r = route || { app: null, path: [], params: {} };
+  if (!r.app) {
+    if (narrow()) { showIndex(true); return; }
+    const href = memory.routes[memory.app] || lifeHref(memory.app);
+    try { history.replaceState(null, '', href); } catch (_) {}
+    lastHash = href;
+    r = parseLifeHash(href);
+  }
+  const app = appById(r.app) || APPS[0];
+  showIndex(false);
+  if (!current || current.id !== app.id) {
+    try { current?.inst?.unmount?.(); } catch (_) {}
+    els.host.innerHTML = '';
+    els.toolbar.innerHTML = '';
+    const host = document.createElement('div');
+    host.className = `life-app life-app-${app.id}`;
+    els.host.append(host);
+    current = { id: app.id, inst: null };
+    els.title.textContent = app.label;
+    els.panel.dataset.app = app.id;
+    markRail(app.id);
+    try {
+      current.inst = await app.mount(host, hubFor(app.id));
+    } catch (e) {
+      host.innerHTML = emptyState('other', `Could not open ${app.label}`, escapeHtml(e.message));
+      current.inst = { route() {}, unmount() {} };
+    }
+  }
+  memory.app = app.id;
+  memory.routes[app.id] = parseLifeHash(location.hash)?.app === app.id ? location.hash : lifeHref(app.id, r.path, r.params);
+  persist();
+  try { await current.inst.route(r.path, r.params); } catch (e) { console.error('life route:', e); }
 }
-function goToday() { go({ view: st.view === 'search' ? 'day' : st.view, day: todayIso() }); }
 
 function onKey(e) {
   const typing = e.target.closest?.('input, textarea, select, [contenteditable="true"]');
-  if (e.key === '/' && !typing) { e.preventDefault(); els.input.focus(); els.input.select(); return; }
-  if (typing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-  if (e.key === 'ArrowLeft' && st.view !== 'search') { e.preventDefault(); step(-1); }
-  else if (e.key === 'ArrowRight' && st.view !== 'search') { e.preventDefault(); step(1); }
-  else if (e.key === 'ArrowUp' && els.body.scrollTop === 0 && (st.view === 'day' || st.view === 'month')) { e.preventDefault(); zoomOut(); }
-  else if (e.key === 't') goToday();
-}
-
-async function render() {
-  const mine = ++seq;
-  lastHash = buildHash(st);
-  crumbs();
-  els.panel.dataset.view = st.view;
-  els.nav.hidden = st.view === 'search';
-  els.input.value = st.view === 'search' ? st.q : '';
-  els.body.setAttribute('aria-busy', 'true');
-  els.body.innerHTML = skeleton(st.view);
-  els.body.scrollTop = 0;
-  const ctx = { st, go, api, isCurrent: () => mine === seq };
-  try {
-    await VIEWS[st.view](els.body, ctx);
-  } catch (e) {
-    if (isAbort(e) || mine !== seq) return;
-    els.body.innerHTML = emptyState('other', 'Could not load this view', escapeHtml(e.message));
-  } finally {
-    if (mine === seq) els.body.removeAttribute('aria-busy');
+  if ((e.key === '/' && !typing) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) {
+    e.preventDefault();
+    els.input.focus();
+    els.input.select();
+    return;
   }
+  current?.inst?.onKey?.(e);
 }
 
-async function openPanel({ view, day, today = false, replace = false } = {}) {
+function openApp(id) {
+  return go(memory.routes[id] || lifeHref(id));
+}
+
+function openPanel({ app = null } = {}) {
   buildPanel();
   els.panel.classList.remove('hidden');
   raise();
-  if (!st.meta) {
-    try {
-      st.meta = await api('meta');
-    } catch (e) {
-      if (isAbort(e)) return;
-      els.body.innerHTML = emptyState('life', 'Life is not available', escapeHtml(e.message));
-      return;
-    }
-  }
-  if (view) st.view = view;
-  if (day) st.day = day;
-  if (today || !st.day) st.day = st.meta.today;
-  go({}, { replace });
-  els.body.focus({ preventScroll: true });
+  if (app) return openApp(app);
+  const r = parseLifeHash(location.hash);
+  if (r) { lastHash = location.hash; return apply(r); }
+  return go(memory.routes[memory.app] || lifeHref(memory.app));
 }
 
 function fromHash() {
-  const h = parseHash(location.hash);
-  if (!h) return;
+  const r = parseLifeHash(location.hash);
+  if (!r) return;
   if (location.hash === lastHash && isOpen()) return;
-  if (h.view === 'day') Object.assign(st, { view: 'day', day: h.day });
-  else if (h.view === 'month') Object.assign(st, { view: 'month', day: st.day.startsWith(h.month) ? st.day : `${h.month}-01` });
-  else if (h.view === 'year') Object.assign(st, { view: 'year', day: st.day.startsWith(h.year) ? st.day : `${h.year}-01-01` });
-  else if (h.view === 'search') Object.assign(st, { view: 'search', q: h.q });
-  if (isOpen() && st.meta) { persist(); render(); } else openPanel({ replace: true });
+  lastHash = location.hash;
+  buildPanel();
+  if (!isOpen()) { els.panel.classList.remove('hidden'); raise(); }
+  apply(r);
 }
 
 function mountSidebar() {
   const list = document.getElementById('lifelog-list');
   if (!list || list.dataset.ready) return;
   list.dataset.ready = '1';
-  const add = (name, text, fn) => {
+  for (const a of APPS) {
     const item = document.createElement('div');
     item.className = 'list-item life-side-item';
-    item.innerHTML = `${icon(name, 14)}<span class="grow">${text}</span>`;
-    item.addEventListener('click', fn);
+    item.dataset.app = a.id;
+    item.innerHTML = `${icon(a.icon, 14)}<span class="grow">${escapeHtml(a.label)}</span>`;
+    item.addEventListener('click', () => openPanel({ app: a.id }));
     list.append(item);
-  };
-  add('calendar', 'Today', () => openPanel({ view: 'day', today: true }));
-  add('search', 'Search everything', async () => { await openPanel({ view: 'search' }); els?.input.focus(); });
+  }
 }
 
 restore();
@@ -226,7 +232,7 @@ window.addEventListener('hashchange', fromHash);
 window.addEventListener('popstate', fromHash);
 function boot() {
   mountSidebar();
-  if (parseHash(location.hash)) fromHash();
+  if (parseLifeHash(location.hash)) fromHash();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();

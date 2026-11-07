@@ -34,9 +34,13 @@
    (0,2,1), fundo --panel em `button:hover` (0,1,1)) e todo <details>/<summary> (03-agent-chat.css: caixa, ▶,
    preenchimento). Por isso as regras de botão/campo do Life levam `#life-panel` na frente, e a altura é zerada aqui. */
 #life-panel button { height: auto; }
-.life-content { width: min(1240px, 96vw); height: 90vh; display: flex; flex-direction: column; padding: 0; color: var(--life-ink); }
+.life-content { width: calc(100vw - 32px); height: calc(100vh - 32px); display: flex; flex-direction: column; padding: 0; color: var(--life-ink); }
 .life-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--life-line); cursor: move; }
 .life-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
+.life-title-sep { color: var(--life-faint); font-weight: 400; }
+.life-title-app { font-weight: 600; color: var(--life-ink); }
+.life-toolbar { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
+#life-panel .life-back { display: none; }
 .life-crumbs { display: flex; align-items: center; gap: 2px; font-size: 13px; min-width: 0; }
 #life-panel .life-crumbs button, #life-panel .life-crumbs > span { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; color: var(--life-muted); padding: 3px 6px; border-radius: 6px; font: inherit; cursor: pointer; }
 #life-panel .life-crumbs button:hover { background: var(--life-hover); color: var(--life-ink); }
@@ -56,6 +60,24 @@
 #life-panel :is(button, a, input, summary):focus-visible { outline: 2px solid var(--life-accent); outline-offset: 2px; }
 .life-svg { flex-shrink: 0; }
 .life-side-item .life-svg { opacity: 0.6; }
+
+/* ── hub: trilho de apps + área do app ── */
+.life-frame { flex: 1; min-height: 0; display: grid; grid-template-columns: 184px minmax(0, 1fr); }
+.life-rail { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; border-right: 1px solid var(--life-line); overflow-y: auto; }
+#life-panel .life-rail-item { position: relative; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: var(--life-muted); text-decoration: none; font-size: 13px; }
+#life-panel .life-rail-item:hover { background: var(--life-hover); color: var(--life-ink); }
+#life-panel .life-rail-item.is-current { background: color-mix(in srgb, var(--life-accent) 16%, transparent); color: var(--life-ink); }
+#life-panel .life-rail-item.is-current .life-svg { color: var(--life-accent-text); }
+/* Barra de 3 px à esquerda: o item atual não depende só da cor. */
+#life-panel .life-rail-item.is-current::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 2px; background: var(--life-accent); }
+.life-host { position: relative; min-height: 0; display: flex; flex-direction: column; }
+.life-app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* O host do Diary é o próprio .life-body: rola aqui, e o .life-dayhead (position: sticky) gruda no topo dele. */
+.life-app.life-body { display: block; overflow-y: auto; }
+@media (max-width: 1099px) {
+  .life-frame { grid-template-columns: 76px minmax(0, 1fr); }
+  #life-panel .life-rail-item { flex-direction: column; gap: 4px; height: auto; padding: 8px 4px; font-size: 11px; text-align: center; }
+}
 
 /* ── dia ── */
 .life-dayhead { position: sticky; top: -16px; z-index: 2; margin: -16px -20px 14px; padding: 14px 20px 10px; background: var(--panel, #111); border-bottom: 1px solid var(--life-line); }
@@ -244,6 +266,13 @@
   #life-panel .life-content { height: 95dvh !important; min-height: 95dvh !important; max-height: 95dvh !important; }
 }
 @media (max-width: 640px) {
+  .life-frame { grid-template-columns: minmax(0, 1fr); }
+  .life-rail { display: none; }
+  #life-panel.is-index .life-rail { display: flex; gap: 0; padding: 8px; border-right: 0; }
+  #life-panel.is-index .life-rail-item { flex-direction: row; gap: 12px; height: 48px; padding: 0 12px; font-size: 15px; text-align: left; }
+  #life-panel.is-index .life-host { display: none; }
+  #life-panel:not(.is-index) .life-back { display: inline-flex; }
+  #life-panel.is-index .life-toolbar, #life-panel.is-index .life-title-sep, #life-panel.is-index .life-title-app { display: none; }
   .life-search { order: 10; flex: 1 1 100%; min-width: 0; }
   .life-body { padding: 12px 12px 24px; }
   .life-dayhead { top: -12px; margin: -12px -12px 12px; padding: 12px; }
