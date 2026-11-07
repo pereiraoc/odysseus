@@ -255,3 +255,11 @@
   #life-panel .life-mcell { min-height: 52px; padding: 4px 5px; }
   .life-mval, .life-marks { display: none; }
 }
+
+/* Item aberto pela busca: destaque do acerto no dia */
+#life-panel .life-hit { cursor: pointer; }
+#life-panel .is-focus { border-radius: 8px; box-shadow: inset 0 0 0 2px var(--life-accent); background: color-mix(in srgb, var(--life-accent) 14%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  #life-panel .is-focus { animation: life-focus-fade 2.4s ease-out; }
+  @keyframes life-focus-fade { from { background: color-mix(in srgb, var(--life-accent) 40%, transparent); } }
+}

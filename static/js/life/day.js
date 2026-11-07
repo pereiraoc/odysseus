@@ -40,7 +40,14 @@ export async function renderDay(body, ctx) {
     const goDay = e.target.closest('[data-go-day]');
     if (goDay) ctx.go({ view: 'day', day: goDay.dataset.goDay });
   });
+  const target = st.focus ? findFocus(root, st.focus) : null;
+  if (target) {
+    const kind = target.closest('.life-entry[data-kind]')?.dataset.kind;
+    if (st.filter !== 'all' && kind !== st.filter) st.filter = 'all';
+  }
   applyFilter(root, st.filter);
+  if (target) revealFocus(target);
+  st.focus = '';
   loadOnThisDay(root, ctx, data.day);
 }
 
@@ -78,7 +85,7 @@ function entry(it) {
     const tip = m.neutral ? ' title="Between your own accounts — not counted as spending or income"' : '';
     amount = `<span class="${cls}"${tip}>${esc(fmtMoney(m.amount_cents, m.currency, { decimals: 2 }))}</span>`;
   }
-  return `<li class="life-entry k-${esc(it.kind)}" data-kind="${esc(it.kind)}">
+  return `<li class="life-entry k-${esc(it.kind)}" data-kind="${esc(it.kind)}" data-id="${esc(it.id)}">
     ${timeCell(it.time, it.end_time)}<span class="life-ic">${icon(it.kind, 15)}</span>
     <div class="life-entry-b"><div class="life-entry-t">${esc(it.title)}</div>${it.subtitle ? `<div class="life-entry-s">${esc(it.subtitle)}</div>` : ''}</div>
     ${amount}${openLink(it.open_url)}
@@ -87,7 +94,7 @@ function entry(it) {
 
 function digital(g) {
   const sources = g.sources.map(s => {
-    const rows = s.items.map((r, i) => `<li class="life-drow${i >= CAP ? ' is-more' : ''}${r.unavailable ? ' is-unavailable' : ''}">
+    const rows = s.items.map((r, i) => `<li class="life-drow${i >= CAP ? ' is-more' : ''}${r.unavailable ? ' is-unavailable' : ''}" data-ids="${esc((r.ids || [r.id]).join(' '))}">
         <time>${esc(r.times[0])}</time>
         <div class="life-entry-b"><div class="life-entry-t">${esc(r.title)}${r.count > 1 ? `<span class="life-times" title="${esc(r.times.join(', '))}">×${r.count}</span>` : ''}</div>${r.subtitle ? `<div class="life-entry-s">${esc(r.subtitle)}</div>` : ''}</div>
         ${openLink(r.open_url)}</li>`).join('');
@@ -116,6 +123,25 @@ function emptyDay(data) {
     : '');
   return emptyState('calendar', 'Nothing recorded on this day', 'None of the connected sources has anything for this date.',
     btn(n.prev, true) + btn(n.next, false));
+}
+
+function findFocus(root, id) {
+  for (const el of root.querySelectorAll('[data-id], .life-drow[data-ids]')) {
+    if (el.dataset.id === id || (el.dataset.ids || '').split(' ').includes(id)) return el;
+  }
+  return null;
+}
+
+function revealFocus(el) {
+  const details = el.closest('details');
+  if (details) details.open = true;
+  if (el.classList.contains('is-more')) {
+    const sec = el.closest('.life-dsrc');
+    sec?.classList.add('is-expanded');
+    sec?.querySelector('[data-more]')?.remove();
+  }
+  el.classList.add('is-focus');
+  el.scrollIntoView({ block: 'center' });
 }
 
 function applyFilter(root, filter) {

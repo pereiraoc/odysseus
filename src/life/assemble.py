@@ -31,10 +31,11 @@ def digital_group(items: list[dict]) -> dict:
         if row:
             row["times"].append(it["time"])
             row["count"] += 1
+            row["ids"].append(it["id"])
         else:
             rows[m["key"]] = {"id": it["id"], "title": it["title"], "subtitle": it["subtitle"], "url": it["url"],
                               "open_url": it["open_url"], "action": m["action"], "unavailable": m["unavailable"],
-                              "times": [it["time"]], "count": 1}
+                              "times": [it["time"]], "count": 1, "ids": [it["id"]]}
     sources, parts = [], []
     for g in GROUP_ORDER:
         if g not in by_group:

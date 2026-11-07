@@ -21,6 +21,7 @@ def test_digital_group_dedupes_and_counts_views():
     assert (g["time"], g["end_time"], g["unavailable"], g["total"]) == ("09:00", "09:12", 1, 3)
     video = [s for s in g["sources"] if s["group"] == "video"][0]
     assert video["items"][0]["times"] == ["09:00", "09:05"] and video["items"][-1]["unavailable"]
+    assert video["items"][0]["ids"] == ["1", "2"] and video["items"][0]["id"] == "1"
 
 
 def test_runs_break_on_long_gap_and_on_other_items():

@@ -25,8 +25,9 @@ export async function renderSearch(body, ctx) {
   root.addEventListener('click', e => {
     const k = e.target.closest('[data-kind]');
     if (k) { st.kinds = k.dataset.kind; ctx.go({}, { replace: true }); return; }
+    if (e.target.closest('a')) return;
     const d = e.target.closest('[data-go-day]');
-    if (d) ctx.go({ view: 'day', day: d.dataset.goDay });
+    if (d) ctx.go({ view: 'day', day: d.dataset.goDay, focus: d.dataset.focus || '' });
   });
   root.querySelectorAll('.life-range input').forEach(inp => inp.addEventListener('change', () => {
     st[inp.name] = inp.value;
@@ -43,7 +44,7 @@ function hit(it, q) {
   const m = it.meta || {};
   const ctxLines = (m.context || []).map(c => `<div class="life-ctx">${c.rel === 'before' ? '↑' : '↓'} ${esc(c.time || '')} · ${esc(c.title)}</div>`).join('');
   const amount = it.kind === 'money' ? `<span class="life-amount">${esc(fmtMoney(m.amount_cents, m.currency, { decimals: 2 }))}</span>` : '';
-  return `<li class="life-entry k-${esc(it.kind)}"><time>${esc(it.time || '')}</time><span class="life-ic">${icon(m.group || it.kind, 15)}</span>
+  return `<li class="life-entry life-hit k-${esc(it.kind)}" data-go-day="${esc(it.day)}" data-focus="${esc(it.id)}"><time>${esc(it.time || '')}</time><span class="life-ic">${icon(m.group || it.kind, 15)}</span>
     <div class="life-entry-b"><div class="life-entry-t">${highlight(it.title, q)}</div>${it.subtitle ? `<div class="life-entry-s">${highlight(it.subtitle, q)}</div>` : ''}${ctxLines}</div>
     ${amount}${openLink(it.open_url)}</li>`;
 }

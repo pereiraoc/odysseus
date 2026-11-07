@@ -17,7 +17,7 @@ import { renderSearch } from './search.js';
 const PANEL_ID = 'life-panel';
 const LS_KEY = 'odysseus.life.v1';
 const VIEWS = { day: renderDay, month: renderMonth, year: renderYear, search: renderSearch };
-const st = { view: 'day', day: '', q: '', metric: 'digital', filter: 'all', kinds: '', from: '', to: '', meta: null };
+const st = { view: 'day', day: '', q: '', metric: 'digital', filter: 'all', kinds: '', from: '', to: '', focus: '', meta: null };
 let els = null;
 let seq = 0;
 let lastHash = '';
