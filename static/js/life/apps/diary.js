@@ -128,6 +128,7 @@ export async function mountDiary(host, hub) {
       return undefined;
     },
     onKey(e) {
+      if (host.closest('.is-index')) return;  // celular na lista de apps: o Diary está escondido
       const typing = e.target.closest?.('input, textarea, select, [contenteditable="true"]');
       if (typing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       if (e.key === 'ArrowLeft' && st.view !== 'search') { e.preventDefault(); step(-1); }

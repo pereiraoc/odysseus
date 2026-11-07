@@ -47,7 +47,11 @@ function colorFor(key) {
   }
   return colorMap.get(key);
 }
-function shortDay(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}` : ''; }
+// AAAA-MM-DD → dd/mm/yyyy (formato en-GB do Life, ano com 4 dígitos); dayMonth: dd/mm (eixos)
+function shortDay(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : ''; }
+function dayMonth(d) { return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : ''; }
+// AAAA-MM-DDTHH:MM… → dd/mm/yyyy HH:MM (o horário como veio do banco)
+function shortStamp(ts) { return ts ? `${shortDay(ts.slice(0, 10))} ${ts.slice(11, 16)}`.trim() : ''; }
 function isoDay(d) { return d.toISOString().slice(0, 10); }
 // `from`/`to` da URL: só AAAA-MM-DD (isIsoDate, compartilhado com Finances) e uma data que existe
 const isDate = v => isIsoDate(v) && !Number.isNaN(Date.parse(`${v}T12:00:00`));
@@ -126,14 +130,14 @@ function stackedBars(host, data, { onBucket } = {}) {
       if (!v) continue;
       const h = (H - T - B) * v / max;
       const r = svgEl('rect', { x, y: y0 - h, width: w, height: Math.max(h, 0.5), fill: colorFor(s.key), class: 'aiu-bar' });
-      r.addEventListener('mousemove', e => tip(e, `<b>${esc(bk)}</b><br><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}: <b>${fmt(v)}</b><br>Bucket total: ${fmt(totals[i])}`));
+      r.addEventListener('mousemove', e => tip(e, `<b>${esc(data.bucket === 'day' ? shortDay(bk) : bk)}</b><br><span class="aiu-sw" style="background:${colorFor(s.key)}"></span>${esc(s.key)}: <b>${fmt(v)}</b><br>Bucket total: ${fmt(totals[i])}`));
       r.addEventListener('mouseleave', e => tip(e, null));
       if (onBucket) r.addEventListener('click', () => onBucket(bk));
       svg.append(r);
       y0 -= h;
     }
     if (i % every === 0) svg.append(svgEl('text', { x: x + w / 2, y: H - 8, class: 'aiu-axis', 'text-anchor': 'middle' },
-      data.bucket === 'day' ? bk.slice(5) : bk));
+      data.bucket === 'day' ? dayMonth(bk) : bk));
   });
   host.append(svg);
 }
@@ -197,7 +201,7 @@ function heatmap(host, rows) {
       const a = v ? 0.18 + 0.82 * Math.sqrt(v / max) : 0;
       const cell = svgEl('rect', { x: L + w * (C + G), y: T + d * (C + G), width: C, height: C, rx: 3,
         class: 'aiu-cell' + (v ? '' : ' empty'), style: v ? `fill-opacity:${a}` : '' });
-      cell.addEventListener('mousemove', e => tip(e, `<b>${k}</b><br>${fmt(v)}${r ? ` · ${r.sessions} session(s)` : ''}`));
+      cell.addEventListener('mousemove', e => tip(e, `<b>${shortDay(k)}</b><br>${fmt(v)}${r ? ` · ${r.sessions} session(s)` : ''}`));
       cell.addEventListener('mouseleave', e => tip(e, null));
       if (v) cell.addEventListener('click', () => { st.period = 'custom'; st.from = k; st.to = k; syncToolbar(); goTab('sessions'); });
       svg.append(cell);
@@ -224,13 +228,13 @@ function lineChart(host, rows) {
     svg.append(svgEl('polyline', { points: pts.map(p => `${p[0]},${p[1]}`).join(' '), fill: 'none', stroke: colorFor(n), 'stroke-width': 2 }));
     for (const [px, py, r] of pts) {
       const c = svgEl('circle', { cx: px, cy: py, r: 3, fill: colorFor(n) });
-      c.addEventListener('mousemove', e => tip(e, `<b>${r.day}</b><br>${esc(n)} (${Math.round(r.window_minutes / 60)} h window): <b>${r.used_percent}%</b> · plan ${esc(r.plan || '')}`));
+      c.addEventListener('mousemove', e => tip(e, `<b>${esc(shortDay(r.day))}</b><br>${esc(n)} (${Math.round(r.window_minutes / 60)} h window): <b>${r.used_percent}%</b> · plan ${esc(r.plan || '')}`));
       c.addEventListener('mouseleave', e => tip(e, null));
       svg.append(c);
     }
   }
   const every = Math.ceil(days.length / 8);
-  days.forEach((d, i) => i % every === 0 && svg.append(svgEl('text', { x: x(i), y: H - 6, class: 'aiu-axis', 'text-anchor': 'middle' }, d.slice(5))));
+  days.forEach((d, i) => i % every === 0 && svg.append(svgEl('text', { x: x(i), y: H - 6, class: 'aiu-axis', 'text-anchor': 'middle' }, dayMonth(d))));
   host.append(svg);
   const lg = document.createElement('div');
   lg.className = 'aiu-legend';
@@ -284,7 +288,7 @@ async function renderOverview(pane) {
   const dimKey = { category: 'categories', model: 'models', source: 'sources', machine: 'machines' }[st.by];
   hbars(pane.querySelector('.aiu-break'), br.slice(0, 25), {
     onClick: r => { st.filters[dimKey].add(r.key); syncFilters(); render(); },
-    sub: r => `${fmt(r.output, 'total')} output · ${r.sessions} sessions · ${r.days} days · ${esc(r.first_day)} → ${esc(r.last_day)}`,
+    sub: r => `${fmt(r.output, 'total')} output · ${r.sessions} sessions · ${r.days} days · ${esc(shortDay(r.first_day))} → ${esc(shortDay(r.last_day))}`,
   });
   hoursChart(pane.querySelector('.aiu-hours'), hrs);
   hbars(pane.querySelector('.aiu-bysrc'), bysrc, { onClick: r => { st.filters.sources.add(r.key); syncFilters(); render(); } });
@@ -352,7 +356,7 @@ async function showSession(host, key) {
       <div><b>Tool</b> ${esc(s.source)} · ${esc(s.machine || '')}${s.entrypoint ? ' · ' + esc(s.entrypoint) : ''}${s.version ? ' v' + esc(s.version) : ''}</div>
       <div><b>Folder</b> ${esc(s.cwd || '—')}${s.branch ? ` · branch ${esc(s.branch)}` : ''}</div>
       <div><b>Category</b> ${esc(s.category || '')} <small>(${esc(s.reason || '')})</small></div>
-      <div><b>Period</b> ${esc((s.first_ts || '').slice(0, 16).replace('T', ' '))} → ${esc((s.last_ts || '').slice(0, 16).replace('T', ' '))}${s.active_ms ? ` · ${Math.round(s.active_ms / 60000)} min of agent work` : ''}${s.compactions ? ` · ${s.compactions} compactions` : ''}</div>
+      <div><b>Period</b> ${esc(shortStamp(s.first_ts || ''))} → ${esc(shortStamp(s.last_ts || ''))}${s.active_ms ? ` · ${Math.round(s.active_ms / 60000)} min of agent work` : ''}${s.compactions ? ` · ${s.compactions} compactions` : ''}</div>
       <div><b>Days</b> ${days.map(dayLink).join(', ') || '—'}</div>
       <div><b>Prompts</b> ${s.user_prompts || d.prompts.n || 0}${d.extra.reasoning ? ` · reasoning ${fmt(d.extra.reasoning, 'total')}` : ''}${d.extra.ws ? ` · ${d.extra.ws} web searches` : ''}${d.extra.efforts ? ` · effort ${esc(d.extra.efforts)}` : ''}${d.extra.latency ? ` · average latency ${(d.extra.latency / 1000).toFixed(1)} s` : ''}${s.lines_added ? ` · +${s.lines_added}/−${s.lines_removed || 0} lines` : ''}</div>
     </div>
@@ -585,7 +589,7 @@ export async function mountAiUsage(host, hub) {
     body.innerHTML = `<div class="aiu-empty">Database not found. ${esc(st.meta.hint || '')}</div>`;
   } else {
     const lr = st.meta.last_run;
-    els.status.textContent = `${st.meta.day_min} → ${st.meta.day_max}` + (lr ? ` · updated ${new Date(lr.ts).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(', ', ' ')}` : '');
+    els.status.textContent = `${shortDay(st.meta.day_min)} → ${shortDay(st.meta.day_max)}` + (lr ? ` · updated ${new Date(lr.ts).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(', ', ' ')}` : '');
     syncToolbar();
     syncFilters();
   }

@@ -62,7 +62,7 @@ function buildPanel() {
   panel.innerHTML = `
     <div class="modal-content life-content" role="dialog" aria-label="Life">
       <div class="modal-header life-header">
-        <button type="button" class="life-icon-btn life-back" aria-label="All apps" title="All apps">${icon('chevron-left')}</button>
+        <button type="button" class="life-icon-btn life-back" aria-label="All apps" title="All apps">${icon('chevron-left')}<span>Apps</span></button>
         <span class="life-title">${icon('life', 16)}<span>Life</span><span class="life-title-sep" aria-hidden="true">·</span><span class="life-title-app"></span></span>
         <div class="life-toolbar"></div>
         <form class="life-search" role="search">
