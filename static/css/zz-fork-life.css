@@ -35,7 +35,14 @@
    preenchimento). Por isso as regras de botão/campo do Life levam `#life-panel` na frente, e a altura é zerada aqui. */
 #life-panel button { height: auto; }
 .life-content { width: calc(100vw - 32px); height: calc(100vh - 32px); display: flex; flex-direction: column; padding: 0; color: var(--life-ink); }
+/* A .modal-content do app limita a altura a 85vh: sem isto a janela ficava com 85 % da altura e o topo e o rodapé
+   da barra lateral do Odysseus apareciam por cima e por baixo (spec do hub, decisão 3). No celular vale o 95dvh
+   !important mais abaixo. */
+#life-panel .life-content { max-height: calc(100vh - 32px); }
+/* O cabeçalho de .modal-header usa space-between: no celular, com a barra do Diary quebrando para a linha de baixo,
+   o título "Life · Diary" ia para a direita, longe do botão ‹. */
 .life-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--life-line); cursor: move; }
+#life-panel .life-header { justify-content: flex-start; }
 .life-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
 .life-title-sep { color: var(--life-faint); font-weight: 400; }
 .life-title-app { font-weight: 600; color: var(--life-ink); }
@@ -70,7 +77,10 @@
 /* Barra de 3 px à esquerda: o item atual não depende só da cor. */
 #life-panel .life-rail-item.is-current::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 2px; background: var(--life-accent); }
 .life-host { position: relative; min-height: 0; display: flex; flex-direction: column; }
+/* O host do app recebe o foco (tabindex -1) só para o teclado do hub; sem contorno, senão Finances e AI usage
+   ficavam com uma moldura de 2 px no acento em volta de toda a área. */
 .life-app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#life-panel .life-app:focus { outline: 0; }
 /* O host do Diary é o próprio .life-body: rola aqui, e o .life-dayhead (position: sticky) gruda no topo dele. */
 .life-app.life-body { display: block; overflow-y: auto; }
 @media (max-width: 1099px) {
