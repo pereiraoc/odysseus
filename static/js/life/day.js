@@ -3,7 +3,8 @@
 // O servidor monta tudo (src/life/assemble.py); aqui só se desenha e se liga o filtro/expansões.
 import { icon } from './icons.js';
 import { escapeHtml as esc, fmtDate, fmtDateLong, fmtMoney, yearsAgo } from './format.js';
-import { KIND_LABEL, KIND_ORDER, emptyState, openLink, sourcesFooter } from './parts.js';
+import { KIND_LABEL, KIND_ORDER, appLink, emptyState, openLink, sourcesFooter } from './parts.js';
+import { lifeHref } from './router.js';
 
 const PERIOD_ICON = { night: 'night', morning: 'morning', afternoon: 'afternoon', evening: 'evening' };
 const CAP = 5;
@@ -22,7 +23,7 @@ export async function renderDay(body, ctx) {
       </header>
       <div class="life-cols">
         <section class="life-main" aria-label="Timeline">
-          ${empty ? emptyDay(data) : `${chips(data.counts_by_kind, st.filter)}${allDay(data.all_day)}<ol class="life-spine">${data.blocks.map(block).join('')}</ol>`}
+          ${empty ? emptyDay(data) : `${chips(data.counts_by_kind, st.filter)}${allDay(data.all_day, data.day)}<ol class="life-spine">${data.blocks.map(block).join('')}</ol>`}
         </section>
         <aside class="life-side" aria-label="Day details">
           ${numbers(data.stats)}
@@ -59,9 +60,11 @@ function chips(counts, filter) {
   return `<div class="life-chips" role="toolbar" aria-label="Filter by kind">${btn('all', 'All', total)}${kinds.map(k => btn(k, KIND_LABEL[k], counts[k])).join('')}</div>`;
 }
 
-function allDay(items) {
+function allDay(items, day) {
   if (!items.length) return '';
-  return `<section class="life-allday" aria-label="All day"><h3 class="life-eyebrow">All day</h3><ul class="life-entries">${items.map(entry).join('')}</ul></section>`;
+  const fin = items.some(it => it.kind === 'money')
+    ? appLink(lifeHref('finances', ['transactions'], { from: day, to: day }), 'Open in Finances') : '';
+  return `<section class="life-allday" aria-label="All day"><h3 class="life-eyebrow">All day${fin}</h3><ul class="life-entries">${items.map(entry).join('')}</ul></section>`;
 }
 
 function block(b) {
@@ -77,6 +80,12 @@ function timeCell(start, end) {
   return `<time>${esc(start)}${end && end !== start ? `<span class="life-time-end">–${esc(end)}</span>` : ''}</time>`;
 }
 
+function aiLink(day) {
+  if (!day) return '';
+  const t = 'Open in AI usage';
+  return `<a class="life-open" href="${esc(lifeHref('ai', ['sessions'], { from: day, to: day }))}" title="${t}" aria-label="${t}">${icon('work', 14)}</a>`;
+}
+
 function entry(it) {
   const m = it.meta || {};
   let amount = '';
@@ -88,7 +97,7 @@ function entry(it) {
   return `<li class="life-entry k-${esc(it.kind)}" data-kind="${esc(it.kind)}" data-id="${esc(it.id)}">
     ${timeCell(it.time, it.end_time)}<span class="life-ic">${icon(it.kind, 15)}</span>
     <div class="life-entry-b"><div class="life-entry-t">${esc(it.title)}</div>${it.subtitle ? `<div class="life-entry-s">${esc(it.subtitle)}</div>` : ''}</div>
-    ${amount}${openLink(it.open_url)}
+    ${amount}${it.kind === 'work' ? aiLink(it.day) : ''}${openLink(it.open_url)}
   </li>`;
 }
 

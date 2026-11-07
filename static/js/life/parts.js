@@ -24,6 +24,11 @@ export function openLink(url) {
   return `<a class="life-open" href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" title="Open original" aria-label="Open original">${icon('external', 14)}</a>`;
 }
 
+// Link interno (#life/…) para outro app do hub; mesma aba, sem target.
+export function appLink(href, label) {
+  return `<a class="life-xlink" href="${escapeHtml(href)}">${escapeHtml(label)} ›</a>`;
+}
+
 const when = iso => {
   try { return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
 };

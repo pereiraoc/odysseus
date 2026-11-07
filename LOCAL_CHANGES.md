@@ -219,7 +219,8 @@ cópia parcial do episódio da conexão aninhada (`/vaults/X/X`) vivem em
 
 ## 6. Painel "Uso de IA" — tokens de outros apps de IA  [feature local]
 
-Painel na sidebar (seção "Uso de IA") que mostra o histórico de uso de IA de
+**Desde 07/11 o painel vive dentro do hub Life como o app "AI usage" (`mountAiUsage`; rota `#life/ai/<aba>`), sem
+janela nem seção própria na sidebar; a UI está em inglês.** Painel que mostra o histórico de uso de IA de
 Claude Code, Codex, Cursor, Copilot, Cline e do próprio Odysseus: tokens por
 dia, sessão, modelo, categoria de atividade e máquina. Os dados vêm do banco
 SQLite que o `ai-usage-export` (repo `caelestia-arch-setup`, timer diário) mantém
@@ -239,13 +240,16 @@ em `/data/ai-usage/ai-usage.sqlite`. O painel só lê (`mode=ro`).
 
 **Hooks mínimos em arquivos do upstream:**
 - `app.py`: registro `setup_ai_usage_routes()` logo após o `setup_vaultfs_routes()`.
-- `static/index.html`: seção `#ai-usage-section` após a de Vaults, `<link>` do CSS e `<script type="module">`.
+- `static/index.html`: `<link>` do CSS (a seção `#ai-usage-section` e o `<script type="module">` saíram em 07/11; o hub importa `aiUsage.js` sob demanda).
 - `docker/pereiraoc.yml`: volume `/data/ai-usage:/app/ai-usage:ro`.
 
 O caminho do banco pode ser trocado pela env `AI_USAGE_DB`. Sem banco, o painel
 mostra só um aviso.
 
 ## 7. Finanças — arquivo bancário vitalício  [feature local + inline patch no Dockerfile]
+
+**Desde 07/11 o painel vive dentro do hub Life como o app "Finances" (`mountFinances`; rota `#life/finances/<aba>`), sem
+janela nem seção própria na sidebar; a UI está em inglês.**
 
 Arquivo local de todo o histórico bancário (Nubank, Santander, Wise; Caixa só
 histórico), auditável e sem duplicatas entre fontes. Spec:
@@ -397,3 +401,12 @@ implementado; o mapa de calor do ano tem uma parada de Tab por dia.
 
 Próximas fases (spec): lugares/viagens/fotos/agenda/e-mail/casa pelo `services.sqlite` do NAS; mapa e fotos ao vivo;
 commits e notas do PC.
+
+**Hub (07/11):** o Life virou um hub de apps — Diary (a linha do tempo acima), Finances (§7) e AI usage (§6) — com um trilho
+de apps (`static/js/life/index.js`, roteador em `static/js/life/router.js`). Rotas `#life/<app>/…`: `#life/diary/<AAAA-MM-DD|AAAA-MM|AAAA>`,
+`#life/diary/search?q=`, `#life/finances/<aba>[?from=&to=&account=&q=]`, `#life/ai/<aba>[?from=&to=]`; os hashes antigos
+`#life/<data|mês|ano>` e `#life/search?q=` continuam abrindo o Diary. Links cruzados no Diary: a faixa All day abre
+Finances nas transações do dia ("Open in Finances") e as entradas de trabalho abrem AI usage nas sessões do dia. A sidebar
+tem um item por app dentro de `#lifelog-list`; as seções `#ai-usage-section` e `#finance-section` e os `<script>` de
+`aiUsage.js`/`finance.js` saíram do `index.html`. Em 07/11 o token compartilhado `?v=` das folhas e do `app.js`
+(`static/index.html` + `static/sw.js`) foi trocado para `20261107lifehub1` e o `CACHE_NAME` subiu para v1143.
