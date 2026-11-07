@@ -463,19 +463,28 @@ const TABS = { overview: ['Overview', renderOverview], models: ['Models', render
   calendar: ['Calendar', renderCalendar], tools: ['Tools', renderTools], limits: ['Codex limits', renderLimits],
   web: ['Web chats', renderWeb], code: ['AI code', renderCode] };
 
+// Cada render() pega um número e desenha num painel próprio dentro de .aiu-body; o conteúdo atual passa para o painel
+// novo e fica esmaecido enquanto carrega (sem trocar por "Loading…": era o que piscava). Um desenho antigo que termina
+// por último escreve no painel dele, já fora da página, e só o mais novo mostra erro ou tira o esmaecido.
+let renderSeq = 0;
 async function render() {
   if (!els.body) return;
+  const mine = ++renderSeq;
+  const body = els.body;
   els.tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === st.tab));
-  const pane = els.body;
-  // mantem o desenho anterior esmaecido enquanto carrega (sem trocar por "Loading…": era o que piscava)
+  const pane = document.createElement('div');
+  pane.className = 'aiu-pane';
+  const prev = els.pane;
+  if (prev?.parentNode === body) { pane.append(...prev.childNodes); prev.replaceWith(pane); } else body.replaceChildren(pane);
+  els.pane = pane;
   if (!pane.children.length) pane.innerHTML = '<div class="aiu-empty">Loading…</div>';
-  pane.style.opacity = '0.55';
+  body.style.opacity = '0.55';
   try {
     await TABS[st.tab][1](pane);
   } catch (e) {
-    pane.innerHTML = `<div class="aiu-empty">Failed: ${esc(e.message)}</div>`;
+    if (mine === renderSeq) pane.innerHTML = `<div class="aiu-empty">Failed: ${esc(e.message)}</div>`;
   } finally {
-    pane.style.opacity = '';
+    if (mine === renderSeq) body.style.opacity = '';
   }
 }
 
@@ -557,6 +566,7 @@ export async function mountAiUsage(host, hub) {
   resizeObs = new ResizeObserver(() => {
     // offsetWidth inclui a barra de rolagem: ela aparecer/sumir NAO muda esse valor (contentRect mudava)
     const w = body.offsetWidth;
+    if (!w) return;  // painel escondido (fechado/minimizado): nada a redesenhar
     if (Math.abs(w - lastW) <= 8) return;
     lastW = w;
     clearTimeout(rt); rt = setTimeout(() => { if (body.isConnected && st.meta?.available) void render(); }, 250);
@@ -564,10 +574,11 @@ export async function mountAiUsage(host, hub) {
   resizeObs.observe(body);
   let metaFailed = '';
   try {
-    const r = await fetch(`${API}/meta`, { credentials: 'same-origin' });
+    // com prazo: a montagem espera pelo /meta e, com o servidor travado, seguraria a fila do hub
+    const r = await fetch(`${API}/meta`, { credentials: 'same-origin', signal: AbortSignal.timeout(15000) });
     if (!r.ok) throw new Error(`${r.status}`);
     st.meta = await r.json();
-  } catch (e) { st.meta = null; metaFailed = e.message; }
+  } catch (e) { st.meta = null; metaFailed = e?.name === 'TimeoutError' ? 'the server did not answer in time' : e.message; }
   if (!st.meta) {
     body.innerHTML = `<div class="aiu-empty">Failed: ${esc(metaFailed)}</div>`;
   } else if (!st.meta.available) {
@@ -584,14 +595,26 @@ export async function mountAiUsage(host, hub) {
       let tab = TABS[key] ? key : '';
       if (!tab) { try { tab = localStorage.getItem('odysseus-aiu-tab') || ''; } catch (_) {} }
       st.tab = TABS[tab] ? tab : 'overview';
-      // #life/ai sem aba: põe a aba na URL (replace), como o Diary faz com o dia; sem isso o voltar de uma aba
-      // para #life/ai reabria a última aba e parecia não fazer nada.
-      if (!TABS[key]) { void hub.navigate([st.tab], params || {}, { replace: true }); return; }
       const p = params || {};
-      if (isDate(p.from) || isDate(p.to)) {
+      const from = isDate(p.from) ? p.from : '';
+      const to = isDate(p.to) ? p.to : '';
+      // #life/ai sem aba: põe a aba na URL (replace), como o Diary faz com o dia; sem isso o voltar de uma aba
+      // para #life/ai reabria a última aba e parecia não fazer nada. Só se a URL ainda for a que o hub está
+      // aplicando: se o usuário já foi para outra, a rota nova vem na fila.
+      if (!TABS[key]) {
+        if (location.hash === hub.currentHash()) void hub.navigate([st.tab], { from, to }, { replace: true });
+        return;
+      }
+      if (from || to) {
         st.period = 'custom';
-        st.from = isDate(p.from) ? p.from : '';
-        st.to = isDate(p.to) ? p.to : '';
+        st.from = from;
+        st.to = to;
+        if (st.meta?.available) syncToolbar();
+      } else if (st.period === 'custom') {
+        // URL sem período: o personalizado de antes não vale mais; volta ao padrão (90 dias)
+        st.period = '90';
+        st.from = '';
+        st.to = '';
         if (st.meta?.available) syncToolbar();
       }
       try { localStorage.setItem('odysseus-aiu-tab', st.tab); } catch (_) {}
@@ -599,6 +622,7 @@ export async function mountAiUsage(host, hub) {
       void render();  // sem await: o hub não espera os fetches da aba
     },
     unmount() {
+      renderSeq += 1;  // desenhos em andamento deste mount não mexem mais no corpo
       if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
       if (els.tip) els.tip.style.display = 'none';
     },

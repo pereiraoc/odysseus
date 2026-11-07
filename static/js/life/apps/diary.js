@@ -100,7 +100,7 @@ export async function mountDiary(host, hub) {
   let metaErr = null;
   const showMetaErr = () => { host.innerHTML = emptyState('life', 'Diary is not available', escapeHtml(metaErr.message)); };
   try {
-    st.meta = await api('meta', {}, { key: 'diary-meta' });
+    st.meta = await api('meta', {}, { key: 'diary-meta', timeout: 15000 });  // servidor travado não segura a fila do hub
   } catch (e) {
     if (!isAbort(e)) { metaErr = e; showMetaErr(); }
   }
@@ -109,7 +109,13 @@ export async function mountDiary(host, hub) {
     route(path, params) {
       if (metaErr) { showMetaErr(); return undefined; }
       const p = path[0] || '';
-      if (!p) { if (!st.day) st.day = todayIso(); hub.navigate(pathOf(), paramsOf(), { replace: true }); return undefined; }
+      if (!p) {
+        // sem dia na URL: escreve o dia (replace), só se a URL ainda for a que o hub está aplicando; se o usuário já
+        // foi para outra, a rota nova vem na fila
+        if (!st.day) st.day = todayIso();
+        if (location.hash === hub.currentHash()) hub.navigate(pathOf(), paramsOf(), { replace: true });
+        return undefined;
+      }
       if (p === 'search') Object.assign(st, { view: 'search', q: params.q || '' });
       else if (DAY_RE.test(p)) Object.assign(st, { view: 'day', day: p });
       else if (MONTH_RE.test(p)) Object.assign(st, { view: 'month', day: st.day.startsWith(p) ? st.day : `${p}-01` });

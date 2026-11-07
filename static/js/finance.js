@@ -48,10 +48,16 @@ function stamp(ts) {
 }
 function accLabel(a) { return `${INST[a.institution] || a.institution} · ${KIND[a.kind] || a.kind}${a.kind === 'wallet' ? ' ' + a.currency : ''}`; }
 function accByKey(k) { return (st.meta?.accounts || []).find(a => a.key === k); }
-async function get(path) {
-  const r = await fetch(`${API}${path}`, { credentials: 'same-origin' });
-  if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 200)}`);
-  return r.json();
+// `timeout` (ms) só no /meta: a montagem espera por ele e, com o servidor travado, seguraria a fila do hub
+async function get(path, { timeout = 0 } = {}) {
+  try {
+    const r = await fetch(`${API}${path}`, { credentials: 'same-origin', ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}) });
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 200)}`);
+    return await r.json();
+  } catch (e) {
+    if (e?.name === 'TimeoutError') throw new Error('the server did not answer in time');
+    throw e;
+  }
 }
 function svgEl(tag, attrs = {}, text) {
   const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -832,12 +838,22 @@ function goTransactions() {
   void hubRef?.navigate(['transactions'], txParams());
 }
 
+// Cada render() pega um número e desenha num painel próprio dentro de .fin-body; o conteúdo atual passa para o
+// painel novo e fica esmaecido enquanto carrega (sem piscar). Um desenho antigo que termina por último escreve no
+// painel dele, já fora da página, e só o mais novo mostra erro ou tira o esmaecido.
+let renderSeq = 0;
 async function render() {
   if (!els.body) return;
+  const mine = ++renderSeq;
+  const body = els.body;
   els.tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === st.tab));
-  const pane = els.body;
+  const pane = document.createElement('div');
+  pane.className = 'fin-pane';
+  const prev = els.pane;
+  if (prev?.parentNode === body) { pane.append(...prev.childNodes); prev.replaceWith(pane); } else body.replaceChildren(pane);
+  els.pane = pane;
   if (!pane.children.length) pane.innerHTML = '<div class="fin-empty">Loading…</div>';
-  pane.style.opacity = '0.55';  // segura o desenho anterior enquanto carrega (sem piscar)
+  body.style.opacity = '0.55';
   try {
     if (!st.meta) {
       pane.innerHTML = `<div class="fin-empty">Could not load Finances${metaError ? `: ${esc(metaError)}` : ''}</div>`;
@@ -849,15 +865,15 @@ async function render() {
     }
     await TABS[st.tab][1](pane);
   } catch (e) {
-    pane.innerHTML = `<div class="fin-empty">Failed: ${esc(e.message)}</div>`;
+    if (mine === renderSeq) pane.innerHTML = `<div class="fin-empty">Failed: ${esc(e.message)}</div>`;
   } finally {
-    pane.style.opacity = '';
+    if (mine === renderSeq) body.style.opacity = '';
   }
 }
 
 let metaError = '';
 async function refreshMeta() {
-  st.meta = await get('/meta');
+  st.meta = await get('/meta', { timeout: 15000 });
   const li = st.meta.last_import;
   if (els.status) els.status.textContent = st.meta.available
     ? `${st.meta.accounts.length} accounts` + (li ? ` · last import ${stamp(li)}` : '')
@@ -889,8 +905,12 @@ export async function mountFinances(host, hub) {
       if (!tab) { try { tab = localStorage.getItem('odysseus-fin-tab') || ''; } catch (_) {} }
       st.tab = TABS[tab] ? tab : 'overview';
       // #life/finances sem aba: põe a aba na URL (replace), como o Diary faz com o dia. Sem isso o voltar de
-      // #life/finances/monthly para #life/finances reabria a última aba (Monthly) e parecia não fazer nada.
-      if (!TABS[key]) { void hub.navigate([st.tab], st.tab === 'transactions' ? readTxParams(params) : {}, { replace: true }); return; }
+      // #life/finances/monthly para #life/finances reabria a última aba (Monthly) e parecia não fazer nada. Só se a
+      // URL ainda for a que o hub está aplicando: se o usuário já foi para outra, a rota nova vem na fila.
+      if (!TABS[key]) {
+        if (location.hash === hub.currentHash()) void hub.navigate([st.tab], st.tab === 'transactions' ? readTxParams(params) : {}, { replace: true });
+        return;
+      }
       if (st.tab === 'transactions') {
         Object.assign(st, readTxParams(params));
         st.offset = 0;
@@ -899,6 +919,7 @@ export async function mountFinances(host, hub) {
       void render();  // sem await: o hub não espera os fetches da aba
     },
     unmount() {
+      renderSeq += 1;  // desenhos em andamento deste mount não mexem mais no corpo
       const tipNode = document.querySelector('.fin-tip');
       if (tipNode) tipNode.style.display = 'none';
     },

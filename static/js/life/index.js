@@ -20,6 +20,7 @@ let current = null;
 let queue = Promise.resolve();
 let lastHash = '';
 let returnHash = null;
+let applying = '';  // hash que doApply está aplicando agora (hub.currentHash())
 
 // Rota que pode ser lembrada (e reaplicada ao reabrir): do próprio app e com `from`/`to`, quando houver, em
 // AAAA-MM-DD. O hash vem de fora (link colado, localStorage antigo) e esses valores vão para atributos HTML.
@@ -102,10 +103,16 @@ function buildPanel() {
   });
   els.input.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); els.input.blur(); els.host.querySelector('.life-app')?.focus({ preventScroll: true }); } });
   panel.addEventListener('keydown', onKey);
-  if (!Modals.isRegistered(PANEL_ID)) {
-    Modals.register(PANEL_ID, { label: 'Life', restoreFn: () => {}, closeFn: onClose });
-    Modals.injectMinimizeButton(panel, PANEL_ID);
-  }
+  ensureRegistered();
+}
+
+// O modalManager apaga o registro no close(); sem registrar de novo, ✖, Esc e minimizar paravam de funcionar depois
+// do primeiro fechamento. Chamado a cada abertura. injectMinimizeButton não duplica o botão (pula se o cabeçalho já
+// tem .modal-minimize-btn, e o botão antigo volta a valer porque chama minimize(PANEL_ID) com o registro novo).
+function ensureRegistered() {
+  if (!els || Modals.isRegistered(PANEL_ID)) return;
+  Modals.register(PANEL_ID, { label: 'Life', restoreFn: () => {}, closeFn: onClose });
+  Modals.injectMinimizeButton(els.panel, PANEL_ID);
 }
 
 function onClose() {
@@ -115,6 +122,13 @@ function onClose() {
   }
   returnHash = null;
   lastHash = '';
+  // Desmonta o app pela fila (depois de qualquer rota em andamento): saem listeners, observers e desenhos em curso;
+  // reabrir monta de novo na rota lembrada.
+  queue = queue.then(() => {
+    try { current?.inst?.unmount?.(); } catch (_) {}
+    current = null;
+    if (els) { els.host.innerHTML = ''; els.toolbar.innerHTML = ''; }
+  });
 }
 
 function showIndex(on) {
@@ -138,6 +152,8 @@ function hubFor(id) {
     setSearch(q) { els.input.value = q || ''; },
     setToolbar(html) { els.toolbar.innerHTML = html; return els.toolbar; },
     isCurrent: () => current?.id === id,
+    // hash que o hub está aplicando: o app só reescreve a URL (replace) se location.hash ainda for este
+    currentHash: () => applying,
   };
 }
 
@@ -147,21 +163,28 @@ function go(href, { replace = false } = {}) {
     try { history[replace ? 'replaceState' : 'pushState'](null, '', href); } catch (_) { location.hash = href; }
   }
   lastHash = href;
-  return apply(parseLifeHash(href));
+  return apply(parseLifeHash(href), href);
 }
 
-function apply(r) {
-  queue = queue.then(() => doApply(r)).catch(e => console.error('life:', e));
+// `hash` é o hash de onde a rota saiu; os replaces atrasados (aqui e nos apps) só valem se a URL ainda for ele.
+function apply(r, hash) {
+  queue = queue.then(() => doApply(r, hash)).catch(e => console.error('life:', e));
   return queue;
 }
 
-async function doApply(route) {
+async function doApply(route, hash) {
+  applying = hash;
   let r = route || { app: null, path: [], params: {} };
   if (!r.app) {
     if (narrow()) { showIndex(true); return; }
     const href = memory.routes[memory.app] || lifeHref(memory.app);
-    try { history.replaceState(null, '', href); } catch (_) {}
-    lastHash = href;
+    // #life sem app vira a última rota (replace), mas só se a URL ainda for #life: se o usuário já foi para outra,
+    // a rota nova está na fila e não pode ser apagada.
+    if (location.hash === hash) {
+      try { history.replaceState(null, '', href); } catch (_) {}
+      lastHash = href;
+    }
+    applying = href;
     r = parseLifeHash(href);
   }
   const app = appById(r.app) || APPS[0];
@@ -211,11 +234,12 @@ function openApp(id) {
 
 function openPanel({ app = null } = {}) {
   buildPanel();
+  ensureRegistered();
   els.panel.classList.remove('hidden');
   raise();
   if (app) return openApp(app);
   const r = parseLifeHash(location.hash);
-  const done = r ? (lastHash = location.hash, apply(r)) : go(memory.routes[memory.app] || lifeHref(memory.app));
+  const done = r ? (lastHash = location.hash, apply(r, location.hash)) : go(memory.routes[memory.app] || lifeHref(memory.app));
   focusHost();
   return done;
 }
@@ -226,8 +250,9 @@ function fromHash() {
   if (location.hash === lastHash && isOpen()) return;
   lastHash = location.hash;
   buildPanel();
+  ensureRegistered();
   if (!isOpen()) { els.panel.classList.remove('hidden'); raise(); }
-  apply(r);
+  apply(r, location.hash);
 }
 
 function mountSidebar() {
