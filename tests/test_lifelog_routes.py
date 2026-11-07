@@ -44,6 +44,7 @@ def test_day_and_nearest(client):
     ("/api/lifelog/onthisday", {"d": "x"}), ("/api/lifelog/search", {"q": "padaria", "from": "2023/01/01"}),
     ("/api/lifelog/year", {"y": "0000"}), ("/api/lifelog/month", {"m": "0000-05"}),
     ("/api/lifelog/month", {"m": "9999-12"}),
+    ("/api/lifelog/day", {"d": "0001-01-01"}), ("/api/lifelog/day", {"d": "9999-12-31"}),
 ])
 def test_bad_input_is_400(client, path, params):
     assert client.get(path, params=params).status_code == 400

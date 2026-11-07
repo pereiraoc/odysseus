@@ -37,7 +37,10 @@ def _date(v: Optional[str], name: str) -> Optional[date]:
     try:
         if not DAY_RE.match(v):
             raise ValueError(v)
-        return date.fromisoformat(v)
+        d = date.fromisoformat(v)
+        if d.year not in YEARS:
+            raise ValueError(v)
+        return d
     except ValueError:
         raise HTTPException(400, f"invalid {name} (YYYY-MM-DD)")
 

@@ -37,11 +37,11 @@ def _span(a: date, b: date) -> Iterator[date]:
         d += timedelta(days=1)
 
 
-def _collect(providers, a: date, b: date):
+def _collect(providers, a: date, b: date, statuses: Optional[list] = None):
     days: dict = {}
     coverage: dict = {}
-    for p in providers:
-        st = safe_status(p)
+    for i, p in enumerate(providers):
+        st = statuses[i] if statuses is not None else safe_status(p)
         if st["state"] != "ok":
             continue
         try:
@@ -108,7 +108,9 @@ def year_view(y: int, providers) -> dict:
 
 
 def on_this_day(d: date, providers, max_years: int = 20) -> list[dict]:
-    froms = [s["from"] for s in (safe_status(p) for p in providers) if s.get("state") == "ok" and s.get("from")]
+    providers = list(providers)
+    statuses = [safe_status(p) for p in providers]
+    froms = [s["from"] for s in statuses if s.get("state") == "ok" and s.get("from")]
     earliest = int(min(froms)[:4]) if froms else d.year
     out = []
     for k in range(1, max_years + 1):
@@ -119,7 +121,7 @@ def on_this_day(d: date, providers, max_years: int = 20) -> list[dict]:
             t = d.replace(year=y)
         except ValueError:  # 29/02
             t = d.replace(year=y, day=28)
-        raw, _ = _collect(providers, t - timedelta(days=3), t + timedelta(days=3))
+        raw, _ = _collect(providers, t - timedelta(days=3), t + timedelta(days=3), statuses)
         for off in (0, -1, 1, -2, 2, -3, 3):
             ds = (t + timedelta(days=off)).isoformat()
             vals = raw.get(ds) or {}
