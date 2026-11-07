@@ -1,7 +1,4 @@
-// static/js/life/apps/finances.js — stub da Task 2 (substituído na Task 3).
-import { emptyState } from '../parts.js';
+// static/js/life/apps/finances.js — app Finances do hub Life (o painel de static/js/finance.js, embutido).
+import { mountFinances } from '../../finance.js';
 
-export async function mount(host) {
-  host.innerHTML = emptyState('money', 'Finances', 'Coming in the next task.');
-  return { route() {}, unmount() {} };
-}
+export const mount = (host, hub) => mountFinances(host, hub);
